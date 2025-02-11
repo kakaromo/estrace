@@ -1,0 +1,1 @@
+export {default as TestInfo} from './testinfo.svelte';
