@@ -17,7 +17,6 @@
     try {
       const selected = await open({
         multiple: false,
-        directory: true,
         filters: [
           { name: 'All Files', extensions: ['*'] }
         ]
