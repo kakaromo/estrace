@@ -4,7 +4,7 @@
     windows_subsystem = "windows"
 )]
 mod trace;
-
+use std::collections::HashMap;
 #[tauri::command]
 fn greet(name: &str) -> String {
     format!("Hello, {}! You've been greeted from Rust!", name)
@@ -14,12 +14,30 @@ fn greet(name: &str) -> String {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     // ensure_db_exists().unwrap();
+    {
+        // 프로그램 시작 시 UFS_CACHE 재할당
+        let mut ufs_cache = trace::UFS_CACHE.lock().expect("Failed to lock UFS_CACHE");
+        *ufs_cache = HashMap::new();
+    }
+    {
+        // 프로그램 시작 시 BLOCK_CACHE 재할당
+        let mut block_cache = trace::BLOCK_CACHE.lock().expect("Failed to lock BLOCK_CACHE");
+        *block_cache = HashMap::new();
+    }
 
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_sql::Builder::new().build())
         .plugin(tauri_plugin_sql::Builder::default().build())
-        .invoke_handler(tauri::generate_handler![greet, trace::starttrace, trace::readtrace])
+        .invoke_handler(tauri::generate_handler![
+            greet,
+            trace::starttrace,
+            trace::readtrace,
+            trace::latencystats,
+            trace::block_latencystats,
+            trace::sizestats,
+            trace::block_sizestats
+        ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

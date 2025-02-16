@@ -1,17 +1,23 @@
 <script lang="ts">    
   // import * as Menubar from "$lib/components/ui/menubar";
   import { onMount } from 'svelte';
-  import {Menu, Submenu, MenuItem} from '@tauri-apps/api/menu'
+  
+  import { Menu, Submenu, MenuItem} from '@tauri-apps/api/menu'
   import { open } from '@tauri-apps/plugin-dialog';
+  
   import * as Dialog from "$lib/components/ui/dialog";  
   // import SettingDialog from './menu/setting.svelte';
   import { AboutDialog, SettingDialog } from './menu';
+  import Trace from './trace.svelte'; // 새로 추가됨
   import { getFolder } from "../api/db.js";
   import { traceFile, Status, traceStatusStore } from '../stores/file.js';
+
+  import { clear } from 'idb-keyval'
 
   const macOS = navigator.userAgent.includes('Macintosh')
   let showAboutDialog = false;
   let showSettingsDialog = false;
+  let showTraceDialog = false; // 새로 추가됨
 
   async function handleFileOpen() {
     try {
@@ -55,7 +61,10 @@
         {
           text: "Open",
           action: () => {
-            handleFileOpen();
+            // handleFileOpen(); 기존 호출 대신 다이얼로그 표시
+            showTraceDialog = false;
+            showTraceDialog = true;
+            console.log('Open clicked, Trace dialog should open');
           }
         },
       ]
@@ -72,10 +81,17 @@
             console.log('App setting');
           }
         },
+        {
+          text: "session clear",
+          action: () => {
+            clear();
+            console.log('session clear');
+          }
+        },
       ]
     })
     const menu = await Menu.new({
-      items: [about, filemenu, settingmenu]
+      items: [ filemenu, settingmenu, about]
     })
     await (macOS ? menu.setAsAppMenu() : menu.setAsWindowMenu())
   }
@@ -90,8 +106,17 @@
 
 <SettingDialog dialogopen={showSettingsDialog} />
 <AboutDialog open={showAboutDialog}/>
+<Trace dialogopen={showTraceDialog} />
 
-
+<!-- shadcn Dialog를 이용해 Trace 컴포넌트를 다이얼로그로 띄움 -->
+<!-- <Dialog.Root open={showTraceDialog} onOpenChange={(val) => showTraceDialog = val}>
+  <Dialog.DialogContent>
+    <Trace />
+    <Dialog.DialogClose>
+      <button class="btn">닫기</button>
+    </Dialog.DialogClose>
+  </Dialog.DialogContent>
+</Dialog.Root> -->
 
 <!-- <Dialog.Root bind:open={showSettingsDialog}>
   <Dialog.DialogContent>

@@ -7,6 +7,8 @@
     import { Badge } from "$lib/components/ui/badge";
     import { Circle2 } from 'svelte-loading-spinners';
 
+    import Separator from '$lib/components/ui/separator/separator.svelte';
+
     interface TestInfo {
         id: number;
         title: string;
@@ -31,11 +33,15 @@
     });
 </script>
 <div class="container font-sans">
-    <h2
-    class="scroll-m-20 border-b pb-2 text-3xl font-semibold tracking-tight transition-colors first:mt-0"
-    >
-        Trace Information
-    </h2>
+    <div class="space-y-1">
+        <div>
+            <h3 class="text-lg font-medium">
+                Trace Information
+            </h3>
+            <p class="text-muted-foreground text-sm">Configure how you receive notifications.</p>
+        </div>
+        <Separator class="my-4" />
+    </div>
     {#if isLoading}
     <div class="spinner-overlay">
         <Circle2 color="#FF3E00" size="60" unit="px" />
@@ -43,7 +49,7 @@
     {/if}
     
     <!-- 테이블 헤더 -->
-    <div class="header grid grid-cols-[80px_500px_250px_150px] bg-gray-200 font-bold border-b border-gray-300">
+    <div class="header grid grid-cols-[80px_500px_250px_150px] bg-gray-200 font-bold border-b border-gray-300 ">
         <div class="p-2">ID</div>
         <div class="p-2">Title</div>
         <!-- <div class="p-2">Content</div> -->
@@ -67,17 +73,15 @@
 <style>
     .container {
       display: flex;
-      flex-direction: column;
-      /* border-top: 1px solid #333;
-      border-bottom: 1px solid #333; */
-      min-height: 200px;
-      height: calc(100vh - 15em);
-      overflow: hidden;
-      
+      flex-direction: column;      
+      width: 100%;
+      height: 100vh;
+      overflow: hidden;      
     }
     .header {
       flex-shrink: 0;
       font-size: 13px;
+      margin-top: 20px;
     }
     .list-wrapper {
       flex-grow: 1;

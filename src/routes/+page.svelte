@@ -3,9 +3,9 @@
   import { Menu, Trace } from "../components/index.js"
   import { TestInfo } from "../components/table/index.js";
   import { onMount } from 'svelte';
-  import { Button } from "$lib/components/ui/button";
-  import { initial } from "../api/db.js";
+  import { initial, getAllTestInfo } from "../api/db.js";
   import { Status, traceStatusStore } from '../stores/file.js';
+  import { clear } from 'idb-keyval'
 
   let name = $state("");
   let greetMsg = $state("");
@@ -16,18 +16,14 @@
     greetMsg = await invoke("greet", { name });
   }
 
-  async function initializeDatabase() {
-    try {
-      await invoke('setup_db');
-      console.log('데이터베이스 및 테이블이 성공적으로 초기화되었습니다.');
-    } catch (error) {
-      console.error('데이터베이스 초기화 중 오류 발생:', error);
-    }
-  }
-
   onMount(async () => {
-      // initializeDatabase();
-      await initial();      
+    // 프로그램 실행 시 단 한 번만 idb-keyval clear를 실행
+    if (!(window as any).__idbCleared) {
+      await clear();
+      (window as any).__idbCleared = true;
+    }
+    await initial();   
+    await getAllTestInfo();  
   });
 
   
@@ -35,13 +31,7 @@
 
 <div class="hedden md:block">
   <Menu />
-  {#if $traceStatusStore === Status.Opened || $traceStatusStore === Status.Loading}
-      <Trace />
-  {/if}
-  {#if $traceStatusStore === Status.Idle}
-      <TestInfo />
-  {/if}
-  
+  <TestInfo />
 </div>
 
 
