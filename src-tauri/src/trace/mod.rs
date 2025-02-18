@@ -21,6 +21,7 @@ use rand::prelude::IndexedRandom;
 use rand::rng;
 
 use std::collections::HashMap;
+use std::collections::BTreeMap;
 use std::sync::Mutex;
 use once_cell::sync::Lazy;
 
@@ -1039,14 +1040,19 @@ pub struct LatencySummary {
     pub avg: f64,
     pub median: f64,
     pub std_dev: f64,
+    pub _99th: f64,
+    pub _99_9th: f64,
+    pub _99_99th: f64,
+    pub _99_999th: f64,
+    pub _99_9999th: f64,
     pub percentiles: HashMap<String, f64>,
 }
 
 // summary를 opcode별로 저장하도록 수정
 #[derive(Serialize, Debug, Clone)]
 pub struct LatencyStats {
-    pub latency_counts: HashMap<String, HashMap<String, usize>>,
-    pub summary: Option<HashMap<String, LatencySummary>>,
+    pub latency_counts: BTreeMap<String, BTreeMap<String, usize>>,
+    pub summary: Option<BTreeMap<String, LatencySummary>>,
 }
 
 // 백분위수 계산을 위한 헬퍼 함수 수정
@@ -1077,6 +1083,11 @@ fn calculate_statistics(values: &mut Vec<f64>) -> LatencySummary {
             avg: 0.0,
             median: 0.0,
             std_dev: 0.0,
+            _99th: 0.0,
+            _99_9th: 0.0,
+            _99_99th: 0.0,
+            _99_999th: 0.0,
+            _99_9999th: 0.0,
             percentiles: HashMap::new(),
         };
     }
@@ -1114,6 +1125,11 @@ fn calculate_statistics(values: &mut Vec<f64>) -> LatencySummary {
         avg,
         median,
         std_dev,
+        _99th: percentiles["99th"],
+        _99_9th: percentiles["99.9th"],
+        _99_99th: percentiles["99.99th"],
+        _99_999th: percentiles["99.999th"],
+        _99_9999th: percentiles["99.9999th"],
         percentiles,
     }
 }
@@ -1224,7 +1240,7 @@ pub async fn latencystats(
     chart_stats.sort_by(|a, b| a.time.partial_cmp(&b.time).unwrap());
 
     // opcode별 latency count 초기화
-    let mut latency_counts: HashMap<String, HashMap<String, usize>> = HashMap::new();
+    let mut latency_counts: BTreeMap<String, BTreeMap<String, usize>> = BTreeMap::new();
     
     // 모든 opcode에 대해 threshold 구간 초기화
     let unique_opcodes: Vec<String> = chart_stats.iter()
@@ -1234,7 +1250,7 @@ pub async fn latencystats(
         .collect();
 
     for opcode in &unique_opcodes {
-        let mut ranges = HashMap::new();
+        let mut ranges = BTreeMap::new();
         if threshold_values.is_empty() {
             ranges.insert("전체".to_string(), 0);
         } else {
@@ -1243,12 +1259,13 @@ pub async fn latencystats(
             
             // 중간 구간들
             for i in 0..thresholds.len()-1 {
-                let key = format!("{} < latency ≤ {}", thresholds[i], thresholds[i+1]);
+                // let key = format!("{} < v ≤ {}", thresholds[i], thresholds[i+1]);
+                let key = format!("{} < v ≤ {}", thresholds[i], thresholds[i+1]);
                 ranges.insert(key, 0);
             }
             
             // 마지막 구간
-            ranges.insert(format!("> {}", thresholds.last().unwrap()), 0);
+            ranges.insert(format!("99_> {}", thresholds.last().unwrap()), 0);
         }
         latency_counts.insert(opcode.clone(), ranges);
     }
@@ -1259,15 +1276,25 @@ pub async fn latencystats(
         let range_key = if threshold_values.is_empty() {
             "전체".to_string()
         } else if latency <= threshold_values[0] {
-            format!("≤ {}", thresholds[0])
+            format!("01_≤ {}", thresholds[0])
         } else if latency > *threshold_values.last().unwrap() {
-            format!("> {}", thresholds.last().unwrap())
+            format!("99_> {}", thresholds.last().unwrap())
         } else {
-            threshold_values.windows(2)
-                .zip(thresholds.windows(2))
-                .find(|(vals, _)| latency > vals[0] && latency <= vals[1])
-                .map(|(_, units)| format!("{} < latency ≤ {}", units[0], units[1]))
-                .unwrap_or_default()
+            // threshold_values.windows(2)
+            //     .zip(thresholds.windows(2))
+            //     .find(|(vals, _)| latency > vals[0] && latency <= vals[1])
+            //     // .map(|(_, units)| format!("{} < v ≤ {}", units[0], units[1]))
+            //     .map(|(_, units)| format!("> {}", units[0]))
+            //     .unwrap_or_default();
+            let mut key = String::new();
+            // enumerate를 통해 인덱스를 활용하여 접두어 생성
+            for (i, vals) in threshold_values.windows(2).enumerate() {
+                if latency > vals[0] && latency <= vals[1] {
+                    key = format!("{} < v ≤ {}", thresholds[i], thresholds[i+1]);
+                    break;
+                }
+            }
+            key
         };
 
         if let Some(opcode_ranges) = latency_counts.get_mut(&stat.opcode) {
@@ -1278,7 +1305,7 @@ pub async fn latencystats(
     }
 
     // opcode별 그룹핑
-    let mut opcode_groups = HashMap::new();
+    let mut opcode_groups = BTreeMap::new();
     for stat in &chart_stats {
         opcode_groups.entry(stat.opcode.clone())
             .or_insert_with(Vec::new)
@@ -1286,7 +1313,7 @@ pub async fn latencystats(
     }
 
     // 각 그룹별로 통계 계산
-    let mut summary_map = HashMap::new();
+    let mut summary_map = BTreeMap::new();
     for (opcode, mut values) in opcode_groups {
         let summary = calculate_statistics(&mut values);
         summary_map.insert(opcode, summary);
@@ -1302,8 +1329,8 @@ pub async fn latencystats(
 
 #[derive(Serialize, Debug, Clone)]
 pub struct SizeStats {
-    pub opcode_stats: HashMap<String, HashMap<u32, usize>>,
-    pub total_counts: HashMap<String, usize>,
+    pub opcode_stats: BTreeMap<String, BTreeMap<u32, usize>>,
+    pub total_counts: BTreeMap<String, usize>,
 }
 
 #[tauri::command]
@@ -1362,12 +1389,12 @@ pub async fn sizestats(
         .collect();
 
     // opcode별 size 통계
-    let mut opcode_stats: HashMap<String, HashMap<u32, usize>> = HashMap::new();
-    let mut total_counts: HashMap<String, usize> = HashMap::new();
+    let mut opcode_stats: BTreeMap<String, BTreeMap<u32, usize>> = BTreeMap::new();
+    let mut total_counts: BTreeMap<String, usize> = BTreeMap::new();
 
     // 각 opcode에 대한 빈 HashMap 초기화
     for opcode in target_opcodes.iter() {
-        opcode_stats.insert(opcode.to_string(), HashMap::new());
+        opcode_stats.insert(opcode.to_string(), BTreeMap::new());
         total_counts.insert(opcode.to_string(), 0);
     }
 
@@ -1387,6 +1414,10 @@ pub async fn sizestats(
     serde_json::to_string(&result).map_err(|e| e.to_string())
 }
 
+fn normalize_io_type(io: &str) -> String {
+    io.chars().next().unwrap_or_default().to_string()
+}
+
 #[tauri::command]
 pub async fn block_latencystats(
     logname: String,
@@ -1395,7 +1426,8 @@ pub async fn block_latencystats(
     time_to: Option<f64>,
     col_from: Option<f64>,
     col_to: Option<f64>,
-    thresholds: Vec<String>
+    thresholds: Vec<String>,
+    group: bool
 ) -> Result<String, String> {
     // threshold 문자열을 밀리초 값으로 변환
     let mut threshold_values: Vec<f64> = Vec::new();
@@ -1426,7 +1458,7 @@ pub async fn block_latencystats(
             .map(|b| ChartStat {
                 time: b.time,
                 // grouping key로 io_type 사용
-                opcode: b.io_type.clone(),
+                opcode: if group { normalize_io_type(&b.io_type) } else { b.io_type.clone() },
                 value: if column == "dtoc" {
                     ChartValue::F64(b.dtoc)
                 } else {
@@ -1439,7 +1471,7 @@ pub async fn block_latencystats(
             .filter(|b| b.action == "block_rq_issue")
             .map(|b| ChartStat {
                 time: b.time,
-                opcode: b.io_type.clone(),
+                opcode: if group { normalize_io_type(&b.io_type) } else { b.io_type.clone() },
                 value: ChartValue::F64(b.ctod),
             })
             .collect(),
@@ -1468,15 +1500,15 @@ pub async fn block_latencystats(
         .into_iter()
         .collect();
 
-    let mut latency_counts: HashMap<String, HashMap<String, usize>> = HashMap::new();
+    let mut latency_counts: BTreeMap<String, BTreeMap<String, usize>> = BTreeMap::new();
     for io in &unique_io_types {
-        let mut ranges = HashMap::new();
+        let mut ranges = BTreeMap::new();
         if threshold_values.is_empty() {
             ranges.insert("전체".to_string(), 0);
         } else {
             ranges.insert(format!("≤ {}", thresholds[0]), 0);
             for i in 0..thresholds.len()-1 {
-                let key = format!("{} < latency ≤ {}", thresholds[i], thresholds[i+1]);
+                let key = format!("{} < v ≤ {}", thresholds[i], thresholds[i+1]);
                 ranges.insert(key, 0);
             }
             ranges.insert(format!("> {}", thresholds.last().unwrap()), 0);
@@ -1494,11 +1526,20 @@ pub async fn block_latencystats(
         } else if latency > *threshold_values.last().unwrap() {
             format!("> {}", thresholds.last().unwrap())
         } else {
+            // let mut key = String::new();
+            // for win in threshold_values.windows(2).zip(thresholds.windows(2)) {
+            //     let (vals, units) = win;
+            //     if latency > vals[0] && latency <= vals[1] {
+            //         key = format!("{} < v ≤ {}", units[0], units[1]);                    
+            //         break;
+            //     }
+            // }
+            // key
             let mut key = String::new();
-            for win in threshold_values.windows(2).zip(thresholds.windows(2)) {
-                let (vals, units) = win;
+            // enumerate를 통해 인덱스를 활용하여 접두어 생성
+            for (i, vals) in threshold_values.windows(2).enumerate() {
                 if latency > vals[0] && latency <= vals[1] {
-                    key = format!("{} < latency ≤ {}", units[0], units[1]);
+                    key = format!("{:02}_{} < v ≤ {}", i+2, thresholds[i], thresholds[i+1]);
                     break;
                 }
             }
@@ -1513,14 +1554,14 @@ pub async fn block_latencystats(
     }
 
     // io_type별 그룹핑 후 통계 계산
-    let mut io_groups: HashMap<String, Vec<f64>> = HashMap::new();
+    let mut io_groups = BTreeMap::new();
     for stat in &filtered_stats {
         io_groups.entry(stat.opcode.clone())
             .or_insert_with(Vec::new)
             .push(stat.value.as_f64());
     }
 
-    let mut summary_map = HashMap::new();
+    let mut summary_map = BTreeMap::new();
     for (io, mut values) in io_groups {
         let summary = calculate_statistics(&mut values);
         summary_map.insert(io, summary);
@@ -1542,6 +1583,7 @@ pub async fn block_sizestats(
     time_to: Option<f64>,
     col_from: Option<f64>,
     col_to: Option<f64>,
+    group: bool,
 ) -> Result<String, String> {
     // block 캐시에서 데이터 가져오기
     let cache_key = logname;
@@ -1580,17 +1622,17 @@ pub async fn block_sizestats(
     // block trace에서는 opcode 대신 io_type으로 그룹핑
     let target_io_types: Vec<String> = filtered_blocks
         .iter()
-        .map(|b| b.io_type.clone())
+        .map(|b| if group { normalize_io_type(&b.io_type) } else { b.io_type.clone() },)
         .collect::<std::collections::HashSet<_>>()
         .into_iter()
         .collect();
 
-    let mut io_stats: HashMap<String, HashMap<u32, usize>> = HashMap::new();
-    let mut total_counts: HashMap<String, usize> = HashMap::new();
+    let mut io_stats: BTreeMap<String, BTreeMap<u32, usize>> = BTreeMap::new();
+    let mut total_counts: BTreeMap<String, usize> = BTreeMap::new();
 
     // 각 io_type별로 빈 카운트 맵 초기화
     for io in &target_io_types {
-        io_stats.insert(io.clone(), HashMap::new());
+        io_stats.insert(io.clone(), BTreeMap::new());
         total_counts.insert(io.clone(), 0);
     }
 

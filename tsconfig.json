@@ -15,9 +15,11 @@
       "$lib": ["./src/lib"],
       "$lib/*": ["./src/lib/*"],
       "$stores": ["./src/stores"],
+      "$stores/*": ["./src/stores/*"],
       "$api": ["./src/api"],
       "$api/*": ["./src/api/*"],
-      "$components": ["./src/components"]
+      "$components": ["./src/components"],
+      "$components/*": ["./src/components/*"]
     }
   }
   // Path aliases are handled by https://kit.svelte.dev/docs/configuration#alias

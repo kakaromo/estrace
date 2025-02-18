@@ -19,7 +19,11 @@
     import { Separator } from '$lib/components/ui/separator';
     import * as Card from '$lib/components/ui/card/index.js';
 
-    import { SelectType } from '../../../components/detail/index.js';
+    import { Grid } from "wx-svelte-grid";
+    import { Willow } from "wx-svelte-grid";
+
+    import { SelectType } from '$components/detail';
+    import { LatencyStats, SizeStats } from '$components/table';
 
     let id: number;
     let data = $state({});
@@ -34,7 +38,59 @@
     let { blockdtocstat, blockctocstat, blockctodstat } = $state([]);
     let { blocksizecounts, blocktotal_counts, blockopcode_stats } = $state({});
 
-    
+    let thresholds = ['0.1ms', '0.5ms', '1ms', '5ms', '10ms', '50ms', '100ms', '500ms', '1s', '5s', '10s', '50s', '100s', '500s', '1000s'];
+
+    const data1 = [{
+            id: 1,
+            city: "Amieshire",
+            email: "Leora13@yahoo.com",
+            firstName: "Ernest",
+            lastName: "Schuppe",
+            companyName: "Lebsack - Nicolas",
+        },
+        {
+            id: 2,
+            city: "Gust",
+            email: "Mose_Gerhold51@yahoo.com",
+            firstName: "Janis",
+            lastName: "Vandervort",
+            companyName: "Glover - Hermiston",
+        },
+    ];
+
+    const columns = [{
+            id: "id",
+            width: 50
+        },
+        {
+            id: "city",
+            width: 100,
+            header: "City",
+            footer: "City",
+        },
+        {
+            id: "firstName",
+            header: "First Name",
+            footer: "First Name",
+            width: 150,
+        },
+        {
+            id: "lastName",
+            header: "Last Name",
+            footer: "Last Name",
+            width: 150,
+        },
+        {
+            id: "email",
+            header: "Email",
+            footer: "Email"
+        },
+        {
+            id: "companyName",
+            header: "Company",
+            footer: "Company"
+        },
+    ];
 
     // $page.params를 통해 동적 파라미터 id 값을 가져옵니다.
     id = $page.params.id;
@@ -86,8 +142,7 @@
             lbachartdata = pick(tracedata, ['time', 'lba']);
             const endLbaChart = performance.now();
             console.log("lbachartdata time:", endLbaChart - startLbaChart, "ms");
-
-            let thresholds = ['0.1ms', '0.5ms', '1ms', '5ms', '10ms', '50ms', '100ms', '500ms', '1s', '5s', '10s', '50s', '100s', '500s', '1000s'];
+            
             console.log('tracedata:', Object.keys(tracedata));
             if(tracedata && tracedata.ufs.length > 0) {
                 let ufsfname = data.logname.split(',')[0];
@@ -122,22 +177,22 @@
             if (tracedata && tracedata.block.length > 0) {
                 let blockfname = data.logname.split(',')[1];
                 const startdtocstat = performance.now();
-                blockdtocstat = await invoke('block_latencystats', { logname: blockfname, column: 'dtoc', thresholds:thresholds,  time_from: 0, time_to: 0, col_from: 0, col_to: 0 });
+                blockdtocstat = await invoke('block_latencystats', { logname: blockfname, column: 'dtoc', thresholds:thresholds,  time_from: 0, time_to: 0, col_from: 0, col_to: 0, group:true });
                 blockdtocstat = JSON.parse(blockdtocstat);
                 const enddtocstat = performance.now();
                 console.log("statusdata time:", enddtocstat - startdtocstat, "ms");
                 const startctodstat = performance.now();
-                blockctodstat = await invoke('block_latencystats', { logname: blockfname, column: 'ctod', thresholds:thresholds,  time_from: 0, time_to: 0, col_from: 0, col_to: 0 });
+                blockctodstat = await invoke('block_latencystats', { logname: blockfname, column: 'ctod', thresholds:thresholds,  time_from: 0, time_to: 0, col_from: 0, col_to: 0, group:true });
                 blockctodstat = JSON.parse(blockctodstat);
                 const endctodstat = performance.now();
                 console.log("statusdata time:", endctodstat - startctodstat, "ms");
                 const startctocstat = performance.now();
-                blockctocstat = await invoke('block_latencystats', { logname: blockfname, column: 'ctoc', thresholds:thresholds,  time_from: 0, time_to: 0, col_from: 0, col_to: 0 });
+                blockctocstat = await invoke('block_latencystats', { logname: blockfname, column: 'ctoc', thresholds:thresholds,  time_from: 0, time_to: 0, col_from: 0, col_to: 0, group:true });
                 blockctocstat = JSON.parse(blockctocstat);
                 const endctocstat = performance.now();
                 console.log("statusdata time:", endctocstat - startctocstat, "ms");
                 const startSizeCounts = performance.now();                
-                blocksizecounts = await invoke('block_sizestats', { logname: blockfname, column: 'dtoc', time_from: 0, time_to: 0, col_from: 0, col_to: 0 });
+                blocksizecounts = await invoke('block_sizestats', { logname: blockfname, column: 'dtoc', time_from: 0, time_to: 0, col_from: 0, col_to: 0, group:true });
                 blocksizecounts = JSON.parse(blocksizecounts);
                 blocktotal_counts = blocksizecounts.total_counts;
                 blockopcode_stats = blocksizecounts.opcode_stats;
@@ -224,9 +279,10 @@
                         <Card.Description>Card Description</Card.Description>
                     </Card.Header>
                     <Card.Content>
-                        {#each Object.entries(ufsdtocstat) as [key, value] }
-                            <p>{key}: {value}</p>
-                        {/each}
+                        <Willow>
+                            <Grid data={data1} {columns} />
+                        </Willow>
+                        <LatencyStats tracetype={$selectedTrace} threshold={thresholds} latencystat={blockdtocstat} />
                     </Card.Content>
                     <Card.Footer>
                         <p>Card Footer</p>

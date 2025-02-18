@@ -1,1 +1,1 @@
-export { default as SelectType } from './selectType.svelte';
+export { default as SelectType } from './selecttype.svelte';

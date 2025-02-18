@@ -34,6 +34,7 @@ export default defineConfig(async () => ({
         $lib: path.resolve("./src/lib"),
         $api: path.resolve("./src/api"),
         $stores: path.resolve("./src/stores"),
+        $components: path.resolve("./src/components"),
       },
     },
   },
