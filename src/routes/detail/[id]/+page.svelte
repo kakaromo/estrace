@@ -40,57 +40,6 @@
 
     let thresholds = ['0.1ms', '0.5ms', '1ms', '5ms', '10ms', '50ms', '100ms', '500ms', '1s', '5s', '10s', '50s', '100s', '500s', '1000s'];
 
-    const data1 = [{
-            id: 1,
-            city: "Amieshire",
-            email: "Leora13@yahoo.com",
-            firstName: "Ernest",
-            lastName: "Schuppe",
-            companyName: "Lebsack - Nicolas",
-        },
-        {
-            id: 2,
-            city: "Gust",
-            email: "Mose_Gerhold51@yahoo.com",
-            firstName: "Janis",
-            lastName: "Vandervort",
-            companyName: "Glover - Hermiston",
-        },
-    ];
-
-    const columns = [{
-            id: "id",
-            width: 50
-        },
-        {
-            id: "city",
-            width: 100,
-            header: "City",
-            footer: "City",
-        },
-        {
-            id: "firstName",
-            header: "First Name",
-            footer: "First Name",
-            width: 150,
-        },
-        {
-            id: "lastName",
-            header: "Last Name",
-            footer: "Last Name",
-            width: 150,
-        },
-        {
-            id: "email",
-            header: "Email",
-            footer: "Email"
-        },
-        {
-            id: "companyName",
-            header: "Company",
-            footer: "Company"
-        },
-    ];
 
     // $page.params를 통해 동적 파라미터 id 값을 가져옵니다.
     id = $page.params.id;
@@ -242,52 +191,47 @@
         <div class="grid grid-cols-2 gap-4">
             <div class="col-span-2">
                 <h3 class="text-lg font-medium bg-blue-50">LBA Pattern</h3>  
-                  
+                <div class="divider"></div>  
                 {#if $selectedTrace === 'ufs'}                     
                 <Card.Root>
                     <Card.Header>
-                        <Card.Title>UFS Size</Card.Title>
-                        <Card.Description>Card Description</Card.Description>
+                        <Card.Title>UFS Latency</Card.Title>
+                        <Card.Description>Range별 Latency Count & Stats</Card.Description>
                     </Card.Header>
                     <Card.Content>
-                        {#each Object.entries(ufsdtocstat.latency_counts) as [v, opcode] }
-                            <p>{v}</p>
-                            {#each Object.entries(opcode) as [key, value] }
-                                <p>{key}: {value}</p>
-                                
-                            {/each}
-                        {/each}
-                        <!-- {#each Object.entries(ufsdtocstat) as [allkey, allvalue] }
-                            <p>{allkey}: {allvalue}</p>
-                            {#each Object.entries(allvalue) as [opcodekey, opcodevalue] }
-                                <p>{opcodekey}: {opcodevalue}</p>       
-                                {#each Object.entries(opcodevalue) as [key, value] }
-                                    <p>{key}: {value}</p>
-                                {/each}
-                                
-                            {/each}
-                        {/each} -->
+                        <LatencyStats tracetype={$selectedTrace} threshold={thresholds} latencystat={ufsdtocstat} />
                     </Card.Content>
-                    <Card.Footer>
-                        <p>Card Footer</p>
-                    </Card.Footer>
-                </Card.Root>     
-                {:else if $selectedTrace === 'block'}
+                </Card.Root>   
+                <div class="divider"></div>  
                 <Card.Root>
                     <Card.Header>
-                        <Card.Title>Block Size</Card.Title>
-                        <Card.Description>Card Description</Card.Description>
+                        <Card.Title>UFS Size</Card.Title>
+                        <Card.Description>Sice별 Count</Card.Description>
                     </Card.Header>
                     <Card.Content>
-                        <Willow>
-                            <Grid data={data1} {columns} />
-                        </Willow>
+                        <SizeStats opcode_size_counts={ufssizecounts.opcode_stats} />
+                    </Card.Content>
+                </Card.Root>       
+                {:else if $selectedTrace === 'block'}                
+                <Card.Root>
+                    <Card.Header>
+                        <Card.Title>Block Latency</Card.Title>
+                        <Card.Description>Range별 Latency Count & Stats</Card.Description>
+                    </Card.Header>
+                    <Card.Content>                        
                         <LatencyStats tracetype={$selectedTrace} threshold={thresholds} latencystat={blockdtocstat} />
                     </Card.Content>
-                    <Card.Footer>
-                        <p>Card Footer</p>
-                    </Card.Footer>
-                </Card.Root>                   
+                </Card.Root>      
+                <div class="divider"></div>  
+                <Card.Root>
+                    <Card.Header>
+                        <Card.Title>UFS Size</Card.Title>
+                        <Card.Description>Sice별 Count</Card.Description>
+                    </Card.Header>
+                    <Card.Content>
+                        <SizeStats opcode_size_counts={blocksizecounts.opcode_stats} />
+                    </Card.Content>
+                </Card.Root> 
                 {/if}           
             </div>
 

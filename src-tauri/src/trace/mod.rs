@@ -1040,11 +1040,6 @@ pub struct LatencySummary {
     pub avg: f64,
     pub median: f64,
     pub std_dev: f64,
-    pub _99th: f64,
-    pub _99_9th: f64,
-    pub _99_99th: f64,
-    pub _99_999th: f64,
-    pub _99_9999th: f64,
     pub percentiles: HashMap<String, f64>,
 }
 
@@ -1083,11 +1078,6 @@ fn calculate_statistics(values: &mut Vec<f64>) -> LatencySummary {
             avg: 0.0,
             median: 0.0,
             std_dev: 0.0,
-            _99th: 0.0,
-            _99_9th: 0.0,
-            _99_99th: 0.0,
-            _99_999th: 0.0,
-            _99_9999th: 0.0,
             percentiles: HashMap::new(),
         };
     }
@@ -1125,11 +1115,6 @@ fn calculate_statistics(values: &mut Vec<f64>) -> LatencySummary {
         avg,
         median,
         std_dev,
-        _99th: percentiles["99th"],
-        _99_9th: percentiles["99.9th"],
-        _99_99th: percentiles["99.99th"],
-        _99_999th: percentiles["99.999th"],
-        _99_9999th: percentiles["99.9999th"],
         percentiles,
     }
 }

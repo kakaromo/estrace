@@ -59,10 +59,10 @@
     <div class="list-wrapper">
         <VirtualList items={testData} itemHeight={16} bind:start bind:end let:item>
             <div class="row grid grid-cols-[80px_500px_250px_150px] border-b border-gray-300" on:click={() =>  getTestData(item.id)}>
-                <div class="content-item">{item.id}</div>
-                <div class="content-item"><Badge variant="outline">{item.logtype}</Badge>{item.title}</div>
-                <div class="content-item">{item.logfolder}</div>
-                <div class="content-item">{item.logname}</div>                
+                <div class="py-1 px-2 content-item">{item.id}</div>
+                <div class="py-1 px-2 content-item"><Badge variant="badge-outline">{item.logtype}</Badge> {item.title}</div>
+                <div class="py-1 px-2 content-item">{item.logfolder}</div>
+                <div class="py-1 px-2 content-item">{item.logname}</div>                
             </div>
         </VirtualList>
     </div>
@@ -99,7 +99,7 @@
         cursor: pointer;
     }
     .content-item {
-        @apply py-1 px-2;
+        /* @apply py-1 px-2; */
         font-size: 11px;
     }
     /* Spinner overlay styling */

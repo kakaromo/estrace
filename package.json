@@ -39,6 +39,7 @@
     "autoprefixer": "^10.4.20",
     "bits-ui": "^0.22.0",
     "clsx": "^2.1.1",
+    "daisyui": "^4.12.23",
     "formsnap": "^1.0.1",
     "katex": "^0.16.21",
     "lowlight": "^3.3.0",
