@@ -22,8 +22,7 @@
     import { Grid } from "wx-svelte-grid";
     import { Willow } from "wx-svelte-grid";
 
-    import { SelectType } from '$components/detail';
-    import { LatencyStats, SizeStats } from '$components/table';
+    import { SelectType,LatencyStats, SizeStats } from '$components/detail';
 
     let id: number;
     let data = $state({});
@@ -186,8 +185,9 @@
         <p>선택된 타입: {$selectedTrace}</p>
         {/if}
         <Separator class="my-4" />
-    </header>
+    </header>    
     <main class="mx-auto p-6">
+        {#if $selectedTrace != ''}                     
         <div class="grid grid-cols-2 gap-4">
             <div class="col-span-2">
                 <h3 class="text-lg font-medium bg-blue-50">LBA Pattern</h3>  
@@ -196,46 +196,45 @@
                 <Card.Root>
                     <Card.Header>
                         <Card.Title>UFS Latency</Card.Title>
-                        <Card.Description>Range별 Latency Count & Stats</Card.Description>
                     </Card.Header>
                     <Card.Content>
                         <LatencyStats tracetype={$selectedTrace} threshold={thresholds} latencystat={ufsdtocstat} />
-                    </Card.Content>
-                </Card.Root>   
-                <div class="divider"></div>  
-                <Card.Root>
-                    <Card.Header>
-                        <Card.Title>UFS Size</Card.Title>
-                        <Card.Description>Sice별 Count</Card.Description>
-                    </Card.Header>
-                    <Card.Content>
-                        <SizeStats opcode_size_counts={ufssizecounts.opcode_stats} />
                     </Card.Content>
                 </Card.Root>       
                 {:else if $selectedTrace === 'block'}                
                 <Card.Root>
                     <Card.Header>
                         <Card.Title>Block Latency</Card.Title>
-                        <Card.Description>Range별 Latency Count & Stats</Card.Description>
                     </Card.Header>
                     <Card.Content>                        
                         <LatencyStats tracetype={$selectedTrace} threshold={thresholds} latencystat={blockdtocstat} />
                     </Card.Content>
                 </Card.Root>      
-                <div class="divider"></div>  
-                <Card.Root>
-                    <Card.Header>
-                        <Card.Title>UFS Size</Card.Title>
-                        <Card.Description>Sice별 Count</Card.Description>
-                    </Card.Header>
-                    <Card.Content>
-                        <SizeStats opcode_size_counts={blocksizecounts.opcode_stats} />
-                    </Card.Content>
-                </Card.Root> 
+                  
+                
                 {/if}           
             </div>
+            <div class="col-span-2">
+            <div class="divider"></div>            
+            <Card.Root>
+                <Card.Header>
+                    <Card.Title>{$selectedTrace.toUpperCase()} Size</Card.Title>
+                    <Card.Description>Sice별 Count</Card.Description>
+                </Card.Header>
+                <Card.Content>
+                    {#if $selectedTrace === 'ufs'} 
+                    <SizeStats opcode_size_counts={ufssizecounts.opcode_stats} />
+                    {:else if $selectedTrace === 'block'}
+                    <SizeStats opcode_size_counts={blocksizecounts.opcode_stats} />
+                    {/if}
+                </Card.Content>
+            </Card.Root> 
+            </div>
+            
+            
 
-        </div>  
+        </div> 
+        {/if} 
     </main>
     
 
