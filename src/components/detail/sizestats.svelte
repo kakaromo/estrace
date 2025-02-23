@@ -3,36 +3,43 @@
     import { Willow } from "wx-svelte-grid";
     import * as Tabs from "$lib/components/ui/tabs/index.js";
 
-    // 예시 props 구조:
-    // {
-    //   "0x2a": {1: 37876, 2: 3422, 3: 706, ...},
-    //   "0x28": {1: 69776, 2: 217, 3: 17, ...},
-    //   "0x42": {1: 1, 160: 2, 161: 1, ...}
-    // }
     let { opcode_size_counts } = $props();
 
-    // 각 opcode별로 size, count 데이터를 배열 형태로 변환합니다.
-    let normalized_size_counts: Record<string, { size: number, count: number }[]> = {};
+    // 상태 변수 선언
+    let normalized_size_counts = $state<Record<string, { size: number, count: number }[]>>({});
+    let prevOpcodeSizeCounts = $state(null);
 
-    Object.keys(opcode_size_counts).forEach(opcode => {
-        const sizesObj = opcode_size_counts[opcode];
-        let arr: { size: number, count: number }[] = [];
-        Object.keys(sizesObj).forEach(key => {
-            arr.push({ size: parseFloat(key), count: sizesObj[key] });
-        });
-        // size 기준 오름차순 정렬 (필요에 따라 내림차순으로 변경 가능)
-        arr.sort((a, b) => a.size - b.size);
-        normalized_size_counts[opcode] = arr;
+    // opcode_size_counts가 변경될 때마다 데이터 재처리
+    $effect(() => {
+        if (opcode_size_counts && 
+            JSON.stringify(opcode_size_counts) !== JSON.stringify(prevOpcodeSizeCounts)) {
+            console.log('opcode_size_counts changed:', opcode_size_counts);
+            
+            // 현재 값을 이전 값으로 저장
+            prevOpcodeSizeCounts = JSON.parse(JSON.stringify(opcode_size_counts));
+            
+            // 데이터 재처리
+            normalized_size_counts = {};
+            Object.keys(opcode_size_counts).forEach(opcode => {
+                const sizesObj = opcode_size_counts[opcode];
+                let arr: { size: number, count: number }[] = [];
+                Object.keys(sizesObj).forEach(key => {
+                    arr.push({ size: parseFloat(key), count: sizesObj[key] });
+                });
+                arr.sort((a, b) => a.size - b.size);
+                normalized_size_counts[opcode] = arr;
+            });
+        }
     });
 </script>
 
 
 <div role="tablist" class="tabs tabs-lifted">
     {#each Object.keys(normalized_size_counts) as opcode, i}           
-        <input type="radio" name="my_tabs_1" role="tab" class="tab" aria-label="{opcode}" checked={i===0?'checked':''}/>
+        <input type="radio" name="sizecounts" role="tab" class="tab" aria-label="{opcode}" checked={i===0?'checked':''}/>
         <div role="tabpanel" class="tab-content bg-base-100 border-base-300 rounded-box p-6">
             <Willow>
-                <div class="px-0" style="font-size: 11px;">
+                <div class="px-0" style="font-size: 12px;">
                     <Grid 
                         data={normalized_size_counts[opcode]} 
                         columns={[

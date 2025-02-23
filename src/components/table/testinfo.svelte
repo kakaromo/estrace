@@ -80,7 +80,7 @@
     }
     .header {
       flex-shrink: 0;
-      font-size: 13px;
+      font-size: 12px;
       margin-top: 20px;
     }
     .list-wrapper {
@@ -89,7 +89,7 @@
     }
     .footer {
       flex-shrink: 0;
-      font-size: 11px;
+      font-size: 12px;
     }
     .row {
         transition: background-color 0.2s ease-in-out;
@@ -100,7 +100,7 @@
     }
     .content-item {
         /* @apply py-1 px-2; */
-        font-size: 11px;
+        font-size: 12px;
     }
     /* Spinner overlay styling */
     .spinner-overlay {

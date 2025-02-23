@@ -1,11 +1,11 @@
 <script lang="ts">
     import { page } from '$app/stores';
-    import { onMount } from 'svelte';
+    import { onMount, onDestroy } from 'svelte';
     import { goto } from '$app/navigation';
     import { invoke } from "@tauri-apps/api/core";
     
-    import { getTestInfo } from '../../../api/db';
-    import { trace, selectedTrace } from '../../../stores/trace';
+    import { getTestInfo } from '$api/db';
+    import { trace, selectedTrace, filtertrace } from '$stores/trace';
 
     import { Circle2 } from 'svelte-loading-spinners';
     import { StepBack } from 'svelte-lucide';
@@ -17,12 +17,9 @@
     import { ContextMenu } from '$lib/components/ui/context-menu';
     import * as Select from "$lib/components/ui/select/index.js";
     import { Separator } from '$lib/components/ui/separator';
-    import * as Card from '$lib/components/ui/card/index.js';
+    import * as Card from '$lib/components/ui/card/index.js';    
 
-    import { Grid } from "wx-svelte-grid";
-    import { Willow } from "wx-svelte-grid";
-
-    import { SelectType,LatencyStats, SizeStats } from '$components/detail';
+    import { SelectType,LatencyStats, SizeStats, ScatterCharts } from '$components/detail';
 
     let id: number;
     let data = $state({});
@@ -31,17 +28,44 @@
     
     let isLoading = $state(false);
     let lbachartdata = $state([]);
-    let { ufsdtocstat, ufsctocstat, ufsctodstat } = $state([]);
-    let { ufssizecounts, ufstotal_counts, ufsopcode_stats } = $state({});
+    // 개별 변수로 상태 선언
+    let ufsdtocstat = $state(null);
+    let ufsctocstat = $state(null);
+    let ufsctodstat = $state(null);
+    
+    // 개별 변수로 분리
+    let ufssizecounts = $state(null);
+    let ufstotal_counts = $state(null);
+    let ufsopcode_stats = $state(null);
 
-    let { blockdtocstat, blockctocstat, blockctodstat } = $state([]);
-    let { blocksizecounts, blocktotal_counts, blockopcode_stats } = $state({});
+    // 개별 변수로 상태 선언
+    let blockdtocstat = $state(null);
+    let blockctocstat = $state(null);
+    let blockctodstat = $state(null);
+    
+    // 개별 변수로 분리
+    let blocksizecounts = $state(null);
+    let blocktotal_counts = $state(null);
+    let blockopcode_stats = $state(null);
 
     let thresholds = ['0.1ms', '0.5ms', '1ms', '5ms', '10ms', '50ms', '100ms', '500ms', '1s', '5s', '10s', '50s', '100s', '500s', '1000s'];
 
 
     // $page.params를 통해 동적 파라미터 id 값을 가져옵니다.
     id = $page.params.id;
+
+    let fname = '';
+    let unsubscribe;
+
+    // currentValue가 변경될 때마다 호출되는 함수
+    $effect(async () => {
+        console.log('filtertrace:', $filtertrace);
+        if (fname) {
+            await ufslatencystats(fname);
+            await blocklatencystats(fname);
+        }
+    });
+
 
     onMount(async () => {
         try {
@@ -56,6 +80,7 @@
             const startInvoke = performance.now();
             // 캐시 키 구성: id와 logfolder, logname을 이용
             const cacheKey = `traceData_${id}_${data.logfolder}_${data.logname}`;
+            fname = data.logname.split(',')[0];
             
             // IndexedDB에서 cached 데이터를 불러오기
             let cached = await get(cacheKey);
@@ -92,81 +117,93 @@
             console.log("lbachartdata time:", endLbaChart - startLbaChart, "ms");
             
             console.log('tracedata:', Object.keys(tracedata));
-            if(tracedata && tracedata.ufs.length > 0) {
-                let ufsfname = data.logname.split(',')[0];
-                console.log("data", data);
-                console.log("ufsfname", ufsfname);
-                const startdtocstat = performance.now();        
-                ufsdtocstat = await invoke('latencystats', { logname: ufsfname, column: 'dtoc', thresholds:thresholds,  time_from: 0, time_to: 0, col_from: 0, col_to: 0 });        
-                ufsdtocstat = JSON.parse(ufsdtocstat);
-                const enddtocstat = performance.now();        
-                console.log("statusdata time:", enddtocstat - startdtocstat, "ms");
-
-                const startctodstat = performance.now();
-                ufsctodstat = await invoke('latencystats', { logname: ufsfname, column: 'ctod', thresholds:thresholds,  time_from: 0, time_to: 0, col_from: 0, col_to: 0 });
-                ufsctodstat = JSON.parse(ufsctodstat);
-                const endctodstat = performance.now();
-                console.log("statusdata time:", endctodstat - startctodstat, "ms");
-
-                const startctocstat = performance.now();        
-                ufsctocstat = await invoke('latencystats', { logname: ufsfname, column: 'ctoc', thresholds:thresholds,  time_from: 0, time_to: 0, col_from: 0, col_to: 0 });
-                ufsctocstat = JSON.parse(ufsctocstat);
-                const endctocstat = performance.now();
-                console.log("statusdata time:", endctocstat - startctocstat, "ms");
-
-                const startSizeCounts = performance.now();
-                ufssizecounts = await invoke('sizestats', { logname: ufsfname, column: 'dtoc', time_from: 0, time_to: 0, col_from: 0, col_to: 0 });
-                ufssizecounts = JSON.parse(ufssizecounts);
-                ufstotal_counts = ufssizecounts.total_counts;
-                ufsopcode_stats = ufssizecounts.opcode_stats;
-                const endSizeCounts = performance.now();
-                console.log("sizestats time:", endSizeCounts - startSizeCounts, "ms");
-            } 
-            if (tracedata && tracedata.block.length > 0) {
-                let blockfname = data.logname.split(',')[1];
-                const startdtocstat = performance.now();
-                blockdtocstat = await invoke('block_latencystats', { logname: blockfname, column: 'dtoc', thresholds:thresholds,  time_from: 0, time_to: 0, col_from: 0, col_to: 0, group:true });
-                blockdtocstat = JSON.parse(blockdtocstat);
-                const enddtocstat = performance.now();
-                console.log("statusdata time:", enddtocstat - startdtocstat, "ms");
-                const startctodstat = performance.now();
-                blockctodstat = await invoke('block_latencystats', { logname: blockfname, column: 'ctod', thresholds:thresholds,  time_from: 0, time_to: 0, col_from: 0, col_to: 0, group:true });
-                blockctodstat = JSON.parse(blockctodstat);
-                const endctodstat = performance.now();
-                console.log("statusdata time:", endctodstat - startctodstat, "ms");
-                const startctocstat = performance.now();
-                blockctocstat = await invoke('block_latencystats', { logname: blockfname, column: 'ctoc', thresholds:thresholds,  time_from: 0, time_to: 0, col_from: 0, col_to: 0, group:true });
-                blockctocstat = JSON.parse(blockctocstat);
-                const endctocstat = performance.now();
-                console.log("statusdata time:", endctocstat - startctocstat, "ms");
-                const startSizeCounts = performance.now();                
-                blocksizecounts = await invoke('block_sizestats', { logname: blockfname, column: 'dtoc', time_from: 0, time_to: 0, col_from: 0, col_to: 0, group:true });
-                blocksizecounts = JSON.parse(blocksizecounts);
-                blocktotal_counts = blocksizecounts.total_counts;
-                blockopcode_stats = blocksizecounts.opcode_stats;
-                const endSizeCounts = performance.now();
-                console.log("sizestats time:", endSizeCounts - startSizeCounts, "ms");
-            }
-            
+                        
+            await ufslatencystats(fname);
+            await blocklatencystats(fname);
             
             console.log("Total onMount time:", performance.now() - startTotal, "ms");
-            console.log('ufsdtocstat:', ufsdtocstat);
-            console.log('ufsctodstat:', ufsctodstat);
-            console.log('ufsctodstat:', ufsctodstat);            
-            console.log('ufssizecounts:', ufssizecounts);
-            // console.log('tracedata:', tracedata);
-
-            console.log('blockdtocstat:', blockdtocstat);
-            console.log('blockctodstat:', blockctocstat);
-            console.log('blockctodstat:', blockctodstat);
-            console.log('blocksizecounts:', blocksizecounts);
             isLoading = false;
         } catch (error) {
-            console.error('Error:', error);
+            if (error instanceof Error) {
+                console.error('Error during onMount:', error.message);
+                console.error('Stack trace:', error.stack);
+            } else {
+                console.error('Unknown error:', error);
+            }
             goto('/');
         }
-        
     });
+
+    async function ufslatencystats(ufsfname: string) {
+        
+        let filter = {time_from: $filtertrace.from_time, time_to: $filtertrace.to_time, col_from: $filtertrace.from_lba, col_to: $filtertrace.to_lba};
+        console.log("filter", filter);
+        if(tracedata && tracedata.ufs.length > 0) {
+            console.log("data", data);
+            console.log("ufsfname", ufsfname);
+            const startdtocstat = performance.now();        
+            const ufsdtocstatResult:string = await invoke('latencystats', { logname: ufsfname, column: 'dtoc', thresholds:thresholds, 
+                timeFrom: $filtertrace.from_time, timeTo: $filtertrace.to_time, colFrom: $filtertrace.from_lba, colTo: $filtertrace.to_lba });                     
+            ufsdtocstat = JSON.parse(ufsdtocstatResult);                    
+            const enddtocstat = performance.now();        
+            console.log("statusdata time:", enddtocstat - startdtocstat, "ms");
+
+            const startctodstat = performance.now();
+            const ufsctodstatResult:string = await invoke('latencystats', { logname: ufsfname, column: 'ctod', thresholds:thresholds, 
+            timeFrom: $filtertrace.from_time, timeTo: $filtertrace.to_time, colFrom: $filtertrace.from_lba, colTo: $filtertrace.to_lba });                     
+            ufsctodstat = JSON.parse(ufsctodstatResult);                                 
+            const endctodstat = performance.now();
+            console.log("statusdata time:", endctodstat - startctodstat, "ms");
+
+            const startctocstat = performance.now();        
+            const ufsctocstatResult:string = await invoke('latencystats', { logname: ufsfname, column: 'ctoc', thresholds:thresholds, 
+            timeFrom: $filtertrace.from_time, timeTo: $filtertrace.to_time, colFrom: $filtertrace.from_lba, colTo: $filtertrace.to_lba });                     
+            ufsctocstat = JSON.parse(ufsctocstatResult);
+            const endctocstat = performance.now();
+            console.log("statusdata time:", endctocstat - startctocstat, "ms");
+
+            const startSizeCounts = performance.now();
+            const ufssizecountsResult = await invoke('sizestats', { logname: ufsfname, column: 'dtoc', 
+            timeFrom: $filtertrace.from_time, timeTo: $filtertrace.to_time, colFrom: $filtertrace.from_lba, colTo: $filtertrace.to_lba });                     
+            ufssizecounts = JSON.parse(ufssizecountsResult);                 
+            ufstotal_counts = ufssizecounts.total_counts;
+            ufsopcode_stats = ufssizecounts.opcode_stats;
+            const endSizeCounts = performance.now();
+            console.log("sizestats time:", endSizeCounts - startSizeCounts, "ms");
+        } 
+    }
+
+    async function blocklatencystats(blockfname: string) {
+        if (tracedata && tracedata.block.length > 0) {
+            let blockfname = data.logname.split(',')[1];
+            const startdtocstat = performance.now();
+            blockdtocstat = await invoke('block_latencystats', { logname: blockfname, column: 'dtoc', thresholds:thresholds, group: true,
+            timeFrom: $filtertrace.from_time, timeTo: $filtertrace.to_time, colFrom: $filtertrace.from_lba, colTo: $filtertrace.to_lba });                     
+            blockdtocstat = JSON.parse(blockdtocstat);
+            const enddtocstat = performance.now();
+            console.log("statusdata time:", enddtocstat - startdtocstat, "ms");
+            const startctodstat = performance.now();
+            blockctodstat = await invoke('block_latencystats', { logname: blockfname, column: 'ctod', thresholds:thresholds, group: true,
+            timeFrom: $filtertrace.from_time, timeTo: $filtertrace.to_time, colFrom: $filtertrace.from_lba, colTo: $filtertrace.to_lba });                     
+            blockctodstat = JSON.parse(blockctodstat);
+            const endctodstat = performance.now();
+            console.log("statusdata time:", endctodstat - startctodstat, "ms");
+            const startctocstat = performance.now();
+            blockctocstat = await invoke('block_latencystats', { logname: blockfname, column: 'ctoc', thresholds:thresholds, group: true, 
+            timeFrom: $filtertrace.from_time, timeTo: $filtertrace.to_time, colFrom: $filtertrace.from_lba, colTo: $filtertrace.to_lba });                     
+            blockctocstat = JSON.parse(blockctocstat);
+            const endctocstat = performance.now();
+            console.log("statusdata time:", endctocstat - startctocstat, "ms");
+            const startSizeCounts = performance.now();                
+            blocksizecounts = await invoke('block_sizestats', { logname: blockfname, column: 'dtoc', group: true, 
+            timeFrom: $filtertrace.from_time, timeTo: $filtertrace.to_time, colFrom: $filtertrace.from_lba, colTo: $filtertrace.to_lba });                     
+            blocksizecounts = JSON.parse(blocksizecounts);
+            blocktotal_counts = blocksizecounts.total_counts;
+            blockopcode_stats = blocksizecounts.opcode_stats;
+            const endSizeCounts = performance.now();
+            console.log("sizestats time:", endSizeCounts - startSizeCounts, "ms");
+        }
+    }
 </script>
 
     {#if isLoading}
@@ -191,28 +228,99 @@
         <div class="grid grid-cols-2 gap-4">
             <div class="col-span-2">
                 <h3 class="text-lg font-medium bg-blue-50">LBA Pattern</h3>  
-                <div class="divider"></div>  
-                {#if $selectedTrace === 'ufs'}                     
+                <div class="divider"></div>   
                 <Card.Root>
                     <Card.Header>
-                        <Card.Title>UFS Latency</Card.Title>
+                        <Card.Title>{$selectedTrace.toUpperCase()} Pattern</Card.Title>
                     </Card.Header>
                     <Card.Content>
-                        <LatencyStats tracetype={$selectedTrace} threshold={thresholds} latencystat={ufsdtocstat} />
+                        {#if $selectedTrace === 'ufs'} 
+                        <ScatterCharts data={$trace.ufs} xAxisKey='time' yAxisKey='lba' legendKey='opcode' yAxisLabel='4KB'/>
+                        {:else if $selectedTrace === 'block'}
+                        <ScatterCharts data={$trace.block} xAxisKey='time' yAxisKey='sector' legendKey='io_type' yAxisLabel='sector'/>
+                        {/if}
                     </Card.Content>
-                </Card.Root>       
-                {:else if $selectedTrace === 'block'}                
+                </Card.Root>
+                <Separator class="my-4" />
+                <Card.Header>
+                    <Card.Title>{$selectedTrace.toUpperCase()} Latency</Card.Title>
+                </Card.Header>
+                <Card.Content>
+                    {#if $selectedTrace === 'ufs'} 
+                    <div role="tablist" class="tabs tabs-lifted">
+                        <input type="radio" name="ufslatencychart" role="tab" class="tab" aria-label="DtoC" checked="checked"/>
+                        <div role="tabpanel" class="tab-content bg-base-100 border-base-300 rounded-box p-6">
+                            <ScatterCharts data={$trace.ufs} xAxisKey='time' yAxisKey='dtoc' legendKey='opcode' yAxisLabel='ms'/> 
+                        </div>
+                        <input type="radio" name="ufslatencychart" role="tab" class="tab" aria-label="CtoD"/>
+                        <div role="tabpanel" class="tab-content bg-base-100 border-base-300 rounded-box p-6">
+                            <ScatterCharts data={$trace.ufs} xAxisKey='time' yAxisKey='ctod' legendKey='opcode' yAxisLabel='ms'/> 
+                        </div>
+                        <input type="radio" name="ufslatencychart" role="tab" class="tab" aria-label="CtoC"/>
+                        <div role="tabpanel" class="tab-content bg-base-100 border-base-300 rounded-box p-6">
+                            <ScatterCharts data={$trace.ufs} xAxisKey='time' yAxisKey='ctoc' legendKey='opcode' yAxisLabel='ms'/> 
+                        </div>
+                    </div>
+                             
+                    {:else if $selectedTrace === 'block'}
+                    <div role="tablist" class="tabs tabs-lifted">
+                        <input type="radio" name="blocklatencychart" role="tab" class="tab" aria-label="DtoC" checked="checked"/>
+                        <div role="tabpanel" class="tab-content bg-base-100 border-base-300 rounded-box p-6">
+                            <ScatterCharts data={$trace.block} xAxisKey='time' yAxisKey='dtoc' legendKey='io_type' yAxisLabel='ms'/> 
+                        </div>
+                        <input type="radio" name="blocklatencychart" role="tab" class="tab" aria-label="CtoD"/>
+                        <div role="tabpanel" class="tab-content bg-base-100 border-base-300 rounded-box p-6">
+                            <ScatterCharts data={$trace.block} xAxisKey='time' yAxisKey='ctod' legendKey='io_type' yAxisLabel='ms'/> 
+                        </div>
+                        <input type="radio" name="blocklatencychart" role="tab" class="tab" aria-label="CtoC"/>
+                        <div role="tabpanel" class="tab-content bg-base-100 border-base-300 rounded-box p-6">
+                            <ScatterCharts data={$trace.block} xAxisKey='time' yAxisKey='ctoc' legendKey='io_type' yAxisLabel='ms'/> 
+                        </div>
+                    </div>
+                    
+                    {/if}
+                </Card.Content>
+                <Separator class="my-4" />
                 <Card.Root>
                     <Card.Header>
-                        <Card.Title>Block Latency</Card.Title>
+                        <Card.Title>{$selectedTrace.toUpperCase()} Latency</Card.Title>
                     </Card.Header>
-                    <Card.Content>                        
-                        <LatencyStats tracetype={$selectedTrace} threshold={thresholds} latencystat={blockdtocstat} />
+                    <Card.Content>
+                        {#if $selectedTrace === 'ufs'} 
+                        <div role="tablist" class="tabs tabs-lifted">
+                            <input type="radio" name="ufslatency" role="tab" class="tab" aria-label="DtoC" checked="checked"/>
+                            <div role="tabpanel" class="tab-content bg-base-100 border-base-300 rounded-box p-6">
+                                <LatencyStats tracetype={$selectedTrace} threshold={thresholds} latencystat={ufsdtocstat} /> 
+                            </div>
+                            <input type="radio" name="ufslatency" role="tab" class="tab" aria-label="CtoD"/>
+                            <div role="tabpanel" class="tab-content bg-base-100 border-base-300 rounded-box p-6">
+                                <LatencyStats tracetype={$selectedTrace} threshold={thresholds} latencystat={ufsctodstat} /> 
+                            </div>
+                            <input type="radio" name="ufslatency" role="tab" class="tab" aria-label="CtoC"/>
+                            <div role="tabpanel" class="tab-content bg-base-100 border-base-300 rounded-box p-6">
+                                <LatencyStats tracetype={$selectedTrace} threshold={thresholds} latencystat={ufsctocstat} /> 
+                            </div>
+                        </div>
+                                 
+                        {:else if $selectedTrace === 'block'}
+                        <div role="tablist" class="tabs tabs-lifted">
+                            <input type="radio" name="blocklatency" role="tab" class="tab" aria-label="DTOC" checked="checked"/>
+                            <div role="tabpanel" class="tab-content bg-base-100 border-base-300 rounded-box p-6">
+                                <LatencyStats tracetype={$selectedTrace} threshold={thresholds} latencystat={blockdtocstat} />
+                            </div>
+                            <input type="radio" name="blocklatency" role="tab" class="tab" aria-label="CtoD"/>
+                            <div role="tabpanel" class="tab-content bg-base-100 border-base-300 rounded-box p-6">
+                                <LatencyStats tracetype={$selectedTrace} threshold={thresholds} latencystat={blockctodstat} /> 
+                            </div>
+                            <input type="radio" name="blocklatency" role="tab" class="tab" aria-label="CtoC"/>
+                            <div role="tabpanel" class="tab-content bg-base-100 border-base-300 rounded-box p-6">
+                                <LatencyStats tracetype={$selectedTrace} threshold={thresholds} latencystat={blockctocstat} /> 
+                            </div>
+                        </div>
+                        
+                        {/if}
                     </Card.Content>
-                </Card.Root>      
-                  
-                
-                {/if}           
+                </Card.Root>       
             </div>
             <div class="col-span-2">
             <div class="divider"></div>            
@@ -222,9 +330,9 @@
                     <Card.Description>Sice별 Count</Card.Description>
                 </Card.Header>
                 <Card.Content>
-                    {#if $selectedTrace === 'ufs'} 
+                    {#if $selectedTrace === 'ufs' && ufssizecounts?.opcode_stats} 
                     <SizeStats opcode_size_counts={ufssizecounts.opcode_stats} />
-                    {:else if $selectedTrace === 'block'}
+                    {:else if $selectedTrace === 'block' &&  blocksizecounts?.opcode_stats}
                     <SizeStats opcode_size_counts={blocksizecounts.opcode_stats} />
                     {/if}
                 </Card.Content>

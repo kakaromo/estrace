@@ -8,16 +8,40 @@
     // props로부터 전달받은 값
     let { tracetype, latencystat, threshold } = $props();
 
-    // 기존 latency_counts: { [latency_type: string]: { [threshold: string]: number } }
-    let latency_counts = latencystat.latency_counts;
-    let latency_summary = latencystat.summary;
-    console.log('latency_summary:', latency_summary);
-    
-    // 결과를 위한 배열들
-    let latency_threshold: string[] = [];
-    let latency_type_key: string[] = [];
-    let grid_columns: Array<{ id: string, header: string, width: number }> = [];
-    let grid_data: any[] = [];
+    // 모든 상태를 $state로 선언
+    let latency_counts = $state(null);
+    let latency_summary = $state(null);
+    let latency_threshold = $state<string[]>([]);
+    let latency_type_key = $state<string[]>([]);
+    let grid_columns = $state<Array<{ id: string, header: string, width: number }>>([]);
+    let grid_data = $state<any[]>([]);
+    let grid_columns_summary = $state<Array<{ id: string, header: string, width: number }>>([]);
+    let grid_data_summary = $state<any[]>([]);
+
+    // 이전 latencystat 값을 저장할 변수
+    let prevLatencystat = $state(null);
+
+    // latencystat이 실제로 변경될 때만 데이터 재처리
+    $effect(() => {
+        if (latencystat && JSON.stringify(latencystat) !== JSON.stringify(prevLatencystat)) {
+            console.log('latencystat actually changed:', latencystat);
+            
+            // 현재 값을 이전 값으로 저장
+            prevLatencystat = JSON.parse(JSON.stringify(latencystat));
+            
+            // 데이터 초기화 및 재처리
+            latency_counts = latencystat.latency_counts;
+            latency_summary = latencystat.summary;
+            
+            latency_threshold = [];
+            latency_type_key = [];
+            
+            latencyTypeKey();
+            thresholdValue();
+            buildTransposedGridData();
+            buildSummaryGridData();
+        }
+    });
 
     // threshold 문자열 배열 생성 (예: [ "≤ 0.1ms", "0.1ms < v ≤ 0.5ms", "> 1000s" ])
     function thresholdValue() {
@@ -67,8 +91,6 @@
         });
     }
 
-    let grid_columns_summary: Array<{ id: string, header: string, width: number }> = [];
-    let grid_data_summary: any[] = [];
 
     function buildSummaryGridData() {
         // 기본 컬럼 정의
@@ -121,12 +143,11 @@
         });
     }
 
-    // 함수 호출 순서: type, threshold, 전치 데이터 생성
-    latencyTypeKey();
-    thresholdValue();        
-    buildTransposedGridData();
-
-    buildSummaryGridData();
+    // // 함수 호출 순서: type, threshold, 전치 데이터 생성
+    // latencyTypeKey();
+    // thresholdValue();        
+    // buildTransposedGridData();
+    // buildSummaryGridData();
 
     console.log("grid_columns_summary:", grid_columns_summary);
     console.log("grid_data_summary:", grid_data_summary);
@@ -139,13 +160,13 @@
 
 <div class="font-sans">
     <Willow>
-        <div class="px-0" style="font-size: 11px;">
+        <div class="px-0" style="font-size: 12px;">
             <Grid data={grid_data} columns={grid_columns}/>
         </div>
     </Willow>
     <div class="divider"></div>
     <Willow>
-        <div class="px-0" style="font-size: 11px;">
+        <div class="px-0" style="font-size: 12px;">
             <Grid data={grid_data_summary} columns={grid_columns_summary}/>
         </div>
     </Willow>
@@ -153,6 +174,6 @@
 
 <style>
     .font-sans {
-        font-size: 11px;
+        font-size: 12px;
     }
 </style>
