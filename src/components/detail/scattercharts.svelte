@@ -6,9 +6,9 @@
 
   import * as Dialog from "$lib/components/ui/dialog";
 
-  import { trace, selectedTrace, filtertrace } from '$stores/trace';
+  import { trace, selectedTrace, filtertrace, filtertraceChanged } from '$stores/trace';
 
-  let { data, xAxisKey, yAxisKey, legendKey, xAxisLabel = 'time', yAxisLabel = 'sector' } = $props();
+  let { data, xAxisKey, yAxisKey, legendKey, xAxisLabel = 'time', yAxisLabel = 'sector', ycolumn } = $props();
 
   let title = $state('');
   let symbolSize = $state(3);
@@ -19,8 +19,13 @@
   let legendshow = $state(true);
   let tooltipshow = $state(true);
 
+  let prevData = $state(null);
+  let prevFilter = $state(null);
+
   xAxisName = xAxisLabel;
   yAxisName = yAxisLabel;
+
+  prevData = data;
 
   let chartContainer;
   let chartInstance;
@@ -100,7 +105,7 @@
       const y = parseFloat(item[yAxisKey]);
       
 
-      if (!isNaN(x) && !isNaN(y) && y !== 0) {
+      if (!isNaN(x) && !isNaN(y)) {
         const legend = item[legendKey];
         if (!seriesData[legend]) seriesData[legend] = [];
         seriesData[legend].push([x, y]);
@@ -173,10 +178,18 @@
     // restore 이벤트 핸들러 추가: restore 시 custom 상태 초기화
     chartInstance.on('restore', () => {
       tooltipVisible = false;
+      console.log('restore event');
       xZoomFrom = 0;
       xZoomTo = 0;
       yZoomFrom = 0;
-      yZoomTo = 0;      
+      yZoomTo = 0;     
+      $filtertrace = {
+        zoom_column: ycolumn,
+        from_time: xZoomFrom,
+        to_time: xZoomTo,
+        from_lba: yZoomFrom,
+        to_lba: yZoomTo
+      }; 
     });
 
     // 커스텀 tooltip을 위한 mousemove, mouseleave 이벤트 등록
@@ -200,38 +213,63 @@
     });
     console.log('datazoom event registered');
     $filtertrace = {
-          from_time: xZoomFrom,
-          to_time: xZoomTo,
-          from_lba: yZoomFrom,
-          to_lba: yZoomTo
-      };
+      zoom_column: ycolumn,
+      from_time: xZoomFrom,
+      to_time: xZoomTo,
+      from_lba: yZoomFrom,
+      to_lba: yZoomTo
+    };
     console.log('filtertrace:', $filtertrace);
   }
 
-  $effect(() => {
+  $effect(() => {   
     $filtertrace = {
-          from_time: xZoomFrom,
-          to_time: xZoomTo,
-          from_lba: yZoomFrom,
-          to_lba: yZoomTo
-      };
-		// if (!['lba', 'sector'].includes(yAxisKey)) {
-    //   const lbaRange = findLbaRangeInTimeRange(xZoomFrom, xZoomTo);
-    //   $filtertrace = {
-    //       from_time: xZoomFrom,
-    //       to_time: xZoomTo,
-    //       from_lba: lbaRange.from,
-    //       to_lba: lbaRange.to
-    //   };
-    // } else {
-    //   $filtertrace = {
-    //       from_time: xZoomFrom,
-    //       to_time: xZoomTo,
-    //       from_lba: yZoomFrom,
-    //       to_lba: yZoomTo
-    //   };
-    // }
+      zoom_column: ycolumn,
+      from_time: xZoomFrom,
+      to_time: xZoomTo,
+      from_lba: yZoomFrom,
+      to_lba: yZoomTo
+    };
+    
 	});
+
+  $effect(() => {
+    if (JSON.stringify(prevData) !== JSON.stringify(data)) {
+      console.log('data changed:');
+      prevData = data;
+      if (chartInstance) {
+        // const series = prepareChartData();
+        
+        // // 차트 옵션 업데이트
+        // chartInstance.setOption({
+        //   series: series
+        // }, { replaceMerge: ['series'] }); // series만 완전히 교체
+        chartContainer.removeEventListener('mousemove', handleMouseMove);
+        if (resizeObserver) {
+          resizeObserver.disconnect();
+        }
+        chartInstance.dispose();
+        initChart();
+        resizeObserver = new ResizeObserver(entries => {
+          for (let entry of entries) {
+            if (entry.target === chartContainer) {
+              updateChartSize();
+            }
+          }
+        });
+        resizeObserver.observe(chartContainer);
+
+      }
+    }
+    // if (chartInstance) {
+    //     const series = prepareChartData();
+        
+    //     // 차트 옵션 업데이트
+    //     chartInstance.setOption({
+    //       series: series
+    //     }, { replaceMerge: ['series'] }); // series만 완전히 교체
+    //   }
+  });
 
   
 
@@ -298,7 +336,7 @@
         from: minLba === Infinity ? 0 : minLba,
         to: maxLba === -Infinity ? 0 : maxLba
     };
-}
+  }
   
   onMount(() => {
     initChart();

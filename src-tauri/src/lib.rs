@@ -33,9 +33,9 @@ pub fn run() {
             greet,
             trace::starttrace,
             trace::readtrace,
-            trace::latencystats,
+            trace::ufs_latencystats,
             trace::block_latencystats,
-            trace::sizestats,
+            trace::ufs_sizestats,
             trace::block_sizestats
         ])
         .run(tauri::generate_context!())

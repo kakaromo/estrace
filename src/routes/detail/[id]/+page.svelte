@@ -5,7 +5,7 @@
     import { invoke } from "@tauri-apps/api/core";
     
     import { getTestInfo } from '$api/db';
-    import { trace, selectedTrace, filtertrace } from '$stores/trace';
+    import { trace, selectedTrace, filtertrace, prevFilterTrace, filtertraceChanged } from '$stores/trace';
 
     import { Circle2 } from 'svelte-loading-spinners';
     import { StepBack } from 'svelte-lucide';
@@ -23,7 +23,8 @@
 
     let id: number;
     let data = $state({});
-    let tracedata = $state([]);
+    let tracedata = [];
+    let filteredData = $state([]);
     let tracetype = $state([]);
     
     let isLoading = $state(false);
@@ -59,13 +60,34 @@
 
     // currentValue가 변경될 때마다 호출되는 함수
     $effect(async () => {
-        console.log('filtertrace:', $filtertrace);
-        if (fname) {
+        if ($filtertraceChanged) {
+            console.log('filtertrace changed from:', $prevFilterTrace);
+            console.log('to:', $filtertrace);
+            
+            // 현재 값을 이전 값으로 업데이트
+            $prevFilterTrace = {...$filtertrace};
             await ufslatencystats(fname);
             await blocklatencystats(fname);
+            setFilterData();
         }
     });
 
+    function setFilterData() {
+        if ($filtertrace.from_time === 0 && $filtertrace.to_time === 0) {
+            filteredData[$selectedTrace] = tracedata[$selectedTrace];
+            console.log('filteredData:', filteredData[$selectedTrace].length);  
+            console.log('tracedata:', tracedata[$selectedTrace].length);
+        } 
+        else {
+            console.log('filtertrace:', $filtertrace);
+            const filter = tracedata[$selectedTrace].filter((item) => {
+                return item.time >= $filtertrace.from_time && item.time <= $filtertrace.to_time && 
+                    item[$filtertrace.zoom_column] >= $filtertrace.from_lba && item[$filtertrace.zoom_column] <= $filtertrace.to_lba;
+            });
+            console.log('filter length:', filter.length);
+            filteredData[$selectedTrace] = filter;
+        }
+    }
 
     onMount(async () => {
         try {
@@ -106,6 +128,7 @@
             console.log("invoke('readtrace') time:", endInvoke - startInvoke, "ms");
             // 전역 trace store에 데이터 저장
             $trace = tracedata;
+            filteredData = tracedata;
             
             tracetype = Object.keys(tracedata);
             console.log('tracetype:', tracetype);
@@ -135,36 +158,33 @@
     });
 
     async function ufslatencystats(ufsfname: string) {
-        
-        let filter = {time_from: $filtertrace.from_time, time_to: $filtertrace.to_time, col_from: $filtertrace.from_lba, col_to: $filtertrace.to_lba};
-        console.log("filter", filter);
         if(tracedata && tracedata.ufs.length > 0) {
             console.log("data", data);
             console.log("ufsfname", ufsfname);
             const startdtocstat = performance.now();        
-            const ufsdtocstatResult:string = await invoke('latencystats', { logname: ufsfname, column: 'dtoc', thresholds:thresholds, 
-                timeFrom: $filtertrace.from_time, timeTo: $filtertrace.to_time, colFrom: $filtertrace.from_lba, colTo: $filtertrace.to_lba });                     
+            const ufsdtocstatResult:string = await invoke('ufs_latencystats', { logname: ufsfname, column: 'dtoc', thresholds:thresholds, 
+                timeFrom: $filtertrace.from_time, timeTo: $filtertrace.to_time, colFrom: $filtertrace.from_lba, colTo: $filtertrace.to_lba, zoomColumn: $filtertrace.zoom_column });                     
             ufsdtocstat = JSON.parse(ufsdtocstatResult);                    
             const enddtocstat = performance.now();        
             console.log("statusdata time:", enddtocstat - startdtocstat, "ms");
 
             const startctodstat = performance.now();
-            const ufsctodstatResult:string = await invoke('latencystats', { logname: ufsfname, column: 'ctod', thresholds:thresholds, 
-            timeFrom: $filtertrace.from_time, timeTo: $filtertrace.to_time, colFrom: $filtertrace.from_lba, colTo: $filtertrace.to_lba });                     
+            const ufsctodstatResult:string = await invoke('ufs_latencystats', { logname: ufsfname, column: 'ctod', thresholds:thresholds, 
+            timeFrom: $filtertrace.from_time, timeTo: $filtertrace.to_time, colFrom: $filtertrace.from_lba, colTo: $filtertrace.to_lba, zoomColumn: $filtertrace.zoom_column });                     
             ufsctodstat = JSON.parse(ufsctodstatResult);                                 
             const endctodstat = performance.now();
             console.log("statusdata time:", endctodstat - startctodstat, "ms");
 
             const startctocstat = performance.now();        
-            const ufsctocstatResult:string = await invoke('latencystats', { logname: ufsfname, column: 'ctoc', thresholds:thresholds, 
-            timeFrom: $filtertrace.from_time, timeTo: $filtertrace.to_time, colFrom: $filtertrace.from_lba, colTo: $filtertrace.to_lba });                     
+            const ufsctocstatResult:string = await invoke('ufs_latencystats', { logname: ufsfname, column: 'ctoc', thresholds:thresholds, 
+            timeFrom: $filtertrace.from_time, timeTo: $filtertrace.to_time, colFrom: $filtertrace.from_lba, colTo: $filtertrace.to_lba, zoomColumn: $filtertrace.zoom_column });                     
             ufsctocstat = JSON.parse(ufsctocstatResult);
             const endctocstat = performance.now();
             console.log("statusdata time:", endctocstat - startctocstat, "ms");
 
             const startSizeCounts = performance.now();
-            const ufssizecountsResult = await invoke('sizestats', { logname: ufsfname, column: 'dtoc', 
-            timeFrom: $filtertrace.from_time, timeTo: $filtertrace.to_time, colFrom: $filtertrace.from_lba, colTo: $filtertrace.to_lba });                     
+            const ufssizecountsResult = await invoke('ufs_sizestats', { logname: ufsfname, column: 'dtoc', 
+            timeFrom: $filtertrace.from_time, timeTo: $filtertrace.to_time, colFrom: $filtertrace.from_lba, colTo: $filtertrace.to_lba, zoomColumn: $filtertrace.zoom_column });                     
             ufssizecounts = JSON.parse(ufssizecountsResult);                 
             ufstotal_counts = ufssizecounts.total_counts;
             ufsopcode_stats = ufssizecounts.opcode_stats;
@@ -178,25 +198,25 @@
             let blockfname = data.logname.split(',')[1];
             const startdtocstat = performance.now();
             blockdtocstat = await invoke('block_latencystats', { logname: blockfname, column: 'dtoc', thresholds:thresholds, group: true,
-            timeFrom: $filtertrace.from_time, timeTo: $filtertrace.to_time, colFrom: $filtertrace.from_lba, colTo: $filtertrace.to_lba });                     
+            timeFrom: $filtertrace.from_time, timeTo: $filtertrace.to_time, colFrom: $filtertrace.from_lba, colTo: $filtertrace.to_lba, zoomColumn: $filtertrace.zoom_column });                     
             blockdtocstat = JSON.parse(blockdtocstat);
             const enddtocstat = performance.now();
             console.log("statusdata time:", enddtocstat - startdtocstat, "ms");
             const startctodstat = performance.now();
             blockctodstat = await invoke('block_latencystats', { logname: blockfname, column: 'ctod', thresholds:thresholds, group: true,
-            timeFrom: $filtertrace.from_time, timeTo: $filtertrace.to_time, colFrom: $filtertrace.from_lba, colTo: $filtertrace.to_lba });                     
+            timeFrom: $filtertrace.from_time, timeTo: $filtertrace.to_time, colFrom: $filtertrace.from_lba, colTo: $filtertrace.to_lba, zoomColumn: $filtertrace.zoom_column });                     
             blockctodstat = JSON.parse(blockctodstat);
             const endctodstat = performance.now();
             console.log("statusdata time:", endctodstat - startctodstat, "ms");
             const startctocstat = performance.now();
             blockctocstat = await invoke('block_latencystats', { logname: blockfname, column: 'ctoc', thresholds:thresholds, group: true, 
-            timeFrom: $filtertrace.from_time, timeTo: $filtertrace.to_time, colFrom: $filtertrace.from_lba, colTo: $filtertrace.to_lba });                     
+            timeFrom: $filtertrace.from_time, timeTo: $filtertrace.to_time, colFrom: $filtertrace.from_lba, colTo: $filtertrace.to_lba, zoomColumn: $filtertrace.zoom_column });                     
             blockctocstat = JSON.parse(blockctocstat);
             const endctocstat = performance.now();
             console.log("statusdata time:", endctocstat - startctocstat, "ms");
             const startSizeCounts = performance.now();                
             blocksizecounts = await invoke('block_sizestats', { logname: blockfname, column: 'dtoc', group: true, 
-            timeFrom: $filtertrace.from_time, timeTo: $filtertrace.to_time, colFrom: $filtertrace.from_lba, colTo: $filtertrace.to_lba });                     
+            timeFrom: $filtertrace.from_time, timeTo: $filtertrace.to_time, colFrom: $filtertrace.from_lba, colTo: $filtertrace.to_lba, zoomColumn: $filtertrace.zoom_column });                     
             blocksizecounts = JSON.parse(blocksizecounts);
             blocktotal_counts = blocksizecounts.total_counts;
             blockopcode_stats = blocksizecounts.opcode_stats;
@@ -235,14 +255,14 @@
                     </Card.Header>
                     <Card.Content>
                         {#if $selectedTrace === 'ufs'} 
-                        <ScatterCharts data={$trace.ufs} xAxisKey='time' yAxisKey='lba' legendKey='opcode' yAxisLabel='4KB'/>
+                        <ScatterCharts data={filteredData.ufs} xAxisKey='time' yAxisKey='lba' legendKey='opcode' yAxisLabel='4KB' ycolumn='lba'/>
                         {:else if $selectedTrace === 'block'}
-                        <ScatterCharts data={$trace.block} xAxisKey='time' yAxisKey='sector' legendKey='io_type' yAxisLabel='sector'/>
+                        <ScatterCharts data={filteredData.block} xAxisKey='time' yAxisKey='sector' legendKey='io_type' yAxisLabel='sector' ycolumn='sector'/>
                         {/if}
                     </Card.Content>
                 </Card.Root>
                 <Separator class="my-4" />
-                <Card.Header>
+                <!-- <Card.Header>
                     <Card.Title>{$selectedTrace.toUpperCase()} Latency</Card.Title>
                 </Card.Header>
                 <Card.Content>
@@ -250,15 +270,15 @@
                     <div role="tablist" class="tabs tabs-lifted">
                         <input type="radio" name="ufslatencychart" role="tab" class="tab" aria-label="DtoC" checked="checked"/>
                         <div role="tabpanel" class="tab-content bg-base-100 border-base-300 rounded-box p-6">
-                            <ScatterCharts data={$trace.ufs} xAxisKey='time' yAxisKey='dtoc' legendKey='opcode' yAxisLabel='ms'/> 
+                            <ScatterCharts data={filteredData.ufs} xAxisKey='time' yAxisKey='dtoc' legendKey='opcode' yAxisLabel='ms' ycolumn='dtoc'/> 
                         </div>
                         <input type="radio" name="ufslatencychart" role="tab" class="tab" aria-label="CtoD"/>
                         <div role="tabpanel" class="tab-content bg-base-100 border-base-300 rounded-box p-6">
-                            <ScatterCharts data={$trace.ufs} xAxisKey='time' yAxisKey='ctod' legendKey='opcode' yAxisLabel='ms'/> 
+                            <ScatterCharts data={filteredData.ufs} xAxisKey='time' yAxisKey='ctod' legendKey='opcode' yAxisLabel='ms' ycolumn='ctod'/> 
                         </div>
                         <input type="radio" name="ufslatencychart" role="tab" class="tab" aria-label="CtoC"/>
                         <div role="tabpanel" class="tab-content bg-base-100 border-base-300 rounded-box p-6">
-                            <ScatterCharts data={$trace.ufs} xAxisKey='time' yAxisKey='ctoc' legendKey='opcode' yAxisLabel='ms'/> 
+                            <ScatterCharts data={filteredData.ufs} xAxisKey='time' yAxisKey='ctoc' legendKey='opcode' yAxisLabel='ms' ycolumn='ctoc'/> 
                         </div>
                     </div>
                              
@@ -266,20 +286,20 @@
                     <div role="tablist" class="tabs tabs-lifted">
                         <input type="radio" name="blocklatencychart" role="tab" class="tab" aria-label="DtoC" checked="checked"/>
                         <div role="tabpanel" class="tab-content bg-base-100 border-base-300 rounded-box p-6">
-                            <ScatterCharts data={$trace.block} xAxisKey='time' yAxisKey='dtoc' legendKey='io_type' yAxisLabel='ms'/> 
+                            <ScatterCharts data={filteredData.block} xAxisKey='time' yAxisKey='dtoc' legendKey='io_type' yAxisLabel='ms' ycolumn='dtoc'/> 
                         </div>
                         <input type="radio" name="blocklatencychart" role="tab" class="tab" aria-label="CtoD"/>
                         <div role="tabpanel" class="tab-content bg-base-100 border-base-300 rounded-box p-6">
-                            <ScatterCharts data={$trace.block} xAxisKey='time' yAxisKey='ctod' legendKey='io_type' yAxisLabel='ms'/> 
+                            <ScatterCharts data={filteredData.block} xAxisKey='time' yAxisKey='ctod' legendKey='io_type' yAxisLabel='ms' ycolumn='ctod'/> 
                         </div>
                         <input type="radio" name="blocklatencychart" role="tab" class="tab" aria-label="CtoC"/>
                         <div role="tabpanel" class="tab-content bg-base-100 border-base-300 rounded-box p-6">
-                            <ScatterCharts data={$trace.block} xAxisKey='time' yAxisKey='ctoc' legendKey='io_type' yAxisLabel='ms'/> 
+                            <ScatterCharts data={filteredData.block} xAxisKey='time' yAxisKey='ctoc' legendKey='io_type' yAxisLabel='ms' ycolumn='ctoc'/> 
                         </div>
                     </div>
                     
                     {/if}
-                </Card.Content>
+                </Card.Content> -->
                 <Separator class="my-4" />
                 <Card.Root>
                     <Card.Header>

@@ -81,28 +81,28 @@ pub struct Block {
 }
 
 #[derive(Serialize, Debug, Clone)]
-pub enum ChartValue {
+pub enum LatencyValue {
     F64(f64),
     U32(u32),
     U64(u64),
 }
 
-impl ChartValue {
+impl LatencyValue {
     // filtering 용도로 f64 값으로 변환 (u32, u64는 f64로 변환)
     pub fn as_f64(&self) -> f64 {
         match *self {
-            ChartValue::F64(v) => v,
-            ChartValue::U32(v) => v as f64,
-            ChartValue::U64(v) => v as f64,
+            LatencyValue::F64(v) => v,
+            LatencyValue::U32(v) => v as f64,
+            LatencyValue::U64(v) => v as f64,
         }
     }
 }
 
 #[derive(Serialize, Debug, Clone)]
-pub struct ChartStat {
+pub struct LatencyStat {
     pub time: f64,
     pub opcode: String,
-    pub value: ChartValue,
+    pub value: LatencyValue,
 }
 
 pub(crate) static UFS_CACHE: Lazy<Mutex<HashMap<String, Vec<UFS>>>> = Lazy::new(|| Mutex::new(HashMap::new()));
@@ -1148,9 +1148,10 @@ fn parse_time_to_ms(time_str: &str) -> Result<f64, String> {
 }
 
 #[tauri::command]
-pub async fn latencystats(
+pub async fn ufs_latencystats(
     logname: String,
     column: String,
+    zoom_column: String,
     time_from: Option<f64>,
     time_to: Option<f64>,
     col_from: Option<f64>,
@@ -1187,62 +1188,71 @@ pub async fn latencystats(
         cached_ufs_list
     };
 
-    // lba 필드 기준 추가 필터링 (col_from, col_to 적용)
-    let lba_filtered: Vec<UFS> = if let (Some(v_from), Some(v_to)) = (col_from, col_to) {
+    // zoom_column 필드 기준 추가 필터링 (col_from, col_to 적용)
+    let zoom_filtered: Vec<UFS> = if let (Some(v_from), Some(v_to)) = (col_from, col_to) {
         if v_from == 0.0 && v_to == 0.0 {
             time_filtered
         } else {
             time_filtered.into_iter()
-                .filter(|ufs| (ufs.lba as f64) >= v_from && (ufs.lba as f64) <= v_to)
+                .filter(|ufs| {
+                    let value = match zoom_column.as_str() {
+                        "dtoc" => ufs.dtoc,
+                        "ctoc" => ufs.ctoc,
+                        "ctod" => ufs.ctod,
+                        "lba" => ufs.lba as f64,
+                        _ => return false,
+                    };
+                    value >= v_from && value <= v_to                    
+                })
                 .collect()
         }
     } else {
         time_filtered
     };
 
-    // ChartStat 생성 – column에 따라 latency나 lba 값을 ChartStat::value로 매핑 
-    let mut chart_stats = match column.as_str() {
-        "dtoc" | "ctoc" => lba_filtered
+    // LatencyStat 생성 – column에 따라 latency나 lba 값을 LatencyStat::value로 매핑 
+    let mut latency_stats = match column.as_str() {
+        "dtoc" | "ctoc" => zoom_filtered
             .iter()
             .filter(|ufs| ufs.action == "complete_rsp")
-            .map(|ufs| ChartStat {
+            .map(|ufs| LatencyStat {
                 time: ufs.time,
                 opcode: ufs.opcode.clone(),
                 value: if column == "dtoc" {
-                    ChartValue::F64(ufs.dtoc)
+                    LatencyValue::F64(ufs.dtoc)
                 } else {
-                    ChartValue::F64(ufs.ctoc)
+                    LatencyValue::F64(ufs.ctoc)
                 },
             })
             .collect::<Vec<_>>(),
-        "ctod" => lba_filtered
+        "ctod" => zoom_filtered
             .iter()
             .filter(|ufs| ufs.action == "send_req")
-            .map(|ufs| ChartStat {
+            .map(|ufs| LatencyStat {
                 time: ufs.time,
                 opcode: ufs.opcode.clone(),
-                value: ChartValue::F64(ufs.ctod),
+                value: LatencyValue::F64(ufs.ctod),
             })
             .collect::<Vec<_>>(),
-        "lba" => lba_filtered
+        "lba" => zoom_filtered
             .iter()
-            .map(|ufs| ChartStat {
+            .map(|ufs| LatencyStat {
                 time: ufs.time,
                 opcode: ufs.opcode.clone(),
-                value: ChartValue::F64(ufs.lba as f64),
+                value: LatencyValue::F64(ufs.lba as f64),
             })
             .collect::<Vec<_>>(),
         _ => return Err("Invalid column".to_string()),
     };
 
     // 시간순 정렬
-    chart_stats.sort_by(|a, b| a.time.partial_cmp(&b.time).unwrap());
+    latency_stats.sort_by(|a, b| a.time.partial_cmp(&b.time).unwrap());
 
     // opcode별 latency count 초기화
     let mut latency_counts: BTreeMap<String, BTreeMap<String, usize>> = BTreeMap::new();
     
     // 모든 opcode에 대해 threshold 구간 초기화
-    let unique_opcodes: Vec<String> = chart_stats.iter()
+    let unique_opcodes: Vec<String> = latency_stats.iter()
         .map(|stat| stat.opcode.clone())
         .collect::<std::collections::HashSet<_>>()
         .into_iter()
@@ -1270,7 +1280,7 @@ pub async fn latencystats(
     }
 
     // 각 데이터에 대해 해당하는 opcode의 구간 카운트 증가
-    for stat in &chart_stats {
+    for stat in &latency_stats {
         let latency = stat.value.as_f64();
         let range_key = if threshold_values.is_empty() {
             "전체".to_string()
@@ -1305,7 +1315,7 @@ pub async fn latencystats(
 
     // opcode별 그룹핑
     let mut opcode_groups = BTreeMap::new();
-    for stat in &chart_stats {
+    for stat in &latency_stats {
         opcode_groups.entry(stat.opcode.clone())
             .or_insert_with(Vec::new)
             .push(stat.value.as_f64());
@@ -1333,9 +1343,10 @@ pub struct SizeStats {
 }
 
 #[tauri::command]
-pub async fn sizestats(
+pub async fn ufs_sizestats(
     logname: String,
     column: String,
+    zoom_column: String,
     time_from: Option<f64>,
     time_to: Option<f64>,
     col_from: Option<f64>,
@@ -1361,14 +1372,23 @@ pub async fn sizestats(
         cached_ufs_list
     };
 
-    // lba 필드 기준 추가 필터링 (col_from, col_to 적용)
-    // (latencystats와 동일 조건: col_from, col_to는 항상 lba 필드를 기준으로 함)
-    let lba_filtered: Vec<UFS> = if let (Some(v_from), Some(v_to)) = (col_from, col_to) {
+    // zoom_column 필드 기준 추가 필터링 (col_from, col_to 적용)
+    // (latencystats와 동일 조건: col_from, col_to는 항상 zoom_column 필드를 기준으로 함)
+    let zoom_filtered: Vec<UFS> = if let (Some(v_from), Some(v_to)) = (col_from, col_to) {
         if v_from == 0.0 && v_to == 0.0 {
             time_filtered
         } else {
             time_filtered.into_iter()
-                .filter(|ufs| (ufs.lba as f64) >= v_from && (ufs.lba as f64) <= v_to)
+                .filter(|ufs| {
+                    let value = match zoom_column.as_str() {
+                        "lba" => ufs.lba as f64,
+                        "dtoc" => ufs.dtoc,
+                        "ctoc" => ufs.ctoc,
+                        "ctod" => ufs.ctod,
+                        _ => return false, // 지원하지 않는 컬럼인 경우
+                    };
+                    value >= v_from && value <= v_to
+                })
                 .collect()
         }
     } else {
@@ -1379,7 +1399,7 @@ pub async fn sizestats(
     let target_opcodes = ["0x2a", "0x28", "0x42"];
 
     // column에 따른 추가 필터링 (action 체크)
-    let filtered_ufs: Vec<&UFS> = lba_filtered.iter()
+    let filtered_ufs: Vec<&UFS> = zoom_filtered.iter()
         .filter(|ufs| {
             match column.as_str() {
                 "dtoc" | "ctoc" => ufs.action == "complete_rsp",
@@ -1424,6 +1444,7 @@ fn normalize_io_type(io: &str) -> String {
 pub async fn block_latencystats(
     logname: String,
     column: String,
+    zoom_column: String,
     time_from: Option<f64>,
     time_to: Option<f64>,
     col_from: Option<f64>,
@@ -1456,59 +1477,67 @@ pub async fn block_latencystats(
         cached_block_list
     };
 
-    // sector 필드를 기준으로 추가 필터링 (col_from, col_to 적용)
-    // block에서는 lba가 아니라 sector로 판단합니다.
-    let sector_filtered: Vec<Block> = if let (Some(v_from), Some(v_to)) = (col_from, col_to) {
+    // zoom column 필드를 기준으로 추가 필터링 (col_from, col_to 적용)
+    let zoom_filtered: Vec<Block> = if let (Some(v_from), Some(v_to)) = (col_from, col_to) {
         if v_from == 0.0 && v_to == 0.0 {
             time_filtered
         } else {
-        time_filtered.into_iter()
-            .filter(|b| (b.sector as f64) >= v_from && (b.sector as f64) <= v_to)
-            .collect()
+            time_filtered.into_iter()
+                .filter(|block| {
+                    let value = match zoom_column.as_str() {
+                        "lba" => block.sector as f64,
+                        "dtoc" => block.dtoc,
+                        "ctoc" => block.ctoc,
+                        "ctod" => block.ctod,
+                        _ => return false, // 지원하지 않는 컬럼인 경우
+                    };
+                    value >= v_from && value <= v_to
+                })
+                .collect()
         }
     } else {
         time_filtered
     };
 
     // column에 따라 필터링: "dtoc", "ctoc", "ctod", "sector" 등 (필요에 따라 확장)
-    let chart_stats: Vec<ChartStat> = match column.as_str() {
-        "dtoc" | "ctoc" => sector_filtered
+    let latency_stats: Vec<LatencyStat> = match column.as_str() {
+        "dtoc" | "ctoc" => zoom_filtered
             .iter()
             .filter(|b| b.action == "block_rq_complete")
-            .map(|b| ChartStat {
+            .map(|b| LatencyStat {
                 time: b.time,
                 // grouping key로 io_type 사용
                 opcode: if group { normalize_io_type(&b.io_type) } else { b.io_type.clone() },
                 value: if column == "dtoc" {
-                    ChartValue::F64(b.dtoc)
+                    LatencyValue::F64(b.dtoc)
                 } else {
-                    ChartValue::F64(b.ctoc)
+                    LatencyValue::F64(b.ctoc)
                 },
             })
             .collect(),
-        "ctod" => sector_filtered
+        "ctod" => zoom_filtered
             .iter()
             .filter(|b| b.action == "block_rq_issue")
-            .map(|b| ChartStat {
+            .map(|b| LatencyStat {
                 time: b.time,
                 opcode: if group { normalize_io_type(&b.io_type) } else { b.io_type.clone() },
-                value: ChartValue::F64(b.ctod),
+                value: LatencyValue::F64(b.ctod),
             })
             .collect(),
-        "sector" => sector_filtered
+        "sector" => zoom_filtered
             .iter()
             .filter(|b| b.action == "block_rq_issue")
-            .map(|b| ChartStat {
+            .map(|b| LatencyStat {
                 time: b.time,
                 opcode: if group { normalize_io_type(&b.io_type) } else { b.io_type.clone() },
-                value: ChartValue::F64(b.sector as f64),
+                value: LatencyValue::F64(b.sector as f64),
             })
             .collect(),
         _ => return Err("Invalid column for block latencystats".to_string()),
     };
 
     // value 범위 필터링 (추가적인 수치 필터링이 필요한 경우)
-    let mut filtered_stats = chart_stats;
+    let mut filtered_stats = latency_stats;
     if let Some(v_from) = col_from {
         if v_from != 0.0 {
             filtered_stats.retain(|s| s.value.as_f64() >= v_from);
@@ -1598,6 +1627,7 @@ pub async fn block_latencystats(
 pub async fn block_sizestats(
     logname: String,
     column: String,
+    zoom_column: String,
     time_from: Option<f64>,
     time_to: Option<f64>,
     col_from: Option<f64>,
@@ -1622,21 +1652,30 @@ pub async fn block_sizestats(
         cached_block_list
     };
 
-    // sector 필드를 기준으로 추가 필터링 (col_from, col_to 적용)
-    let sector_filtered: Vec<Block> = if let (Some(v_from), Some(v_to)) = (col_from, col_to) {
+    // zoom 필드를 기준으로 추가 필터링 (col_from, col_to 적용)
+    let zoom_filtered: Vec<Block> = if let (Some(v_from), Some(v_to)) = (col_from, col_to) {
         if v_from == 0.0 && v_to == 0.0 {
             time_filtered
         } else {
-        time_filtered.into_iter()
-            .filter(|b| (b.sector as f64) >= v_from && (b.sector as f64) <= v_to)
-            .collect()
+            time_filtered.into_iter()
+                .filter(|block| {
+                    let value = match zoom_column.as_str() {
+                        "lba" => block.sector as f64,
+                        "dtoc" => block.dtoc,
+                        "ctoc" => block.ctoc,
+                        "ctod" => block.ctod,
+                        _ => return false, // 지원하지 않는 컬럼인 경우
+                    };
+                    value >= v_from && value <= v_to
+                })
+                .collect()
         }
     } else {
         time_filtered
     };
 
     // column 조건에 따라 유효한 데이터만 필터링
-    let filtered_blocks: Vec<&Block> = sector_filtered.iter().filter(|b| {
+    let filtered_blocks: Vec<&Block> = zoom_filtered.iter().filter(|b| {
         match column.as_str() {
             "dtoc" | "ctoc" => b.action == "block_rq_complete",
             "ctod" | "sector"  => b.action == "block_rq_issue",
