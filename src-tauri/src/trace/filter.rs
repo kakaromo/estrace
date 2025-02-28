@@ -1,4 +1,4 @@
-use crate::trace::{UFS, Block, UFS_CACHE, BLOCK_CACHE};
+use crate::trace::{Block, BLOCK_CACHE, UFS, UFS_CACHE};
 
 // 공통 필터링 로직 구현
 // UFS 데이터 필터링 함수

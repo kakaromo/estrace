@@ -1,17 +1,21 @@
+use std::collections::{BTreeMap, HashMap};
 use std::fs::File;
 use std::path::PathBuf;
-use std::collections::{HashMap, BTreeMap};
 
 use chrono::Local;
 use datafusion::prelude::*;
 use memmap2::Mmap;
-use rayon::prelude::*;
 use rand::prelude::IndexedRandom;
+use rayon::prelude::*;
 use tauri::async_runtime::spawn_blocking;
 
-use crate::trace::{UFS, Block, TraceParseResult, LatencySummary, UFS_CACHE, BLOCK_CACHE, MAX_PREVIEW_RECORDS};
-use crate::trace::ufs::{parse_ufs_trace, ufs_bottom_half_latency_process, save_ufs_to_parquet};
-use crate::trace::block::{parse_block_trace, block_bottom_half_latency_process, save_block_to_parquet};
+use crate::trace::block::{
+    block_bottom_half_latency_process, parse_block_trace, save_block_to_parquet,
+};
+use crate::trace::ufs::{parse_ufs_trace, save_ufs_to_parquet, ufs_bottom_half_latency_process};
+use crate::trace::{
+    Block, LatencySummary, TraceParseResult, BLOCK_CACHE, MAX_PREVIEW_RECORDS, UFS, UFS_CACHE,
+};
 
 // 샘플링 함수들
 pub fn sample_ufs(ufs_list: &[UFS]) -> Vec<UFS> {
@@ -213,7 +217,7 @@ pub async fn readtrace(logname: String) -> Result<String, String> {
         if !path.is_file() {
             continue; // 파일이 아니면 건너뜁니다.
         }
-        
+
         if let Some(fname) = path.file_name().and_then(|s| s.to_str()) {
             if fname.contains("ufs") && fname.ends_with(".parquet") {
                 // UFS parquet 파일 읽기
@@ -229,7 +233,7 @@ pub async fn readtrace(logname: String) -> Result<String, String> {
                 for batch in batches {
                     let num_rows = batch.num_rows();
                     let schema = batch.schema();
-                    
+
                     // 컬럼 인덱스 추출 및 배열 다운캐스팅 처리
                     let time_idx = schema.index_of("time").map_err(|e| e.to_string())?;
                     let process_idx = schema.index_of("process").map_err(|e| e.to_string())?;
@@ -345,7 +349,7 @@ pub async fn readtrace(logname: String) -> Result<String, String> {
                         });
                     }
                 }
-                
+
                 // 캐시에 저장
                 {
                     let mut ufs_cache = UFS_CACHE.lock().map_err(|e| e.to_string())?;
@@ -366,7 +370,7 @@ pub async fn readtrace(logname: String) -> Result<String, String> {
                 for batch in batches {
                     let num_rows = batch.num_rows();
                     let schema = batch.schema();
-                    
+
                     // 컬럼 인덱스 추출 및 배열 다운캐스팅 처리
                     let time_idx = schema.index_of("time").map_err(|e| e.to_string())?;
                     let process_idx = schema.index_of("process").map_err(|e| e.to_string())?;
@@ -496,7 +500,7 @@ pub async fn readtrace(logname: String) -> Result<String, String> {
                         });
                     }
                 }
-                
+
                 // 캐시에 저장
                 {
                     let mut block_cache = BLOCK_CACHE.lock().map_err(|e| e.to_string())?;
@@ -516,7 +520,7 @@ pub async fn readtrace(logname: String) -> Result<String, String> {
         "ufs": sampleufs,
         "block": sampleblock
     });
-    
+
     Ok(result_json.to_string())
 }
 
@@ -526,10 +530,10 @@ pub async fn starttrace(fname: String, logfolder: String) -> Result<TraceParseRe
         // 파일 열기 및 메모리 매핑
         let file = File::open(&fname).map_err(|e| e.to_string())?;
         let mmap = unsafe { Mmap::map(&file).map_err(|e| e.to_string())? };
-        
+
         // 청크 단위로 처리
         let chunk_size = 100_000; // 10만 라인씩 처리
-        
+
         let mut ufs_list = Vec::new();
         let mut block_list = Vec::new();
         let mut missing_lines = Vec::new();
@@ -543,7 +547,7 @@ pub async fn starttrace(fname: String, logfolder: String) -> Result<TraceParseRe
         // 라인별 병렬 처리
         let lines: Vec<&str> = content.lines().collect();
         let total_lines = lines.len();
-        
+
         // 청크 단위 처리 (메모리 효율성)
         for chunk_start in (0..total_lines).step_by(chunk_size) {
             // 청크 수집
@@ -551,7 +555,8 @@ pub async fn starttrace(fname: String, logfolder: String) -> Result<TraceParseRe
             let chunk_slice = &lines[chunk_start..chunk_end];
 
             // 청크 병렬 처리
-            let chunk_results: (Vec<UFS>, Vec<Block>, Vec<usize>) = chunk_slice.par_iter()
+            let chunk_results: (Vec<UFS>, Vec<Block>, Vec<usize>) = chunk_slice
+                .par_iter()
                 .enumerate()
                 .map(|(i, &line)| {
                     let line_number = chunk_start + i + 1; // 실제 라인 번호 계산
@@ -567,7 +572,13 @@ pub async fn starttrace(fname: String, logfolder: String) -> Result<TraceParseRe
                     }
                 })
                 .reduce(
-                    || (Vec::with_capacity(chunk_size), Vec::with_capacity(chunk_size), Vec::new()),
+                    || {
+                        (
+                            Vec::with_capacity(chunk_size),
+                            Vec::with_capacity(chunk_size),
+                            Vec::new(),
+                        )
+                    },
                     |(mut acc_ufs, mut acc_block, mut acc_missing),
                      (ufs_vec, block_vec, missing_vec)| {
                         acc_ufs.extend(ufs_vec);
@@ -576,13 +587,13 @@ pub async fn starttrace(fname: String, logfolder: String) -> Result<TraceParseRe
                         (acc_ufs, acc_block, acc_missing)
                     },
                 );
-            
+
             // 결과를 메인 벡터에 추가
             ufs_list.extend(chunk_results.0);
             block_list.extend(chunk_results.1);
             missing_lines.extend(chunk_results.2);
         }
-        
+
         // Bottom half: latency 계산 처리
         let processed_ufs_list = ufs_bottom_half_latency_process(ufs_list);
         let processed_block_list = block_bottom_half_latency_process(block_list);
@@ -606,7 +617,7 @@ pub async fn starttrace(fname: String, logfolder: String) -> Result<TraceParseRe
             fname.clone(),
             &timestamp,
         )?;
-        
+
         Ok(TraceParseResult {
             missing_lines,
             ufs_parquet_filename,

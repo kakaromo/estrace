@@ -19,10 +19,11 @@
     <Sheet.Trigger><AlignJustify /></Sheet.Trigger>
     <Sheet.Content side="left">
         <Sheet.Header>
-            <Sheet.Title>Are you sure absolutely sure?</Sheet.Title>
-            <Sheet.Description>
-                This action cannot be undone. This will permanently delete your account
-                and remove your data from our servers.
+            <Sheet.Title>Trace Information</Sheet.Title>
+            <Sheet.Description>                
+                <p>확인하고자 하는 Trace의 정보를 선택하세요.</p>
+                <p>checkbox를 선택하면 해당 정보를 확인할 수 있습니다.</p>
+                <p>해제하면 disable됩니다.</p>
             </Sheet.Description>
         </Sheet.Header>
         <div class="flex items-center space-x-2 pt-4 pb-4">

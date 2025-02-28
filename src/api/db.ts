@@ -1,12 +1,26 @@
 import Database from '@tauri-apps/plugin-sql';
 import { setting } from "$stores/setting";
 import type { TestInfo } from "$stores/trace";
+import { platform } from '@tauri-apps/plugin-os';
+import { join, homeDir } from '@tauri-apps/api/path';
 
 let db: Database = null;
 
+async function getDbPath() {
+    const currentPlatform = platform();
+    if (currentPlatform === 'windows') {
+        return 'sqlite://C:\\test.db';
+    } else {
+        // Linux 또는 macOS
+        const home = await homeDir();
+        return `sqlite://${await join(home, 'test.db')}`;
+    }
+}
+
 async function open() {
     if(!db) {
-        db = await Database.load('sqlite://test.db');    
+        const dbPath = await getDbPath();
+        db = await Database.load(dbPath);    
     }
     return db;
 }

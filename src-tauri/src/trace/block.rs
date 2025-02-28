@@ -1,6 +1,6 @@
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fs::{create_dir_all, File};
 use std::path::PathBuf;
-use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Arc;
 
 use arrow::array::{ArrayRef, BooleanArray, Float64Array, StringArray, UInt32Array, UInt64Array};
@@ -9,9 +9,14 @@ use arrow::record_batch::RecordBatch;
 use arrow::temporal_conversions::MILLISECONDS;
 use parquet::arrow::ArrowWriter;
 
-use crate::trace::{Block, LatencyValue, LatencyStat, LatencyStats, SizeStats, ContinuityStats, TotalContinuity, ContinuityCount, BLOCK_TRACE_RE};
-use crate::trace::filter::{filter_block_data};
-use crate::trace::utils::{calculate_statistics, parse_time_to_ms, normalize_io_type, create_range_key, initialize_ranges};
+use crate::trace::filter::filter_block_data;
+use crate::trace::utils::{
+    calculate_statistics, create_range_key, initialize_ranges, normalize_io_type, parse_time_to_ms,
+};
+use crate::trace::{
+    Block, ContinuityCount, ContinuityStats, LatencyStat, LatencyStats, LatencyValue, SizeStats,
+    TotalContinuity, BLOCK_TRACE_RE,
+};
 
 // Block Trace 파싱 함수
 pub fn parse_block_trace(line: &str) -> Result<Block, String> {
@@ -91,13 +96,13 @@ pub fn block_bottom_half_latency_process(block_list: Vec<Block>) -> Vec<Block> {
     // 1. 시간순 정렬
     let mut sorted_blocks = block_list;
     sorted_blocks.sort_by(|a, b| a.time.partial_cmp(&b.time).unwrap());
-    
+
     // 2. 중복 block_rq_issue 제거 (사전 작업)
     // 키를 (sector, io_type, size)로 확장하여 동일 크기의 요청만 중복으로 처리
     let mut processed_issues = HashSet::new();
     let mut deduplicated_blocks = Vec::with_capacity(sorted_blocks.len());
     let mut duplicate_count = 0;
-    
+
     for block in sorted_blocks {
         if block.action == "block_rq_issue" {
             let io_operation = if block.io_type.starts_with('R') {
@@ -109,15 +114,15 @@ pub fn block_bottom_half_latency_process(block_list: Vec<Block>) -> Vec<Block> {
             } else {
                 "other"
             };
-            
+
             // 키를 (sector, io_operation, size)로 확장
             let key = (block.sector, io_operation.to_string(), block.size);
-            
+
             if processed_issues.contains(&key) {
                 duplicate_count += 1;
                 continue;
             }
-            
+
             processed_issues.insert(key);
         } else if block.action == "block_rq_complete" {
             // complete일 경우 중복 체크 목록에서 제거
@@ -130,16 +135,16 @@ pub fn block_bottom_half_latency_process(block_list: Vec<Block>) -> Vec<Block> {
             } else {
                 "other"
             };
-            
+
             let key = (block.sector, io_operation.to_string(), block.size);
             processed_issues.remove(&key);
         }
-        
+
         deduplicated_blocks.push(block);
     }
-    
+
     // 디버그 출력 제거
-    
+
     // 3. 중복이 제거된 데이터에 대해 후처리 진행
     // (연속성, 지연 시간 등 처리)
     let mut filtered_blocks = Vec::with_capacity(deduplicated_blocks.len());
@@ -149,17 +154,17 @@ pub fn block_bottom_half_latency_process(block_list: Vec<Block>) -> Vec<Block> {
     let mut last_complete_qd0_time: Option<f64> = None;
     let mut prev_end_sector: Option<u64> = None;
     let mut prev_io_type: Option<String> = None;
-    
+
     // 통계 카운터
     let mut read_count = 0;
     let mut write_count = 0;
     let mut discard_count = 0;
     let mut other_count = 0;
-    
+
     for mut block in deduplicated_blocks {
         // 기본적으로 continuous를 false로 설정
         block.continuous = false;
-        
+
         let io_operation = if block.io_type.starts_with('R') {
             read_count += 1;
             "read"
@@ -173,28 +178,30 @@ pub fn block_bottom_half_latency_process(block_list: Vec<Block>) -> Vec<Block> {
             other_count += 1;
             "other"
         };
-        
+
         let key = (block.sector, io_operation.to_string());
-        
+
         match block.action.as_str() {
             "block_rq_issue" => {
                 // 연속성 체크
                 if io_operation != "other" {
-                    if let (Some(end_sector), Some(prev_type)) = (prev_end_sector, prev_io_type.as_ref()) {
+                    if let (Some(end_sector), Some(prev_type)) =
+                        (prev_end_sector, prev_io_type.as_ref())
+                    {
                         if block.sector == end_sector && io_operation == prev_type {
                             block.continuous = true;
                         }
                     }
-                    
+
                     // 현재 요청의 끝 sector 및 io_type 업데이트
                     prev_end_sector = Some(block.sector + block.size as u64);
                     prev_io_type = Some(io_operation.to_string());
                 }
-                
+
                 // 요청 시간 기록 및 QD 업데이트
                 req_times.insert(key, block.time);
                 current_qd += 1;
-                
+
                 if current_qd == 1 {
                     if let Some(t) = last_complete_qd0_time {
                         block.ctod = (block.time - t) * MILLISECONDS as f64;
@@ -209,7 +216,7 @@ pub fn block_bottom_half_latency_process(block_list: Vec<Block>) -> Vec<Block> {
                 if let Some(last) = last_complete_time {
                     block.ctoc = (block.time - last) * MILLISECONDS as f64;
                 }
-                
+
                 current_qd = current_qd.saturating_sub(1);
                 if current_qd == 0 {
                     last_complete_qd0_time = Some(block.time);
@@ -218,13 +225,13 @@ pub fn block_bottom_half_latency_process(block_list: Vec<Block>) -> Vec<Block> {
             }
             _ => {}
         }
-        
+
         block.qd = current_qd;
         filtered_blocks.push(block);
     }
-    
+
     // 디버그 출력 제거
-    
+
     filtered_blocks
 }
 
@@ -375,7 +382,8 @@ pub async fn latencystats(
     }
 
     // 필터링 적용
-    let filtered_blocks = filter_block_data(&logname, time_from, time_to, &zoom_column, col_from, col_to)?;
+    let filtered_blocks =
+        filter_block_data(&logname, time_from, time_to, &zoom_column, col_from, col_to)?;
 
     // LatencyStat 생성 - column에 따라 데이터 매핑
     let latency_stats: Vec<LatencyStat> = match column.as_str() {
@@ -490,7 +498,8 @@ pub async fn sizestats(
     group: bool,
 ) -> Result<String, String> {
     // 필터링 적용
-    let filtered_blocks = filter_block_data(&logname, time_from, time_to, &zoom_column, col_from, col_to)?;
+    let filtered_blocks =
+        filter_block_data(&logname, time_from, time_to, &zoom_column, col_from, col_to)?;
 
     // column 조건에 따라 유효한 데이터만 필터링
     let filtered_blocks: Vec<&Block> = filtered_blocks
@@ -532,7 +541,7 @@ pub async fn sizestats(
         } else {
             block.io_type.clone()
         };
-        
+
         if let Some(size_counts) = io_stats.get_mut(&io_key) {
             *size_counts.entry(block.size).or_insert(0) += 1;
             *total_counts.get_mut(&io_key).unwrap() += 1;
@@ -557,7 +566,8 @@ pub async fn continuity_stats(
     col_to: Option<f64>,
 ) -> Result<String, String> {
     // 필터링 적용
-    let filtered_blocks = filter_block_data(&logname, time_from, time_to, &zoom_column, col_from, col_to)?;
+    let filtered_blocks =
+        filter_block_data(&logname, time_from, time_to, &zoom_column, col_from, col_to)?;
 
     // block_rq_issue 동작만 필터링
     // R*(read) 또는 W*(write) D*(discard)로 시작하는 IO 타입만 포함

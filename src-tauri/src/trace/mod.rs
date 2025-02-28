@@ -1,14 +1,14 @@
-mod types;
-mod utils;
-mod filter;
-mod ufs;
 mod block;
 mod export;
+mod filter;
+mod types;
+mod ufs;
+mod utils;
 
-use std::sync::Mutex;
-use std::collections::HashMap;
 use once_cell::sync::Lazy;
 use regex::Regex;
+use std::collections::HashMap;
+use std::sync::Mutex;
 
 // 타입들을 재내보냅니다
 pub use types::*;
@@ -18,7 +18,7 @@ pub(crate) static UFS_CACHE: Lazy<Mutex<HashMap<String, Vec<UFS>>>> =
     Lazy::new(|| Mutex::new(HashMap::new()));
 pub(crate) static BLOCK_CACHE: Lazy<Mutex<HashMap<String, Vec<Block>>>> =
     Lazy::new(|| Mutex::new(HashMap::new()));
-    
+
 // 정규식 패턴
 static UFS_TRACE_RE: Lazy<Regex> = Lazy::new(|| {
     Regex::new(
@@ -57,7 +57,17 @@ pub async fn ufs_latencystats(
     col_to: Option<f64>,
     thresholds: Vec<String>,
 ) -> Result<String, String> {
-    ufs::latencystats(logname, column, zoom_column, time_from, time_to, col_from, col_to, thresholds).await
+    ufs::latencystats(
+        logname,
+        column,
+        zoom_column,
+        time_from,
+        time_to,
+        col_from,
+        col_to,
+        thresholds,
+    )
+    .await
 }
 
 #[tauri::command]
@@ -70,7 +80,16 @@ pub async fn ufs_sizestats(
     col_from: Option<f64>,
     col_to: Option<f64>,
 ) -> Result<String, String> {
-    ufs::sizestats(logname, column, zoom_column, time_from, time_to, col_from, col_to).await
+    ufs::sizestats(
+        logname,
+        column,
+        zoom_column,
+        time_from,
+        time_to,
+        col_from,
+        col_to,
+    )
+    .await
 }
 
 #[tauri::command]
@@ -85,7 +104,18 @@ pub async fn block_latencystats(
     thresholds: Vec<String>,
     group: bool,
 ) -> Result<String, String> {
-    block::latencystats(logname, column, zoom_column, time_from, time_to, col_from, col_to, thresholds, group).await
+    block::latencystats(
+        logname,
+        column,
+        zoom_column,
+        time_from,
+        time_to,
+        col_from,
+        col_to,
+        thresholds,
+        group,
+    )
+    .await
 }
 
 #[tauri::command]
@@ -99,7 +129,17 @@ pub async fn block_sizestats(
     col_to: Option<f64>,
     group: bool,
 ) -> Result<String, String> {
-    block::sizestats(logname, column, zoom_column, time_from, time_to, col_from, col_to, group).await
+    block::sizestats(
+        logname,
+        column,
+        zoom_column,
+        time_from,
+        time_to,
+        col_from,
+        col_to,
+        group,
+    )
+    .await
 }
 
 #[tauri::command]
@@ -127,20 +167,26 @@ pub async fn block_continuity_stats(
 }
 
 #[tauri::command]
-pub async fn export_ufs_to_csv(parquet_path: String, output_dir: Option<String>) -> Result<String, String> {
+pub async fn export_ufs_to_csv(
+    parquet_path: String,
+    output_dir: Option<String>,
+) -> Result<String, String> {
     export::export_to_csv(parquet_path, "ufs".to_string(), output_dir).await
 }
 
 #[tauri::command]
-pub async fn export_block_to_csv(parquet_path: String, output_dir: Option<String>) -> Result<String, String> {
+pub async fn export_block_to_csv(
+    parquet_path: String,
+    output_dir: Option<String>,
+) -> Result<String, String> {
     export::export_to_csv(parquet_path, "block".to_string(), output_dir).await
 }
 
 #[tauri::command]
 pub async fn export_to_csv(
-    parquet_path: String, 
+    parquet_path: String,
     file_type: String,
-    output_dir: Option<String>
+    output_dir: Option<String>,
 ) -> Result<String, String> {
     export::export_to_csv(parquet_path, file_type, output_dir).await
 }

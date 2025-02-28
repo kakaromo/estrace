@@ -1,6 +1,6 @@
+use std::collections::{BTreeMap, HashMap};
 use std::fs::{create_dir_all, File};
 use std::path::PathBuf;
-use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 
 use arrow::array::{ArrayRef, BooleanArray, Float64Array, StringArray, UInt32Array, UInt64Array};
@@ -9,9 +9,14 @@ use arrow::record_batch::RecordBatch;
 use arrow::temporal_conversions::MILLISECONDS;
 use parquet::arrow::ArrowWriter;
 
-use crate::trace::{UFS, LatencyValue, LatencyStat, LatencyStats, SizeStats, ContinuityStats, TotalContinuity, ContinuityCount, UFS_TRACE_RE};
 use crate::trace::filter::filter_ufs_data;
-use crate::trace::utils::{calculate_statistics, parse_time_to_ms, create_range_key, initialize_ranges};
+use crate::trace::utils::{
+    calculate_statistics, create_range_key, initialize_ranges, parse_time_to_ms,
+};
+use crate::trace::{
+    ContinuityCount, ContinuityStats, LatencyStat, LatencyStats, LatencyValue, SizeStats,
+    TotalContinuity, UFS, UFS_TRACE_RE,
+};
 
 // UFS Trace 파싱 함수
 pub fn parse_ufs_trace(line: &str) -> Result<UFS, String> {
@@ -248,7 +253,8 @@ pub async fn latencystats(
     }
 
     // 필터링 적용
-    let filtered_ufs = filter_ufs_data(&logname, time_from, time_to, &zoom_column, col_from, col_to)?;
+    let filtered_ufs =
+        filter_ufs_data(&logname, time_from, time_to, &zoom_column, col_from, col_to)?;
 
     // LatencyStat 생성 - column에 따라 데이터 매핑
     let mut latency_stats = match column.as_str() {
@@ -350,7 +356,8 @@ pub async fn sizestats(
     col_to: Option<f64>,
 ) -> Result<String, String> {
     // 필터링 적용
-    let filtered_ufs = filter_ufs_data(&logname, time_from, time_to, &zoom_column, col_from, col_to)?;
+    let filtered_ufs =
+        filter_ufs_data(&logname, time_from, time_to, &zoom_column, col_from, col_to)?;
 
     // 관심있는 opcode들
     let target_opcodes = ["0x2a", "0x28", "0x42"];
@@ -402,7 +409,8 @@ pub async fn continuity_stats(
     col_to: Option<f64>,
 ) -> Result<String, String> {
     // 필터링 적용
-    let filtered_ufs = filter_ufs_data(&logname, time_from, time_to, &zoom_column, col_from, col_to)?;
+    let filtered_ufs =
+        filter_ufs_data(&logname, time_from, time_to, &zoom_column, col_from, col_to)?;
 
     // send_req 동작만 필터링 (연속성은 send_req에서만 의미 있음)
     // 주로 관심 있는 opcode만 필터링: 0x28(read), 0x2a(write)
