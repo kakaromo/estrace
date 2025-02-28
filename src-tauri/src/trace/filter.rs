@@ -110,15 +110,3 @@ pub fn filter_block_data(
 
     Ok(filtered)
 }
-
-// 공통 액션 필터링 함수
-pub fn filter_by_action<'a, T>(items: &'a [T], column: &str, action_field: impl Fn(&T) -> &str) -> Vec<&'a T> {
-    items
-        .iter()
-        .filter(|item| match column {
-            "dtoc" | "ctoc" => action_field(item) == "complete_rsp" || action_field(item) == "block_rq_complete",
-            "ctod" | "lba" | "sector" => action_field(item) == "send_req" || action_field(item) == "block_rq_issue",
-            _ => false,
-        })
-        .collect()
-}

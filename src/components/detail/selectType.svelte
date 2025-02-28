@@ -12,7 +12,6 @@
 </script>
 <Select.Root onSelectedChange={(v) => {
     v && (selectedTrace.set(v.value));
-    console.log('selectedTrace:', $selectedTrace);
   }}>
 <Select.Trigger class="w-[240px]" h-12>
     <Select.Value placeholder="Select a type(UFS, Block)" />

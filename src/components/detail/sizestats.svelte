@@ -17,7 +17,6 @@
     $effect(() => {
         if (opcode_size_counts && 
             JSON.stringify(opcode_size_counts) !== JSON.stringify(prevOpcodeSizeCounts)) {
-            console.log('opcode_size_counts changed:', opcode_size_counts);
             
             // 현재 값을 이전 값으로 저장
             prevOpcodeSizeCounts = JSON.parse(JSON.stringify(opcode_size_counts));
@@ -45,7 +44,7 @@
             <Willow>
                 <div class="px-0" style="font-size: 12px;">
                     <Grid 
-                        data={normalized_size_counts[opcode]} 
+                        bind:data={normalized_size_counts[opcode]} 
                         columns={[
                             { id: "size", header: "Size", width: 150 },
                             { id: "count", header: "Count", width: 150 }

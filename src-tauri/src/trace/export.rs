@@ -1,6 +1,5 @@
 use std::fs::File;
 use std::path::PathBuf;
-use std::time::Instant;
 
 use datafusion::prelude::*;
 use datafusion::arrow::csv::WriterBuilder;
@@ -28,9 +27,6 @@ pub async fn export_to_csv(
         path
     };
 
-    let start_time = Instant::now();
-    println!("Starting CSV export for {}: {}", file_type, parquet_path);
-
     // DataFusion 세션 초기화
     let ctx = SessionContext::new();
     
@@ -43,9 +39,6 @@ pub async fn export_to_csv(
         .await
         .map_err(|e| e.to_string())?;
 
-    let read_time = start_time.elapsed();
-    println!("Parquet read time: {:?}", read_time);
-
     // 데이터프레임에서 레코드 배치 가져오기
     let batches = df.collect().await.map_err(|e| e.to_string())?;
     
@@ -56,18 +49,12 @@ pub async fn export_to_csv(
         .build(file);
     
     // 각 배치를 CSV로 저장
-    let batch_write_start = Instant::now();
     for batch in batches {
         writer.write(&batch).map_err(|e| e.to_string())?;
     }
-    let batch_write_time = batch_write_start.elapsed();
-    println!("Batch write time: {:?}", batch_write_time);
     
     // 파일 닫기
     writer.close().map_err(|e| e.to_string())?;
-    
-    let total_time = start_time.elapsed();
-    println!("Total CSV export time: {:?}", total_time);
     
     Ok(output_path.to_string_lossy().to_string())
 }

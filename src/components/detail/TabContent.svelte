@@ -3,12 +3,24 @@
     import { ScatterCharts } from '$components/detail';
     import { LatencyStats } from '$components/detail';
     
-    export let data: any[] = [];
-    export let traceType: string = '';
-    export let columnType: string = '';
-    export let legendKey: string = 'opcode';
-    export let threshold: string[] = [];
-    export let statData: any = {};
+    interface TabContentProps {
+        data: any[];
+        traceType: string;
+        columnType: string;
+        legendKey: string;
+        threshold: string[];
+        statData: any;
+    }
+
+    let { 
+        data = [], 
+        traceType = '', 
+        columnType = '', 
+        legendKey = 'opcode', 
+        threshold = [], 
+        statData = {}
+     } : TabContentProps = $props();
+
 </script>
 
 <Card.Root>

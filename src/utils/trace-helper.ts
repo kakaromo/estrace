@@ -20,69 +20,71 @@ export async function fetchUfsStats(fileName: string, filterParams: any) {
     continuous: null
   };
 
-  console.log('fileName', fileName);
-  console.log('filterParams', filterParams);
-  // 병렬로 모든 통계 데이터 요청
-  const [dtocStatResult, ctodStatResult, ctocStatResult, sizeCountsResult, continuousResult] = await Promise.all([
-    invoke('ufs_latencystats', { 
-      logname: fileName, 
-      column: 'dtoc', 
-      thresholds: THRESHOLDS,
-      timeFrom: from_time, 
-      timeTo: to_time, 
-      colFrom: from_lba, 
-      colTo: to_lba, 
-      zoomColumn: zoom_column 
-    }),
-    invoke('ufs_latencystats', { 
-      logname: fileName, 
-      column: 'ctod', 
-      thresholds: THRESHOLDS,
-      timeFrom: from_time, 
-      timeTo: to_time, 
-      colFrom: from_lba, 
-      colTo: to_lba, 
-      zoomColumn: zoom_column 
-    }),
-    invoke('ufs_latencystats', { 
-      logname: fileName, 
-      column: 'ctoc', 
-      thresholds: THRESHOLDS,
-      timeFrom: from_time, 
-      timeTo: to_time, 
-      colFrom: from_lba, 
-      colTo: to_lba, 
-      zoomColumn: zoom_column 
-    }),
-    invoke('ufs_sizestats', { 
-      logname: fileName, 
-      column: 'dtoc', 
-      timeFrom: from_time, 
-      timeTo: to_time, 
-      colFrom: from_lba, 
-      colTo: to_lba, 
-      zoomColumn: zoom_column 
-    }),
-    invoke('ufs_continuity_stats', { 
-      logname: fileName, 
-      column: 'dtoc',
-      timeFrom: from_time, 
-      timeTo: to_time, 
-      colFrom: from_lba, 
-      colTo: to_lba, 
-      zoomColumn: zoom_column 
-    })
-  ]);
+  try {
+    // 병렬로 모든 통계 데이터 요청
+    const [dtocStatResult, ctodStatResult, ctocStatResult, sizeCountsResult, continuousResult] = await Promise.all([
+      invoke('ufs_latencystats', { 
+        logname: fileName, 
+        column: 'dtoc', 
+        thresholds: THRESHOLDS,
+        timeFrom: from_time, 
+        timeTo: to_time, 
+        colFrom: from_lba, 
+        colTo: to_lba, 
+        zoomColumn: zoom_column 
+      }),
+      invoke('ufs_latencystats', { 
+        logname: fileName, 
+        column: 'ctod', 
+        thresholds: THRESHOLDS,
+        timeFrom: from_time, 
+        timeTo: to_time, 
+        colFrom: from_lba, 
+        colTo: to_lba, 
+        zoomColumn: zoom_column 
+      }),
+      invoke('ufs_latencystats', { 
+        logname: fileName, 
+        column: 'ctoc', 
+        thresholds: THRESHOLDS,
+        timeFrom: from_time, 
+        timeTo: to_time, 
+        colFrom: from_lba, 
+        colTo: to_lba, 
+        zoomColumn: zoom_column 
+      }),
+      invoke('ufs_sizestats', { 
+        logname: fileName, 
+        column: 'dtoc', 
+        timeFrom: from_time, 
+        timeTo: to_time, 
+        colFrom: from_lba, 
+        colTo: to_lba, 
+        zoomColumn: zoom_column 
+      }),
+      invoke('ufs_continuity_stats', { 
+        logname: fileName, 
+        column: 'dtoc',
+        timeFrom: from_time, 
+        timeTo: to_time, 
+        colFrom: from_lba, 
+        colTo: to_lba, 
+        zoomColumn: zoom_column 
+      })
+    ]);
 
-  // 결과 파싱
-  results.dtocStat = JSON.parse(dtocStatResult as string);
-  results.ctodStat = JSON.parse(ctodStatResult as string);
-  results.ctocStat = JSON.parse(ctocStatResult as string);
-  results.sizeCounts = JSON.parse(sizeCountsResult as string);
-  results.continuous = JSON.parse(continuousResult as string);
+    // 결과 파싱
+    results.dtocStat = validateLatencyStats(dtocStatResult);
+    results.ctodStat = validateLatencyStats(ctodStatResult);
+    results.ctocStat = validateLatencyStats(ctocStatResult);
+    results.sizeCounts = validateSizeStats(sizeCountsResult);
+    results.continuous = validateContinuityStats(continuousResult);
 
-  console.log('ufs stats', results);
-  return results;
+    return results;
+  } catch (error) {
+    console.error('Error fetching UFS stats:', error);
+    throw error;
+  }
 }
 
 /**
@@ -99,71 +101,76 @@ export async function fetchBlockStats(fileName: string, filterParams: any) {
     continuous: null
   };
 
-  // 병렬로 모든 통계 데이터 요청
-  const [dtocStatResult, ctodStatResult, ctocStatResult, sizeCountsResult, continuousResult] = await Promise.all([
-    invoke('block_latencystats', { 
-      logname: fileName, 
-      column: 'dtoc', 
-      thresholds: THRESHOLDS, 
-      group: true,
-      timeFrom: from_time, 
-      timeTo: to_time, 
-      colFrom: from_lba, 
-      colTo: to_lba, 
-      zoomColumn: zoom_column 
-    }),
-    invoke('block_latencystats', { 
-      logname: fileName, 
-      column: 'ctod', 
-      thresholds: THRESHOLDS, 
-      group: true,
-      timeFrom: from_time, 
-      timeTo: to_time, 
-      colFrom: from_lba, 
-      colTo: to_lba, 
-      zoomColumn: zoom_column 
-    }),
-    invoke('block_latencystats', { 
-      logname: fileName, 
-      column: 'ctoc', 
-      thresholds: THRESHOLDS, 
-      group: true,
-      timeFrom: from_time, 
-      timeTo: to_time, 
-      colFrom: from_lba, 
-      colTo: to_lba, 
-      zoomColumn: zoom_column 
-    }),
-    invoke('block_sizestats', { 
-      logname: fileName, 
-      column: 'dtoc', 
-      group: true,
-      timeFrom: from_time, 
-      timeTo: to_time, 
-      colFrom: from_lba, 
-      colTo: to_lba, 
-      zoomColumn: zoom_column 
-    }),
-    invoke('block_continuity_stats', { 
-      logname: fileName, 
-      column: 'dtoc', 
-      group: true,
-      timeFrom: from_time, 
-      timeTo: to_time, 
-      colFrom: from_lba, 
-      colTo: to_lba, 
-      zoomColumn: zoom_column 
-    })
-  ]);
+  try {
+    // 병렬로 모든 통계 데이터 요청
+    const [dtocStatResult, ctodStatResult, ctocStatResult, sizeCountsResult, continuousResult] = await Promise.all([
+      invoke('block_latencystats', { 
+        logname: fileName, 
+        column: 'dtoc', 
+        thresholds: THRESHOLDS, 
+        group: true,
+        timeFrom: from_time, 
+        timeTo: to_time, 
+        colFrom: from_lba, 
+        colTo: to_lba, 
+        zoomColumn: zoom_column 
+      }),
+      invoke('block_latencystats', { 
+        logname: fileName, 
+        column: 'ctod', 
+        thresholds: THRESHOLDS, 
+        group: true,
+        timeFrom: from_time, 
+        timeTo: to_time, 
+        colFrom: from_lba, 
+        colTo: to_lba, 
+        zoomColumn: zoom_column 
+      }),
+      invoke('block_latencystats', { 
+        logname: fileName, 
+        column: 'ctoc', 
+        thresholds: THRESHOLDS, 
+        group: true,
+        timeFrom: from_time, 
+        timeTo: to_time, 
+        colFrom: from_lba, 
+        colTo: to_lba, 
+        zoomColumn: zoom_column 
+      }),
+      invoke('block_sizestats', { 
+        logname: fileName, 
+        column: 'dtoc', 
+        group: true,
+        timeFrom: from_time, 
+        timeTo: to_time, 
+        colFrom: from_lba, 
+        colTo: to_lba, 
+        zoomColumn: zoom_column 
+      }),
+      invoke('block_continuity_stats', { 
+        logname: fileName, 
+        column: 'dtoc', 
+        group: true,
+        timeFrom: from_time, 
+        timeTo: to_time, 
+        colFrom: from_lba, 
+        colTo: to_lba, 
+        zoomColumn: zoom_column 
+      })
+    ]);
 
-  // 결과 파싱
-  results.dtocStat = JSON.parse(dtocStatResult as string);
-  results.ctodStat = JSON.parse(ctodStatResult as string);
-  results.ctocStat = JSON.parse(ctocStatResult as string);
-  results.sizeCounts = JSON.parse(sizeCountsResult as string);
-  results.continuous = JSON.parse(continuousResult as string);
+    // 결과 파싱
+    results.dtocStat = validateLatencyStats(dtocStatResult);
+    results.ctodStat = validateLatencyStats(ctodStatResult);
+    results.ctocStat = validateLatencyStats(ctocStatResult);
+    results.sizeCounts = validateSizeStats(sizeCountsResult);
+    results.continuous = validateContinuityStats(continuousResult);
 
-  return results;
+    return results;
+  } catch (error) {
+    console.error('Error fetching Block stats:', error);
+    throw error;
+  }
 }
 
 /**
@@ -184,4 +191,54 @@ export function filterTraceData(traceData: any, selectedTrace: string, filterPar
            item[zoom_column] >= from_lba && 
            item[zoom_column] <= to_lba;
   });
+}
+
+/**
+ * 통계 데이터 검증 및 기본값 제공 헬퍼 함수들
+ */
+function validateLatencyStats(result: any) {
+  try {
+    const parsedResult = typeof result === 'string' ? JSON.parse(result) : result;
+    
+    // 필요한 속성이 없으면 기본값 제공
+    if (!parsedResult.latency_counts) {
+      parsedResult.latency_counts = {};
+    }
+    
+    if (!parsedResult.summary) {
+      parsedResult.summary = {};
+    }
+    
+    return parsedResult;
+  } catch (e) {
+    console.error('Error parsing latency stats:', e);
+    return {
+      latency_counts: {},
+      summary: {}
+    };
+  }
+}
+
+function validateSizeStats(result: any) {
+  try {
+    const parsedResult = typeof result === 'string' ? JSON.parse(result) : result;
+    return parsedResult;
+  } catch (e) {
+    console.error('Error parsing size stats:', e);
+    return {
+      opcode_stats: {}
+    };
+  }
+}
+
+function validateContinuityStats(result: any) {
+  try {
+    const parsedResult = typeof result === 'string' ? JSON.parse(result) : result;
+    return parsedResult;
+  } catch (e) {
+    console.error('Error parsing continuity stats:', e);
+    return {
+      op_stats: {}
+    };
+  }
 }

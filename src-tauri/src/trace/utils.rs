@@ -1,28 +1,24 @@
-use std::fs::File; // create_dir_all import 제거
+use std::fs::File;
 use std::path::PathBuf;
-use std::time::Instant;
 use std::collections::{HashMap, BTreeMap};
 
-// 사용하지 않는 import 제거
-// use arrow::temporal_conversions::MILLISECONDS;
 use chrono::Local;
 use datafusion::prelude::*;
 use memmap2::Mmap;
 use rayon::prelude::*;
-// rand::thread_rng 대신 rand::rng 사용
 use rand::prelude::IndexedRandom;
 use tauri::async_runtime::spawn_blocking;
 
-use crate::trace::{UFS, Block, TraceParseResult, LatencySummary, UFS_CACHE, BLOCK_CACHE, MAX_PREVIEW_RECORDS}; // UFS_TRACE_RE, BLOCK_TRACE_RE 제거
+use crate::trace::{UFS, Block, TraceParseResult, LatencySummary, UFS_CACHE, BLOCK_CACHE, MAX_PREVIEW_RECORDS};
 use crate::trace::ufs::{parse_ufs_trace, ufs_bottom_half_latency_process, save_ufs_to_parquet};
 use crate::trace::block::{parse_block_trace, block_bottom_half_latency_process, save_block_to_parquet};
 
-// 샘플링 함수들 - thread_rng() 대신 rng() 사용 
+// 샘플링 함수들
 pub fn sample_ufs(ufs_list: &[UFS]) -> Vec<UFS> {
     if ufs_list.len() <= MAX_PREVIEW_RECORDS {
         ufs_list.to_vec()
     } else {
-        let mut rng = rand::thread_rng(); // 경고가 있으나 지금은 유지
+        let mut rng = rand::thread_rng();
         ufs_list
             .choose_multiple(&mut rng, MAX_PREVIEW_RECORDS)
             .cloned()
@@ -194,7 +190,6 @@ pub async fn readtrace(logname: String) -> Result<String, String> {
                 "ufs": ufs_cache.get(&logname).unwrap_or(&Vec::new()),
                 "block": block_cache.get(&logname).unwrap_or(&Vec::new())
             });
-            println!("Cache hit for {}", logname);
             return Ok(result_json.to_string());
         }
     }
@@ -211,7 +206,6 @@ pub async fn readtrace(logname: String) -> Result<String, String> {
 
     // DataFusion context 생성
     let ctx = SessionContext::new();
-    let overall_start = Instant::now();
 
     // 각 파일 처리: 파일명에 따라 ufs 또는 block으로 구분
     for file in files {
@@ -223,7 +217,6 @@ pub async fn readtrace(logname: String) -> Result<String, String> {
         if let Some(fname) = path.file_name().and_then(|s| s.to_str()) {
             if fname.contains("ufs") && fname.ends_with(".parquet") {
                 // UFS parquet 파일 읽기
-                let ufs_fileread_start = Instant::now();
                 let df = ctx
                     .read_parquet(
                         path.to_str().ok_or("Invalid path")?,
@@ -231,13 +224,7 @@ pub async fn readtrace(logname: String) -> Result<String, String> {
                     )
                     .await
                     .map_err(|e| e.to_string())?;
-                let ufs_fileread_duration = ufs_fileread_start.elapsed().as_secs_f64();
-                println!(
-                    "UFS file read duration: {:.3} seconds",
-                    ufs_fileread_duration
-                );
 
-                let ufs_batch_start = Instant::now();
                 let batches = df.collect().await.map_err(|e| e.to_string())?;
                 for batch in batches {
                     let num_rows = batch.num_rows();
@@ -358,22 +345,15 @@ pub async fn readtrace(logname: String) -> Result<String, String> {
                         });
                     }
                 }
-                let ufs_batch_duration = ufs_batch_start.elapsed().as_secs_f64();
-                println!(
-                    "UFS batch processing duration: {:.3} seconds",
-                    ufs_batch_duration
-                );
                 
                 // 캐시에 저장
                 {
                     let mut ufs_cache = UFS_CACHE.lock().map_err(|e| e.to_string())?;
                     let ufspath = path.to_string_lossy().to_string();
-                    println!("UFS cache insert: {}", ufspath);
                     ufs_cache.insert(ufspath, ufs_vec.clone());
                 }
             } else if fname.contains("block") && fname.ends_with(".parquet") {
                 // Block parquet 파일 읽기
-                let block_fileread_start = Instant::now();
                 let df = ctx
                     .read_parquet(
                         path.to_str().ok_or("Invalid path")?,
@@ -381,13 +361,7 @@ pub async fn readtrace(logname: String) -> Result<String, String> {
                     )
                     .await
                     .map_err(|e| e.to_string())?;
-                let block_fileread_duration = block_fileread_start.elapsed().as_secs_f64();
-                println!(
-                    "Block file read duration: {:.3} seconds",
-                    block_fileread_duration
-                );
 
-                let block_batch_start = Instant::now();
                 let batches = df.collect().await.map_err(|e| e.to_string())?;
                 for batch in batches {
                     let num_rows = batch.num_rows();
@@ -522,17 +496,11 @@ pub async fn readtrace(logname: String) -> Result<String, String> {
                         });
                     }
                 }
-                let block_batch_duration = block_batch_start.elapsed().as_secs_f64();
-                println!(
-                    "Block batch processing duration: {:.3} seconds",
-                    block_batch_duration
-                );
                 
                 // 캐시에 저장
                 {
                     let mut block_cache = BLOCK_CACHE.lock().map_err(|e| e.to_string())?;
                     let blockpath = path.to_string_lossy().to_string();
-                    println!("Block cache insert: {}", blockpath);
                     block_cache.insert(blockpath, block_vec.clone());
                 }
             }
@@ -540,23 +508,14 @@ pub async fn readtrace(logname: String) -> Result<String, String> {
     }
 
     // 데이터가 많은 경우 샘플링하여 반환
-    let sample_start = Instant::now();
     let sampleufs = sample_ufs(&ufs_vec);
     let sampleblock = sample_block(&block_vec);
-    let sample_duration = sample_start.elapsed().as_secs_f64();
-    println!("Sampling duration: {:.3} seconds", sample_duration);
 
     // JSON으로 직렬화하여 반환
-    let json_start = Instant::now();
     let result_json = serde_json::json!({
         "ufs": sampleufs,
         "block": sampleblock
     });
-    let json_duration = json_start.elapsed().as_secs_f64();
-    println!("JSON serialization duration: {:.3} seconds", json_duration);
-    
-    let overall_duration = overall_start.elapsed().as_secs_f64();
-    println!("Overall duration: {:.3} seconds", overall_duration);
     
     Ok(result_json.to_string())
 }
@@ -564,10 +523,7 @@ pub async fn readtrace(logname: String) -> Result<String, String> {
 // 로그 파일 파싱 및 parquet 저장 함수
 pub async fn starttrace(fname: String, logfolder: String) -> Result<TraceParseResult, String> {
     let result = spawn_blocking(move || {
-        let overall_start = Instant::now();
-        
         // 파일 열기 및 메모리 매핑
-        let fileread_start = Instant::now();
         let file = File::open(&fname).map_err(|e| e.to_string())?;
         let mmap = unsafe { Mmap::map(&file).map_err(|e| e.to_string())? };
         
@@ -583,12 +539,6 @@ pub async fn starttrace(fname: String, logfolder: String) -> Result<TraceParseRe
             Ok(c) => c,
             Err(e) => return Err(format!("File is not valid UTF-8: {}", e)),
         };
-
-        let fileread_time = fileread_start.elapsed();
-        println!("File read time: {:?}", fileread_time);
-
-        // 파싱 시작
-        let parsing_start = Instant::now();
 
         // 라인별 병렬 처리
         let lines: Vec<&str> = content.lines().collect();
@@ -632,45 +582,30 @@ pub async fn starttrace(fname: String, logfolder: String) -> Result<TraceParseRe
             block_list.extend(chunk_results.1);
             missing_lines.extend(chunk_results.2);
         }
-
-        let parsing_time = parsing_start.elapsed();
-        println!("Parsing time: {:?}", parsing_time);
         
-        let bottom_half_start = Instant::now();
         // Bottom half: latency 계산 처리
         let processed_ufs_list = ufs_bottom_half_latency_process(ufs_list);
         let processed_block_list = block_bottom_half_latency_process(block_list);
-        let bottom_half_time = bottom_half_start.elapsed();
-        println!("Bottom half time: {:?}", bottom_half_time);
 
         // 공통 timestamp 생성
         let now = Local::now();
         let timestamp = now.format("%Y%m%d_%H%M%S").to_string();
 
         // 파싱된 UFS 로그를 parquet 파일로 저장
-        let save_parquet_start = Instant::now();
         let ufs_parquet_filename = save_ufs_to_parquet(
             &processed_ufs_list,
             logfolder.clone(),
             fname.clone(),
             &timestamp,
         )?;
-        let ufs_save_time = save_parquet_start.elapsed();
-        println!("Save UFS parquet time: {:?}", ufs_save_time);
 
         // Block trace 로그를 parquet 파일로 저장
-        let block_save_start = Instant::now();
         let block_parquet_filename = save_block_to_parquet(
             &processed_block_list,
             logfolder.clone(),
             fname.clone(),
             &timestamp,
         )?;
-        let block_save_time = block_save_start.elapsed();
-        println!("Save Block trace parquet time: {:?}", block_save_time);
-
-        let overall_time = overall_start.elapsed();
-        println!("Overall time: {:?}", overall_time);
         
         Ok(TraceParseResult {
             missing_lines,

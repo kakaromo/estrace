@@ -1,5 +1,6 @@
 import Database from '@tauri-apps/plugin-sql';
 import { setting } from "$stores/setting";
+import type { TestInfo } from "$stores/trace";
 
 let db: Database = null;
 
@@ -11,7 +12,6 @@ async function open() {
 }
 
 export async function initial() {    
-    console.log('initial');        
     await open();
     await db.execute('CREATE TABLE IF NOT EXISTS setting (id INTEGER PRIMARY KEY, value TEXT);').catch((e) => { console.log('error', e); });
     await db.execute('CREATE TABLE IF NOT EXISTS app (id INTEGER PRIMARY KEY, filename TEXT);').catch((e) => { console.log('error', e); });
@@ -25,8 +25,7 @@ export async function initial() {
 
 export async function getFolder() {
     await open();
-    const result = await db.select('SELECT path FROM folder WHERE id = 1');
-    console.log('result', result);
+    const result:TestInfo[] = await db.select('SELECT path FROM folder WHERE id = 1');
     
     setting.update((s) => {
         if(result.length > 0) {
@@ -49,18 +48,17 @@ export async function setFolder(key: string, value: string) {
 
 export async function getAllTestInfo() {
     await open();
-    const result = await db.select('SELECT * FROM testinfo');
+    const result:TestInfo[] = await db.select('SELECT * FROM testinfo');
     return result;
 }
 
 export async function getTestInfo(id: number) {
     await open();
-    const result = await db.select('SELECT * FROM testinfo WHERE id = ?', [id]);
+    const result:TestInfo[] = await db.select('SELECT * FROM testinfo WHERE id = ?', [id]);
     return result.length === 0? null : result[0];
 }
 
 export async function setTestInfo(logtype: string, title: string, content: string, logfolder: string, logname: string) {
-    console.log('setTestInfo', logtype, title, content, logfolder, logname);
     await open();
     await db.execute('INSERT INTO testinfo (logtype, title, content, logfolder, logname) VALUES (?, ?, ?, ?, ?)', [ logtype, title, content, logfolder, logname ]);
 }

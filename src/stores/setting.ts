@@ -5,7 +5,7 @@ interface App {
     filename: string;
     isNew?: boolean;
   }
-
+  
 export const setting = writable({
     // appsfolder: "",
     logfolder: "",

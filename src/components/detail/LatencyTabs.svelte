@@ -2,13 +2,25 @@
     import * as Tabs from "$lib/components/ui/tabs/index.js";
     import TabContent from './TabContent.svelte';
     
-    export let traceType: string = '';
-    export let filteredData: any[] = [];
-    export let legendKey: string = 'opcode';
-    export let thresholds: string[] = [];
-    export let dtocStat: any = {};
-    export let ctodStat: any = {};
-    export let ctocStat: any = {};
+    interface LatencyTabsProps {
+        traceType: string;
+        filteredData: any[];
+        legendKey: string;
+        thresholds: string[];
+        dtocStat: any;
+        ctodStat: any;
+        ctocStat: any;
+    }
+
+    let { 
+        traceType = '', 
+        filteredData = [], 
+        legendKey = 'opcode', 
+        thresholds = [], 
+        dtocStat = {}, 
+        ctodStat = {}, 
+        ctocStat = {} 
+    }: LatencyTabsProps = $props();
 </script>
 
 <Tabs.Root value="dtoc" class="h-full space-y-6">

@@ -9,7 +9,7 @@
   import { Button } from "$lib/components/ui/button";
   import { Slider } from "$lib/components/ui/slider";
 
-  import { trace, selectedTrace, filtertrace } from '$stores/trace';
+  import { filtertrace } from '$stores/trace';
 
   interface ScatterChartProps {
     data: any[];
@@ -23,14 +23,12 @@
 
   let { data, xAxisKey, yAxisKey, legendKey, xAxisLabel = 'time', yAxisLabel = 'sector', ycolumn } :ScatterChartProps = $props();
 
+  // 차트 상태 변수
   let chartTitle = $state('');
   let showTitleDialog = $state(false);
   let inputTitle = $state('');
-
-  // 포인트 크기 설정 다이얼로그
   let showSymbolSizeDialog = $state(false);
   let inputSymbolSize = $state(3);
-
   let symbolSize = $state(3);
   let xAxisName = $state('time');
   let yAxisName = $state('sector');
@@ -38,100 +36,69 @@
   let legendorient = $state('vertical');
   let legendshow = $state(true);
   let tooltipshow = $state(true);
-
   let prevData = $state(null);
   let prevDataHash = '';
+  
+  // 축 이름 초기화
   xAxisName = xAxisLabel;
   yAxisName = yAxisLabel;
-
   prevData = data;
 
+  // 차트 요소
   let chartContainer;
   let chartInstance;
   let resizeObserver;
-  console.log('xAxisKey:', xAxisKey, 'yAxisKey:', yAxisKey, 'legendKey:', legendKey, 'xAxisLabel:', xAxisLabel, 'yAxisLabel:', yAxisLabel);
 
-  // zoom 범위 상태
+  // zoom 범위 및 tooltip 상태
   let { xZoomFrom, xZoomTo, yZoomFrom, yZoomTo } = $state({ xZoomFrom: 0, xZoomTo: 0, yZoomFrom: 0, yZoomTo: 0 });
-
-  // 커스텀 tooltip 상태
-  // let tooltipVisible = false;
-  // let tooltipContent = '';
-  // let tooltipX = 0;
-  // let tooltipY = 0;
-
   let {tooltipVisible, tooltipContent, tooltipX, tooltipY} = $state({tooltipVisible: false, tooltipContent: '', tooltipX: 0, tooltipY: 0});
-
-  // 커스텀 tooltip을 위한 데이터 검색용 global seriesData 저장
   let globalSeriesData = {};
 
+  // 색상 상수
   const WRITE_COLOR = '#FF0000';
   const READ_COLOR = '#0000FF';
   const DISCARD_COLOR = '#00FF00';
   const FLUSH_COLOR = '#FFFF00';
 
-  // UFS 명령어별 고정 컬러 매핑 (원색 사용)
+  // UFS 명령어별 고정 컬러 매핑
   const UFS_COMMAND_COLORS = {
-    // Write 계열 - 빨간색 계열
-    '0x2a': '#FF0000', // Write - 순수한 빨간색
-    '0xa2': '#FF3333', // Write 관련 - 밝은 빨간색
-    
-    // Read 계열 - 파란색 계열
-    '0x28': '#0000FF', // Read - 순수한 파란색
-    '0xb5': '#3333FF', // Read 관련 - 밝은 파란색
-    
-    // UNMAP 계열 - 녹색 계열
-    '0x42': '#00FF00', // UNMAP - 순수한 녹색
-    
-    // 기타 명령어들 - 다른 원색
+    '0x2a': '#FF0000', // Write
+    '0xa2': '#FF3333', // Write 관련
+    '0x28': '#0000FF', // Read
+    '0xb5': '#3333FF', // Read 관련
+    '0x42': '#00FF00', // UNMAP
     '0x1b': '#FF00FF', // 자주색
     '0x12': '#00FFFF', // 청록색
     '0x35': '#FFFF00', // 노란색
     '0xc0': '#FF8800', // 주황색
   };
 
-  // 블록 타입별 팔레트 (더 선명하고 원색에 가까운 색상으로 업데이트)
+  // 블록 타입별 팔레트
   const WRITE_PALETTE = [
-    '#FF0000', // 순수 빨강
-    '#FF3333',
-    '#FF6666',
-    '#FF9999',
-    '#FFCCCC'
+    '#FF0000', '#FF3333', '#FF6666', '#FF9999', '#FFCCCC'
   ];
   
   const READ_PALETTE = [
-    '#0000FF', // 순수 파랑
-    '#3333FF',
-    '#6666FF',
-    '#9999FF',
-    '#CCCCFF'
+    '#0000FF', '#3333FF', '#6666FF', '#9999FF', '#CCCCFF'
   ];
   
   const DISCARD_PALETTE = [
-    '#00FF00', // 순수 녹색
-    '#33FF33',
-    '#66FF66',
-    '#99FF99',
-    '#CCFFCC'
+    '#00FF00', '#33FF33', '#66FF66', '#99FF99', '#CCFFCC'
   ];
   
   const FLUSH_PALETTE = [
-    '#FFFF00', // 순수 노랑
-    '#FFFF33',
-    '#FFFF66',
-    '#FFFF99',
-    '#FFFFCC'
+    '#FFFF00', '#FFFF33', '#FFFF66', '#FFFF99', '#FFFFCC'
   ];
 
+  // 색상 매핑 객체 및 인덱스
   let blockWriteMapping = {};
   let blockReadMapping = {};
   let blockDiscardMapping = {};
-  let blockFlushMapping = {};  // 추가: Flush 블록 매핑
-
+  let blockFlushMapping = {};
   let writePaletteIndex = 0;
   let readPaletteIndex = 0;
   let discardPaletteIndex = 0;
-  let flushPaletteIndex = 0;   // 추가: Flush 인덱스
+  let flushPaletteIndex = 0;
 
   // 차트 옵션 업데이트 함수
   function updateChartOption(options) {
@@ -140,7 +107,7 @@
     }
   }
   
-  // 차트 타이틀 설정 함수
+  // 차트 타이틀 관련 함수
   function setChartTitle(title) {
     chartTitle = title;
     updateChartOption({
@@ -152,19 +119,17 @@
     });
   }
   
-  // 타이틀 다이얼로그 열기
   function openTitleDialog() {
     inputTitle = chartTitle;
     showTitleDialog = true;
   }
   
-  // 타이틀 변경 적용
   function applyTitleChange() {
-    console.log('inputTitle:', inputTitle);
     setChartTitle(inputTitle);
     showTitleDialog = false;
   }
 
+  // 포인트 크기 관련 함수
   function openSymbolSizeDialog() {
     inputSymbolSize = symbolSize;
     showSymbolSizeDialog = true;
@@ -173,7 +138,6 @@
   function applySymbolSizeChange() {
     symbolSize = inputSymbolSize;
     
-    // 모든 시리즈의 symbolSize 업데이트
     if (chartInstance) {
       const option = chartInstance.getOption();
       const updatedSeries = option.series.map(series => {
@@ -189,6 +153,7 @@
     showSymbolSizeDialog = false;
   }
 
+  // 색상 관련 함수
   function getRandomColor() {
     return '#' + Math.floor(Math.random() * 16777215).toString(16);
   }
@@ -196,14 +161,14 @@
   function getColorForLegend(legend) {
     if (typeof legend !== 'string') return getRandomColor();
 
-    // UFS 명령어 확인 (0x로 시작하는 경우)
+    // UFS 명령어 확인
     if (legend.toLowerCase().startsWith('0x')) {
       const cmdLower = legend.toLowerCase();
-      // UFS_COMMAND_COLORS에 정의된 색상이 있으면 해당 색상 사용
       if (UFS_COMMAND_COLORS[cmdLower]) {
         return UFS_COMMAND_COLORS[cmdLower];
       }
     }
+    
     const prefix = legend[0].toUpperCase();
     switch (prefix) {
       case 'W': // Write
@@ -227,7 +192,7 @@
         }
         return blockDiscardMapping[legend];
         
-      case 'F': // Flush (추가)
+      case 'F': // Flush
         if (!(legend in blockFlushMapping)) {
           blockFlushMapping[legend] = FLUSH_PALETTE[flushPaletteIndex % FLUSH_PALETTE.length];
           flushPaletteIndex++;
@@ -239,8 +204,8 @@
     }
   }
   
+  // 범례 정렬 함수
   function sortLegends(legends) {
-    // 접두어 순서 정의 (중요도 순서대로)
     const prefixOrder = {
       'R': 1, // Read
       'W': 2, // Write
@@ -249,29 +214,22 @@
       '0': 5  // 0x로 시작하는 UFS 명령어
     };
     
-    // 범례 항목을 접두어 및 번호순으로 정렬
     return [...legends].sort((a, b) => {
-      // 접두어 추출 (첫 글자 또는 '0x'인 경우)
       const prefixA = a.toLowerCase().startsWith('0x') ? '0' : a[0].toUpperCase();
       const prefixB = b.toLowerCase().startsWith('0x') ? '0' : b[0].toUpperCase();
       
-      // 접두어가 다른 경우 접두어 순서로 정렬
       if (prefixA !== prefixB) {
         const orderA = prefixOrder[prefixA] || 999;
         const orderB = prefixOrder[prefixB] || 999;
-        return orderA - orderB; // 접두어 순으로 오름차순
+        return orderA - orderB;
       }
       
-      // 접두어가 같은 경우:
-      // UFS 명령어(0x로 시작)는 명령어 값으로 정렬
       if (a.toLowerCase().startsWith('0x') && b.toLowerCase().startsWith('0x')) {
-        // 16진수 값으로 변환하여 비교
         const valueA = parseInt(a.slice(2), 16);
         const valueB = parseInt(b.slice(2), 16);
         return valueA - valueB;
       }
       
-      // 일반 작업은 숫자 부분 추출해서 정렬 (예: W1, W2, W10...)
       const numA = parseInt((a.match(/\d+/) || ['0'])[0]);
       const numB = parseInt((b.match(/\d+/) || ['0'])[0]);
       return numA - numB;
@@ -281,13 +239,14 @@
   let seriesColorMap = {};
   let legends = [];
   
+  // 차트 데이터 준비 함수
   function prepareChartData() {
     let seriesData = {};
     if (!data) return [];
+    
     data.forEach(item => {
       const x = parseFloat(item[xAxisKey]);
       const y = parseFloat(item[yAxisKey]);
-      
 
       if (!isNaN(x) && !isNaN(y)) {
         const legend = item[legendKey];
@@ -295,38 +254,37 @@
         seriesData[legend].push([x, y]);
       }
     });
-    // 각 legend의 데이터들을 x 값 기준 오름차순 정렬
+    
+    // x 값 기준 정렬
     Object.keys(seriesData).forEach(legend => {
       seriesData[legend].sort((a, b) => a[0] - b[0]);
     });
 
-    // legend 목록 설정 및 정렬
+    // 범례 설정 및 정렬
     legends = sortLegends(Object.keys(seriesData));
-
-    // legend 목록 및 색상 매핑 설정
     legends.forEach(legend => {
       seriesColorMap[legend] = getColorForLegend(legend);
     });
-    // global 변수에 저장 (custom tooltip용)
+    
     globalSeriesData = seriesData;
-    // scatterGL 시리즈 생성
-    const series = legends.map(legend => {
+    
+    // 시리즈 생성
+    return legends.map(legend => {
       return {
         name: legend,
         type: 'scatter',
         large: true,
         largeThreshold: 2000,
-        // 애니메이션 설정
         animation: true,
         animationDuration: 1500,
-        animationEasing: 'cubicOut',  // 애니메이션 이징 효과
+        animationEasing: 'cubicOut',
         animationDelay: function(idx) {
-          return idx * 5; // 데이터 포인트마다 지연 적용
+          return idx * 5;
         },
-        animationDurationUpdate: 300, // 데이터 업데이트 시 애니메이션 지속 시간
-        animationEasingUpdate: 'cubicInOut', // 업데이트 시 이징 효과
+        animationDurationUpdate: 300,
+        animationEasingUpdate: 'cubicInOut',
         animationDelayUpdate: function(idx) {
-          return idx * 5; // 데이터 포인트마다 지연 적용
+          return idx * 5;
         },
         symbolSize: symbolSize,
         data: seriesData[legend],
@@ -335,38 +293,32 @@
         }
       }
     });
-    return series;
   }
+
+  // Y축 패딩 계산
   function calculateYAxisPadding() {
     let maxDigits = 0;
     
-    // 모든 시리즈의 y값을 확인
     Object.keys(globalSeriesData).forEach(seriesName => {
         globalSeriesData[seriesName].forEach(point => {
-            // 소수점 2자리까지만 표시하도록 변환
             const yValue = Number(point[1]).toFixed(2);
-            // 소수점을 포함한 전체 자리수 계산 (소수점 제외)
             const digits = yValue.replace('.', '').length;
             maxDigits = Math.max(maxDigits, digits);
         });
     });
 
-    // 8자리일 때 60이므로, 자리수에 비례하여 padding 계산
     const basePadding = 60;
     const baseDigits = 8;
-    const calculatedPadding = Math.ceil((maxDigits * basePadding) / baseDigits);
-    
-    console.log('Max digits (including 2 decimal places):', maxDigits, 'Calculated padding:', calculatedPadding);
-    return calculatedPadding;
-  }  
+    return Math.ceil((maxDigits * basePadding) / baseDigits);
+  }
 
+  // 차트 초기화
   function initChart() {
     const series = prepareChartData();
     const dynamicPadding = calculateYAxisPadding();
     
     chartInstance = echarts.init(chartContainer);
     const option = {
-      // 기본 tooltip 비활성화
       tooltip: { show: false },
       toolbox: {
         show: true,
@@ -390,26 +342,22 @@
         left: 'right',
         top: 'middle',
         align: 'left',       
-        padding: [5, 10, 5, 10], // 상, 우, 하, 좌 여백
-        itemGap: 8, // 아이템 간격
-        // 테두리 추가
-        borderColor: '#e6f7ff',       // 밝은 하늘색 테두리
+        padding: [5, 10, 5, 10],
+        itemGap: 8,
+        borderColor: '#e6f7ff',
         borderWidth: 1,
-        borderRadius: 8,              // 더 둥근 모서리
-        backgroundColor: 'rgba(255, 255, 255, 0.9)', // 더 투명한 배경
-        // 부드러운 그림자
+        borderRadius: 8,
+        backgroundColor: 'rgba(255, 255, 255, 0.9)',
         shadowBlur: 10,
         shadowColor: 'rgba(0, 145, 234, 0.2)',
         shadowOffsetX: 3,
         shadowOffsetY: 3,
-         // 글꼴 스타일
-         textStyle: {
+        textStyle: {
           fontSize: 12,
           fontWeight: 'normal',
-          color: '#555'              // 부드러운 회색 텍스트
+          color: '#555'
         },
         formatter: function(name) {
-          // 긴 이름의 경우 짧게 표시
           if (name.length > 10) {
             return name.slice(0, 10) + '...';
           }
@@ -418,10 +366,10 @@
       },
       grid: {
         left: '10%',
-        right: '15%',      // 오른쪽 여백 늘려서 legend 공간 확보
+        right: '15%',
         top: '60px',
         bottom: '60px',
-        containLabel: true // 라벨까지 포함
+        containLabel: true
       },
       xAxis: {
         type: 'value',
@@ -441,18 +389,17 @@
         nameLocation: 'middle',
         nameTextStyle: {
           fontSize: 13,
-          padding: dynamicPadding, // 동적으로 계산된 padding 적용
+          padding: dynamicPadding,
           fontWeight: 'bolder'
         }
       },
       series: series
     };
     chartInstance.setOption(option);
-    console.log('series:', series);
-    // restore 이벤트 핸들러 추가: restore 시 custom 상태 초기화
+
+    // restore 이벤트 핸들러
     chartInstance.on('restore', () => {
       tooltipVisible = false;
-      console.log('restore event');
       $filtertrace = {
         zoom_column: ycolumn,
         from_time: 0,
@@ -462,11 +409,11 @@
       }; 
     });
 
-    // 커스텀 tooltip을 위한 mousemove, mouseleave 이벤트 등록
+    // 이벤트 핸들러 등록
     chartContainer.addEventListener('mousemove', handleMouseMove);
     chartContainer.addEventListener('mouseleave', () => { tooltipVisible = false; });
-    console.log('chart initialized');
-    // 기존 dataZoom 이벤트도 등록 (옵션: zoom 정보 표시용)
+
+    // datazoom 이벤트
     chartInstance.on('datazoom', function () {
       const xAxisModel = chartInstance.getModel().getComponent('xAxis', 0);
       if (xAxisModel) {
@@ -487,12 +434,10 @@
         from_lba: yZoomFrom,
         to_lba: yZoomTo
       };
-      console.log('filtertrace:', $filtertrace);
     });
-    console.log('datazoom event registered');
-    
   }
-  // 이전 데이터와 비교를 위한 hash 함수
+
+  // 데이터 변경 감지 및 차트 업데이트
   function hashData(data) {
     if (data?.length === 0) return '';
     else if (data?.length > 0) return data[0][xAxisKey] + data[0][yAxisKey] + data[0][legendKey];
@@ -502,44 +447,39 @@
   $effect(() => {
     const currentDataHash = hashData(data);
     if (prevDataHash !== currentDataHash) {
-      console.log('data changed:');
       prevDataHash = currentDataHash;
       if (chartInstance) {
         const series = prepareChartData();
-        
-        // 차트 옵션 업데이트
         chartInstance.setOption({
           series: series
-        }, { replaceMerge: ['series'] }); // series만 완전히 교체
+        }, { replaceMerge: ['series'] });
       }
     }
   });
 
-  
-
-  // 간단한 nearest point 검색 (임계값: 1 단위)
+  // 마우스 이벤트 처리
   function handleMouseMove(e) {
     const rect = chartContainer.getBoundingClientRect();
     const offsetX = e.clientX - rect.left;
     const offsetY = e.clientY - rect.top;
-    // pixel → data 좌표 변환 (grid 좌표계 사용)
     const dataCoord = chartInstance.convertFromPixel('grid', [offsetX, offsetY]);
     
     let minDist = Infinity;
     let nearestPoint = null;
-    // 각 series 데이터에서 가까운 점을 탐색
+    
     Object.keys(globalSeriesData).forEach(seriesName => {
       globalSeriesData[seriesName].forEach(point => {
         const dx = point[0] - dataCoord[0];
         const dy = point[1] - dataCoord[1];
-
         const dist = Math.sqrt(dx * dx + dy * dy);
-        if (dist < minDist && dist < 100) { // 임계값 100 (필요에 따라 조정)
+        
+        if (dist < minDist && dist < 100) {
           minDist = dist;
           nearestPoint = { seriesName, x: point[0], y: point[1] };
         }
       });
     });
+    
     if (nearestPoint) {
       tooltipContent = `${nearestPoint.seriesName}<br>${xAxisLabel}: ${nearestPoint.x}<br>${yAxisLabel}: ${nearestPoint.y}`;
       tooltipX = e.pageX;
@@ -556,6 +496,7 @@
     }
   }
 
+  // 컴포넌트 라이프사이클 이벤트
   onMount(() => {
     initChart();
     resizeObserver = new ResizeObserver(entries => {
@@ -566,7 +507,6 @@
       }
     });
     resizeObserver.observe(chartContainer);
-    console.log('chart mounted');
   });
   
   onDestroy(() => {
@@ -600,7 +540,7 @@
     </div>
     
     <Dialog.Footer>   
-      <Button type="submit" onclick={applyTitleChange}>Save changes</Button>   
+      <Button type="submit" onclick={applyTitleChange}>저장</Button>   
     </Dialog.Footer>
   </Dialog.Content>
 </Dialog.Root>
@@ -651,13 +591,6 @@
         {@html tooltipContent}
       </div>
     {/if}
-
-    <!-- {#if xZoomFrom !== 0 && xZoomTo !== 0 && yZoomFrom !== 0 && yZoomTo !== 0}
-      <div class="zoom-info">
-        X: {xZoomFrom} ~ {xZoomTo}<br>
-        Y: {yZoomFrom} ~ {yZoomTo}
-      </div>
-    {/if} -->
   </ContextMenu.Trigger>
   <ContextMenu.Content>
     <ContextMenu.Item on:click={openTitleDialog}>차트 제목 변경</ContextMenu.Item>
@@ -665,8 +598,6 @@
     <ContextMenu.Item on:click={openSymbolSizeDialog}>포인트 크기 조정</ContextMenu.Item>
   </ContextMenu.Content>
 </ContextMenu.Root>
-
-
 
 <style>
   .chart-container {
@@ -684,21 +615,8 @@
     pointer-events: none;
     white-space: nowrap;
     z-index: 100;
-    /* tooltip 위치를 마우스 좌표보다 위쪽으로 이동 */
     transform: translate(-50%, -100%);
   }
-  .zoom-info {
-    position: absolute;
-    bottom: 10px;
-    left: 10px;
-    background: rgba(255,255,255,0.8);
-    padding: 4px 8px;
-    border: 1px solid #ccc;
-    border-radius: 4px;
-    font-size: 12px;
-    z-index: 10;
-  }
-  /* 슬라이더 스타일 */
   .slider-container {
     padding: 0 1rem;
   }

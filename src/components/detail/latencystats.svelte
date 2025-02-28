@@ -1,8 +1,9 @@
 <script lang='ts'>
+    import { onMount } from 'svelte';
     import { Grid } from "wx-svelte-grid";
-    import { Willow, Material } from "wx-svelte-grid";
+    import { Willow } from "wx-svelte-grid";
 
-    // props로부터 전달받은 값
+    // props 정의
     interface LatencyStatsProps {
         tracetype: string;
         latencystat: any;
@@ -11,187 +12,239 @@
 
     let { tracetype, latencystat, threshold }:LatencyStatsProps = $props();
 
-    // 모든 상태를 $state로 선언
-    let latency_counts = $state(null);
-    let latency_summary = $state(null);
-    let latency_threshold = $state<string[]>([]);
-    let latency_type_key = $state<string[]>([]);
-    let grid_columns = $state<Array<{ id: string, header: string, width: number }>>([]);
-    let grid_data = $state<any[]>([]);
+    // 상태 변수
     let grid_columns_summary = $state<Array<{ id: string, header: string, width: number }>>([]);
     let grid_data_summary = $state<any[]>([]);
-
-    // 이전 latencystat 값을 저장할 변수
+    let grid_columns = $state<Array<{ id: string, header: string, width: number }>>([]);
+    let grid_data = $state<any[]>([]);
+    let errorMsg = $state<string|null>(null);
+    let isLoading = $state(true);
     let prevLatencystat = $state(null);
 
-    // latencystat이 실제로 변경될 때만 데이터 재처리
+    // latencystat 변경 시 데이터 처리
     $effect(() => {
         if (latencystat && JSON.stringify(latencystat) !== JSON.stringify(prevLatencystat)) {
-            console.log('latencystat actually changed:', latencystat);
-            
-            // 현재 값을 이전 값으로 저장
+            isLoading = true;
             prevLatencystat = JSON.parse(JSON.stringify(latencystat));
-            
-            // 데이터 초기화 및 재처리
-            latency_counts = latencystat.latency_counts;
-            latency_summary = latencystat.summary;
-            
-            latency_threshold = [];
-            latency_type_key = [];
-            
-            latencyTypeKey();
-            thresholdValue();
-            buildTransposedGridData();
-            buildSummaryGridData();
+            processData();
         }
     });
 
-    // threshold 문자열 배열 생성 (예: [ "≤ 0.1ms", "0.1ms < v ≤ 0.5ms", "> 1000s" ])
-    function thresholdValue() {
-        if (threshold) {
-            for (let i = 0; i < threshold.length; i++) {
-                let value: string = '';
-                if (i === 0) {         
-                    value = "≤ " + threshold[i];       
-                } else if (i === threshold.length - 1) {
-                    value = "> " + threshold[i];
-                } else {
-                    value = threshold[i - 1] + " < v ≤ " + threshold[i];
-                }
-                latency_threshold.push(value);
-            }
+    onMount(() => {
+        if (latencystat) {
+            processData();
         }
-    }  
+    });
 
-    // latency_type_key 추출 및 내림차순 정렬
-    function latencyTypeKey() {
-        Object.keys(latency_counts).forEach((key) => {
-            latency_type_key.push(key);
-        });
-        latency_type_key.sort().reverse();
+    // 데이터 처리 함수
+    function processData() {
+        try {
+            // 데이터 검증
+            if (!latencystat || !latencystat.latency_counts || !latencystat.summary) {
+                errorMsg = "데이터가 없거나 형식이 잘못되었습니다";
+                isLoading = false;
+                return;
+            }
+            
+            // 서머리 데이터 처리
+            processSummaryData();
+            
+            // 카운트 데이터 처리
+            processCountsData();
+            
+            errorMsg = null;
+            isLoading = false;
+        } catch (error) {
+            console.error('Error processing data:', error);
+            errorMsg = `데이터 처리 오류: ${error.message || '알 수 없는 오류'}`;
+            isLoading = false;
+        }
     }
 
-    // 행과 열을 전치하여 Grid용 데이터를 생성:
-    // - grid의 첫 컬럼은 "Range" (threshold 값)
-    // - 나머지 컬럼은 각 latency_type_key (opcode)
-    // - 각 행은 하나의 threshold에 해당하며, 각 셀은 해당 latency_type의 count
-    function buildTransposedGridData() {
-        // grid_columns: 첫 번째 컬럼은 Range, 이후 latency_type_key마다 컬럼 추가
-        grid_columns = [];
-        grid_columns.push({ id: "range", header: "Range", width: 150 });
-        latency_type_key.forEach(typeKey => {
-            grid_columns.push({ id: typeKey, header: typeKey, width: 150 });
+    // 서머리 데이터 그리드 생성
+    function processSummaryData() {
+        const summary = latencystat.summary;
+        
+        // 기본 컬럼 정의
+        const baseColumns = [
+            { id: "type", header: "Type", width: 150 },
+            { id: "avg", header: "Avg", width: 100 },
+            { id: "min", header: "Min", width: 100 },
+            { id: "median", header: "Median", width: 100 },
+            { id: "max", header: "Max", width: 100 },
+            { id: "std_dev", header: "Std", width: 100 }
+        ];
+
+        // 퍼센타일 키 수집
+        let percentileKeys: string[] = [];
+        Object.values(summary).forEach((s: any) => {
+            if (s && s.percentiles) {
+                Object.keys(s.percentiles).forEach(k => {
+                    if (!percentileKeys.includes(k)) percentileKeys.push(k);
+                });
+            }
         });
-        // grid_data: 각 행은 하나의 threshold (range)
-        grid_data = latency_threshold.map(thresh => {
-            let row: any = { range: thresh };
-            latency_type_key.forEach(typeKey => {
-                // latency_counts[typeKey]는 해당 typeKey의 threshold별 값 객체
-                // 값이 없으면 0을 할당
-                row[typeKey] = latency_counts[typeKey] ? latency_counts[typeKey][thresh] || 0 : 0;
-            });
+        
+        // 퍼센타일 정렬
+        percentileKeys.sort().reverse();
+        
+        // 그리드 컬럼 생성
+        grid_columns_summary = [...baseColumns];
+        percentileKeys.forEach(pk => {
+            grid_columns_summary.push({ id: pk, header: pk, width: 100 });
+        });
+        
+        // 그리드 데이터 생성
+        grid_data_summary = Object.keys(summary).map(typeKey => {
+            const s = summary[typeKey];
+            if (!s) return { type: typeKey };
+            
+            const row: any = {
+                type: typeKey,
+                avg: formatNumber(s.avg),
+                min: formatNumber(s.min),
+                median: formatNumber(s.median),
+                max: formatNumber(s.max),
+                std_dev: formatNumber(s.std_dev)
+            };
+            
+            // 퍼센타일 추가
+            if (s.percentiles) {
+                percentileKeys.forEach(pk => {
+                    row[pk] = formatNumber(s.percentiles[pk]);
+                });
+            }
+            
             return row;
         });
     }
 
-    // 소수점 3자리까지만 표시하는 포맷팅 함수
-    function formatToThreeDecimals(value) {
-        if (value === undefined || value === null) return 0;
+    // 카운트 데이터 그리드 생성
+    function processCountsData() {
+        const counts = latencystat.latency_counts;
         
-        // 숫자인 경우에만 포맷팅
+        // 타입 키와 접두사 패턴 확인
+        const typeKeys = Object.keys(counts);
+        if (typeKeys.length === 0) {
+            return;
+        }
+        
+        // 첫 번째 타입의 키를 기준으로 패턴 확인
+        const firstType = typeKeys[0];
+        const sampleKeys = Object.keys(counts[firstType]);
+        
+        // 패턴이 "숫자_텍스트" 형식인지 확인
+        const hasPrefixPattern = sampleKeys.some(k => /^\d+_/.test(k));
+        
+        // 컬럼 설정
+        grid_columns = [{ id: 'range', header: 'Range', width: 200 }];
+        typeKeys.forEach(typeKey => {
+            grid_columns.push({ id: typeKey, header: typeKey, width: 120 });
+        });
+        
+        // 데이터 행 생성
+        if (hasPrefixPattern) {
+            // 접두사 있는 경우: 접두사로 정렬
+            const firstTypeData = counts[firstType];
+            const sortedKeys = Object.keys(firstTypeData)
+                .filter(k => /^\d+_/.test(k))
+                .sort((a, b) => {
+                    const numA = parseInt(a.split('_')[0]);
+                    const numB = parseInt(b.split('_')[0]);
+                    return numA - numB;
+                });
+                
+            grid_data = sortedKeys.map(key => {
+                // 표시용 범위 텍스트 (접두사 제거)
+                const displayRange = key.replace(/^\d+_/, '');
+                
+                const row: any = { range: displayRange };
+                
+                // 각 타입별 값 추가
+                typeKeys.forEach(typeKey => {
+                    row[typeKey] = counts[typeKey][key] || 0;
+                });
+                
+                return row;
+            });
+        } else {
+            // 임계값 기반 (threshold 배열 사용)
+            grid_data = threshold.map((thresh, index) => {
+                let displayRange: string;
+                if (index === 0) {
+                    displayRange = `≤ ${thresh}`;
+                } else if (index === threshold.length - 1) {
+                    displayRange = `> ${threshold[index-1]}`;
+                } else {
+                    displayRange = `${threshold[index-1]} < v ≤ ${thresh}`;
+                }
+                
+                const row: any = { range: displayRange };
+                
+                typeKeys.forEach(typeKey => {
+                    row[typeKey] = counts[typeKey][thresh] || 0;
+                });
+                
+                return row;
+            });
+        }
+    }
+
+    // 소수점 3자리로 포맷팅
+    function formatNumber(value: any) {
+        if (value === undefined || value === null) return 0;
         if (typeof value === 'number') {
             return Number(value.toFixed(3));
         }
         return value;
     }
-
-    function buildSummaryGridData() {
-        // 기본 컬럼 정의
-        const baseColumns = [
-            { id: "type", header: "Type", width: 150, },
-            { id: "avg", header: "Avg", width: 150 },
-            { id: "min", header: "Min", width: 150 },
-            { id: "median", header: "Median", width: 150 },
-            { id: "max", header: "Max", width: 150 },
-            { id: "std_dev", header: "Std", width: 150 },
-            { id: "sum", header: "Sum", width: 150 }
-        ];
-
-        // 각 summary 객체의 percentiles 내부 키들을 모두 모아서 union을 만듭니다.
-        let percentileKeys: string[] = [];
-        Object.values(latency_summary).forEach(summary => {
-            if (summary.percentiles) {
-                Object.keys(summary.percentiles).forEach(key => {
-                    if (!percentileKeys.includes(key)) {
-                        percentileKeys.push(key);
-                    }
-                });
-            }
-        });
-        // 예제에서는 단순 알파벳 순으로 정렬합니다.
-        percentileKeys.sort().reverse();
-
-        // grid 컬럼 생성: 기본 컬럼 + percentile 컬럼
-        grid_columns_summary = [...baseColumns];
-        percentileKeys.forEach(pk => {
-            grid_columns_summary.push({ id: pk, header: pk, width: 150 });
-        });
-
-        // grid 데이터 생성: 각 행은 하나의 타입(summary의 key)을 나타냄
-        grid_data_summary = Object.keys(latency_summary).map(typeKey => {
-            const summary = latency_summary[typeKey];
-            let row: any = {
-                type: typeKey,
-                // 소수점 3자리로 제한
-                avg: formatToThreeDecimals(summary.avg),
-                min: formatToThreeDecimals(summary.min),
-                median: formatToThreeDecimals(summary.median),
-                max: formatToThreeDecimals(summary.max),
-                std_dev: formatToThreeDecimals(summary.std_dev),
-                sum: formatToThreeDecimals(summary.sum)
-            };
-            
-            // percentiles도 소수점 3자리로 제한
-            percentileKeys.forEach(pk => {
-                const value = summary.percentiles ? summary.percentiles[pk] : 0;
-                row[pk] = formatToThreeDecimals(value);
-            });
-            return row;
-        });
-    }
-
-    // // 함수 호출 순서: type, threshold, 전치 데이터 생성
-    // latencyTypeKey();
-    // thresholdValue();        
-    // buildTransposedGridData();
-    // buildSummaryGridData();
-
-    // console.log("grid_columns_summary:", grid_columns_summary);
-    // console.log("grid_data_summary:", grid_data_summary);
-
-    // console.log('latency_threshold:', latency_threshold);
-    // console.log('latency_type_key:', latency_type_key);
-    // console.log('grid_columns:', grid_columns);
-    // console.log('grid_data:', grid_data);
 </script>
 
-<div class="font-sans">
-    <Willow>
-        <div class="px-0" style="font-size: 12px;">
-            <Grid data={grid_data_summary} columns={grid_columns_summary}/>
+<div class="p-2">
+    {#if errorMsg}
+        <div class="alert alert-warning mb-4">
+            <p>{errorMsg}</p>
         </div>
-    </Willow>
-    <div class="divider"></div>
-    <Willow>
-        <div class="px-0" style="font-size: 12px;">
-            <Grid data={grid_data} columns={grid_columns}/>
+    {:else if isLoading}
+        <div class="flex justify-center items-center p-4">
+            <div class="animate-spin h-5 w-5 border-2 border-current border-t-transparent rounded-full mr-2"></div>
+            <span>데이터 로딩 중...</span>
         </div>
-    </Willow>    
-    
+    {:else}
+        <!-- 서머리 그리드 -->
+        {#if grid_data_summary.length > 0}
+            <div class="mb-6">
+                <div class="text-sm font-medium mb-2">요약 통계</div>
+                <Willow>
+                    <div style="font-size: 12px;">
+                        <Grid bind:data={grid_data_summary} bind:columns={grid_columns_summary}/>
+                    </div>
+                </Willow>
+            </div>
+        {/if}
+        
+        <!-- 카운트 그리드 -->
+        {#if grid_data.length > 0}
+            <div>
+                <div class="text-sm font-medium mb-2">지연 시간별 카운트</div>
+                <Willow>
+                    <div style="font-size: 12px;">
+                        <Grid bind:data={grid_data} bind:columns={grid_columns}/>
+                    </div>
+                </Willow>
+            </div>
+        {/if}
+    {/if}
 </div>
 
 <style>
-    .font-sans {
-        font-size: 12px;
+    .alert {
+        padding: 0.75rem 1rem;
+        border-radius: 0.375rem;
+    }
+    .alert-warning {
+        background-color: #fff3cd;
+        color: #856404;
+        border: 1px solid #ffeeba;
     }
 </style>

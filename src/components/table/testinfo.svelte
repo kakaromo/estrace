@@ -80,7 +80,6 @@
         isLoading = true;
         try {
             testData = await getAllTestInfo();
-            console.log('testData:', testData);
         } catch (error) {
             console.error('Error loading test data:', error);
         } finally {

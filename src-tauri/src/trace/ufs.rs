@@ -421,7 +421,7 @@ pub async fn continuity_stats(
     let mut total_bytes: u64 = 0;
     let mut continuous_bytes: u64 = 0;
 
-    for ufs in &send_reqs { // 수정: 루프 변수와 이터레이터 정의
+    for ufs in &send_reqs {
         // opcode별 통계 업데이트
         let stats = op_stats
             .entry(ufs.opcode.clone())

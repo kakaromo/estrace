@@ -10,6 +10,8 @@
         selectedTrace,  prevselectedTrace, filterselectedTraceChanged
      } from '$stores/trace';
 
+    import type { TestInfo } from '$stores/trace';
+
     import { Circle2 } from 'svelte-loading-spinners';
     import { StepBack, FileDown } from 'svelte-lucide';
     import { Button } from "$lib/components/ui/button";
@@ -40,13 +42,12 @@
 
     // 페이지 ID 및 기본 상태
     const id = $page.params.id;
-    let data = $state({});
-    let tracedata = [];
+    let data:TestInfo = $state({});
+    let tracedata:any[] = [];
     let filteredData = $state([]);
-    let tracetype = $state([]);
-    let lbachartdata = $state([]);
-    let isLoading = $state(false);
-
+    let tracetype:string[] = $state([]);
+    let isLoading:boolean = $state(false);
+    
     // 시각화 항목 상태
     let ispattern = $state(true);
     let isrwd = $state(false);
@@ -89,9 +90,6 @@
     // 필터가 변경될 때 데이터 업데이트
     $effect(async () => {
         if ($filtertraceChanged) {
-            console.log('filtertrace changed from:', $prevFilterTrace);
-            console.log('to:', $filtertrace);
-            
             isLoading = true;
             
             // 이전 필터 값 업데이트
@@ -109,10 +107,7 @@
     
     // selectedTrace가 변경될 때 통계 데이터 업데이트
     $effect(async () => {
-        console.log('selectedTrace changed to:', $selectedTrace);
-        
         if ($selectedTrace && $filterselectedTraceChanged) {
-            console.log('Loading stats for selectedTrace:', $selectedTrace);
             isLoading = true;
             
             $prevselectedTrace = $selectedTrace;
@@ -131,22 +126,17 @@
     async function updateFilteredData() {
         if ($selectedTrace) {
             filteredData[$selectedTrace] = filterTraceData(tracedata, $selectedTrace, $filtertrace);
-            console.log('filteredData:', filteredData[$selectedTrace].length);
         }
     }
 
     // 선택된 유형에 따라 통계 데이터 로드
     async function loadStatsData() {
         if ($selectedTrace === 'ufs') {
-            console.log('Loading UFS stats with filename:', fileNames.ufs);
             const stats = await fetchUfsStats(fileNames.ufs, $filtertrace);
             ufsStats = stats;
-            console.log('Updated UFS stats:', ufsStats);
         } else if ($selectedTrace === 'block') {
-            console.log('Loading Block stats with filename:', fileNames.block);
             const stats = await fetchBlockStats(fileNames.block, $filtertrace);
             blockStats = stats;
-            console.log('Updated Block stats:', blockStats);
         }
     }
 
@@ -191,8 +181,6 @@
                 fileNames.block = names[1];
                 parquetFiles.block = names[1];
             }
-            
-            console.log('Parquet files:', parquetFiles);
         }
     }
 
@@ -211,7 +199,6 @@
             let cached = await get(cacheKey);
             if (cached) {
                 tracedata = JSON.parse(cached);
-                console.log('Loaded trace data from IndexedDB.');
             } else {
                 // 캐시된 데이터가 없으면 서버에서 가져오기
                 let traceStr = await invoke<string>('readtrace', { 
@@ -223,7 +210,6 @@
                 
                 // IndexedDB에 데이터 저장
                 await set(cacheKey, traceStr);
-                console.log('Saved trace data to IndexedDB.');
             }
             
             // 데이터 저장 및 초기화
@@ -240,7 +226,6 @@
             // 초기 통계 데이터 로드
             await loadStatsData();
 
-            console.log("Total onMount time:", performance.now() - startTotal, "ms");
             isLoading = false;
         } catch (error) {
             if (error instanceof Error) {

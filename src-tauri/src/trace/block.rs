@@ -138,7 +138,7 @@ pub fn block_bottom_half_latency_process(block_list: Vec<Block>) -> Vec<Block> {
         deduplicated_blocks.push(block);
     }
     
-    println!("Duplicated block_rq_issue removed in pre-processing: {}", duplicate_count);
+    // 디버그 출력 제거
     
     // 3. 중복이 제거된 데이터에 대해 후처리 진행
     // (연속성, 지연 시간 등 처리)
@@ -223,8 +223,7 @@ pub fn block_bottom_half_latency_process(block_list: Vec<Block>) -> Vec<Block> {
         filtered_blocks.push(block);
     }
     
-    println!("IO operation counts - Read: {}, Write: {}, Discard: {}, Other: {}", 
-             read_count, write_count, discard_count, other_count);
+    // 디버그 출력 제거
     
     filtered_blocks
 }

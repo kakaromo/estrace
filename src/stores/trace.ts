@@ -2,8 +2,8 @@ import { writable, derived } from "svelte/store";
 
 export const trace = writable([]);
 export const filtertracedata = writable([]);
-export const selectedTrace = writable('');
-export const prevselectedTrace = writable('');
+export const selectedTrace = writable<string>('');
+export const prevselectedTrace = writable<string>('');
 // 이전 filtertrace 값을 저장할 store
 export const prevFilterTrace = writable({
   zoom_column: 'lba',
@@ -26,11 +26,6 @@ export const filtertrace = writable({
 export const filtertraceChanged = derived(
   [filtertrace, prevFilterTrace],
   ([$filtertrace, $prevFilterTrace]) => {
-    if (JSON.stringify($filtertrace) !== JSON.stringify($prevFilterTrace)) {
-      console.log('filtertrace changed');
-    } else {
-      console.log('filtertrace not changed');
-    }
     return JSON.stringify($filtertrace) !== JSON.stringify($prevFilterTrace);
   }
 );
@@ -42,3 +37,12 @@ export const filterselectedTraceChanged = derived(
   }
 );
 export const currentValue = writable(false);
+
+export type TestInfo = {
+  id: number;
+  logtype: string;
+  title: string;
+  content: string;
+  logfolder: string;
+  logname: string;
+};
