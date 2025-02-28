@@ -1,5 +1,5 @@
 import Database from '@tauri-apps/plugin-sql';
-import { setting } from "../stores/setting";
+import { setting } from "$stores/setting";
 
 let db: Database = null;
 

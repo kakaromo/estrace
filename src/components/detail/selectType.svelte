@@ -2,7 +2,12 @@
     import * as Select from "$lib/components/ui/select/index.js";
     import { selectedTrace } from "../../stores/trace.js";
 
-    let { tracedata, tracetype } = $props();       
+    interface SelectTypeProps {
+        tracedata: any;
+        tracetype: string[];
+    }
+
+    let { tracedata, tracetype } : SelectTypeProps = $props();       
     
 </script>
 <Select.Root onSelectedChange={(v) => {

@@ -14,6 +14,7 @@ const config = {
       $api: "./src/api",
       $stores: "./src/stores",
       $components: "./src/components",
+      $utils: "./src/utils",
     },
   },
 };

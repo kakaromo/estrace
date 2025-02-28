@@ -3,7 +3,11 @@
     import { Willow } from "wx-svelte-grid";
     import * as Tabs from "$lib/components/ui/tabs/index.js";
 
-    let { opcode_size_counts } = $props();
+    interface SizeStatsProps {
+        opcode_size_counts: Record<string, Record<string, number>>;
+    }
+
+    let { opcode_size_counts }:SizeStatsProps = $props();
 
     // 상태 변수 선언
     let normalized_size_counts = $state<Record<string, { size: number, count: number }[]>>({});

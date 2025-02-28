@@ -3,25 +3,44 @@
   import * as echarts from 'echarts';
   import 'echarts-gl';
   import * as ContextMenu from "$lib/components/ui/context-menu/index.js";
+  import * as Dialog from '$lib/components/ui/dialog';
+  import { Input } from "$lib/components/ui/input";
+  import { Label } from "$lib/components/ui/label";
+  import { Button } from "$lib/components/ui/button";
+  import { Slider } from "$lib/components/ui/slider";
 
-  import * as Dialog from "$lib/components/ui/dialog";
+  import { trace, selectedTrace, filtertrace } from '$stores/trace';
 
-  import { trace, selectedTrace, filtertrace, filtertraceChanged } from '$stores/trace';
+  interface ScatterChartProps {
+    data: any[];
+    xAxisKey: string;
+    yAxisKey: string;
+    legendKey: string;
+    xAxisLabel?: string;
+    yAxisLabel?: string;
+    ycolumn: string;
+  }
 
-  let { data, xAxisKey, yAxisKey, legendKey, xAxisLabel = 'time', yAxisLabel = 'sector', ycolumn } = $props();
+  let { data, xAxisKey, yAxisKey, legendKey, xAxisLabel = 'time', yAxisLabel = 'sector', ycolumn } :ScatterChartProps = $props();
 
-  let title = $state('');
+  let chartTitle = $state('');
+  let showTitleDialog = $state(false);
+  let inputTitle = $state('');
+
+  // 포인트 크기 설정 다이얼로그
+  let showSymbolSizeDialog = $state(false);
+  let inputSymbolSize = $state(3);
+
   let symbolSize = $state(3);
   let xAxisName = $state('time');
   let yAxisName = $state('sector');
-  let legendposition = $state('top');
-  let legendorient = $state('horizontal');
+  let legendposition = $state('middle');
+  let legendorient = $state('vertical');
   let legendshow = $state(true);
   let tooltipshow = $state(true);
 
   let prevData = $state(null);
-  let prevFilter = $state(null);
-
+  let prevDataHash = '';
   xAxisName = xAxisLabel;
   yAxisName = yAxisLabel;
 
@@ -48,18 +67,127 @@
 
   const WRITE_COLOR = '#FF0000';
   const READ_COLOR = '#0000FF';
-  const DISCARD_COLOR = '#800080';
+  const DISCARD_COLOR = '#00FF00';
+  const FLUSH_COLOR = '#FFFF00';
 
-  const WRITE_PALETTE = ['#FFCCCC', '#FF9999', '#FF6666', '#FF3333', '#FF0000'];
-  const READ_PALETTE = ['#CCCCFF', '#9999FF', '#6666FF', '#3333FF', '#0000FF'];
-  const DISCARD_PALETTE = ['#E6CCE6', '#D9B3D9', '#CC99CC', '#BF80BF', '#B266B2'];
+  // UFS 명령어별 고정 컬러 매핑 (원색 사용)
+  const UFS_COMMAND_COLORS = {
+    // Write 계열 - 빨간색 계열
+    '0x2a': '#FF0000', // Write - 순수한 빨간색
+    '0xa2': '#FF3333', // Write 관련 - 밝은 빨간색
+    
+    // Read 계열 - 파란색 계열
+    '0x28': '#0000FF', // Read - 순수한 파란색
+    '0xb5': '#3333FF', // Read 관련 - 밝은 파란색
+    
+    // UNMAP 계열 - 녹색 계열
+    '0x42': '#00FF00', // UNMAP - 순수한 녹색
+    
+    // 기타 명령어들 - 다른 원색
+    '0x1b': '#FF00FF', // 자주색
+    '0x12': '#00FFFF', // 청록색
+    '0x35': '#FFFF00', // 노란색
+    '0xc0': '#FF8800', // 주황색
+  };
+
+  // 블록 타입별 팔레트 (더 선명하고 원색에 가까운 색상으로 업데이트)
+  const WRITE_PALETTE = [
+    '#FF0000', // 순수 빨강
+    '#FF3333',
+    '#FF6666',
+    '#FF9999',
+    '#FFCCCC'
+  ];
+  
+  const READ_PALETTE = [
+    '#0000FF', // 순수 파랑
+    '#3333FF',
+    '#6666FF',
+    '#9999FF',
+    '#CCCCFF'
+  ];
+  
+  const DISCARD_PALETTE = [
+    '#00FF00', // 순수 녹색
+    '#33FF33',
+    '#66FF66',
+    '#99FF99',
+    '#CCFFCC'
+  ];
+  
+  const FLUSH_PALETTE = [
+    '#FFFF00', // 순수 노랑
+    '#FFFF33',
+    '#FFFF66',
+    '#FFFF99',
+    '#FFFFCC'
+  ];
 
   let blockWriteMapping = {};
   let blockReadMapping = {};
   let blockDiscardMapping = {};
+  let blockFlushMapping = {};  // 추가: Flush 블록 매핑
+
   let writePaletteIndex = 0;
   let readPaletteIndex = 0;
   let discardPaletteIndex = 0;
+  let flushPaletteIndex = 0;   // 추가: Flush 인덱스
+
+  // 차트 옵션 업데이트 함수
+  function updateChartOption(options) {
+    if (chartInstance) {
+      chartInstance.setOption(options);
+    }
+  }
+  
+  // 차트 타이틀 설정 함수
+  function setChartTitle(title) {
+    chartTitle = title;
+    updateChartOption({
+      title: {
+        text: title,
+        left: 'center',
+        top: '15px'
+      }
+    });
+  }
+  
+  // 타이틀 다이얼로그 열기
+  function openTitleDialog() {
+    inputTitle = chartTitle;
+    showTitleDialog = true;
+  }
+  
+  // 타이틀 변경 적용
+  function applyTitleChange() {
+    console.log('inputTitle:', inputTitle);
+    setChartTitle(inputTitle);
+    showTitleDialog = false;
+  }
+
+  function openSymbolSizeDialog() {
+    inputSymbolSize = symbolSize;
+    showSymbolSizeDialog = true;
+  }
+
+  function applySymbolSizeChange() {
+    symbolSize = inputSymbolSize;
+    
+    // 모든 시리즈의 symbolSize 업데이트
+    if (chartInstance) {
+      const option = chartInstance.getOption();
+      const updatedSeries = option.series.map(series => {
+        series.symbolSize = symbolSize;
+        return series;
+      });
+      
+      updateChartOption({
+        series: updatedSeries
+      });
+    }
+    
+    showSymbolSizeDialog = false;
+  }
 
   function getRandomColor() {
     return '#' + Math.floor(Math.random() * 16777215).toString(16);
@@ -68,38 +196,94 @@
   function getColorForLegend(legend) {
     if (typeof legend !== 'string') return getRandomColor();
 
+    // UFS 명령어 확인 (0x로 시작하는 경우)
     if (legend.toLowerCase().startsWith('0x')) {
-      if (legend.toLowerCase() === '0x2a') return WRITE_COLOR;
-      if (legend.toLowerCase() === '0x28') return READ_COLOR;
-      if (legend.toLowerCase() === '0x42') return DISCARD_COLOR;
+      const cmdLower = legend.toLowerCase();
+      // UFS_COMMAND_COLORS에 정의된 색상이 있으면 해당 색상 사용
+      if (UFS_COMMAND_COLORS[cmdLower]) {
+        return UFS_COMMAND_COLORS[cmdLower];
+      }
     }
     const prefix = legend[0].toUpperCase();
-    if (prefix === 'W') {
-      if (!(legend in blockWriteMapping)) {
-        blockWriteMapping[legend] = WRITE_PALETTE[writePaletteIndex % WRITE_PALETTE.length];
-        writePaletteIndex++;
-      }
-      return blockWriteMapping[legend];
-    } else if (prefix === 'R') {
-      if (!(legend in blockReadMapping)) {
-        blockReadMapping[legend] = READ_PALETTE[readPaletteIndex % READ_PALETTE.length];
-        readPaletteIndex++;
-      }
-      return blockReadMapping[legend];
-    } else if (prefix === 'D') {
-      if (!(legend in blockDiscardMapping)) {
-        blockDiscardMapping[legend] = DISCARD_PALETTE[discardPaletteIndex % DISCARD_PALETTE.length];
-        discardPaletteIndex++;
-      }
-      return blockDiscardMapping[legend];
+    switch (prefix) {
+      case 'W': // Write
+        if (!(legend in blockWriteMapping)) {
+          blockWriteMapping[legend] = WRITE_PALETTE[writePaletteIndex % WRITE_PALETTE.length];
+          writePaletteIndex++;
+        }
+        return blockWriteMapping[legend];
+        
+      case 'R': // Read
+        if (!(legend in blockReadMapping)) {
+          blockReadMapping[legend] = READ_PALETTE[readPaletteIndex % READ_PALETTE.length];
+          readPaletteIndex++;
+        }
+        return blockReadMapping[legend];
+        
+      case 'D': // Discard
+        if (!(legend in blockDiscardMapping)) {
+          blockDiscardMapping[legend] = DISCARD_PALETTE[discardPaletteIndex % DISCARD_PALETTE.length];
+          discardPaletteIndex++;
+        }
+        return blockDiscardMapping[legend];
+        
+      case 'F': // Flush (추가)
+        if (!(legend in blockFlushMapping)) {
+          blockFlushMapping[legend] = FLUSH_PALETTE[flushPaletteIndex % FLUSH_PALETTE.length];
+          flushPaletteIndex++;
+        }
+        return blockFlushMapping[legend];
+        
+      default:
+        return getRandomColor();
     }
-    return getRandomColor();
+  }
+  
+  function sortLegends(legends) {
+    // 접두어 순서 정의 (중요도 순서대로)
+    const prefixOrder = {
+      'R': 1, // Read
+      'W': 2, // Write
+      'D': 3, // Discard
+      'F': 4, // Flush
+      '0': 5  // 0x로 시작하는 UFS 명령어
+    };
+    
+    // 범례 항목을 접두어 및 번호순으로 정렬
+    return [...legends].sort((a, b) => {
+      // 접두어 추출 (첫 글자 또는 '0x'인 경우)
+      const prefixA = a.toLowerCase().startsWith('0x') ? '0' : a[0].toUpperCase();
+      const prefixB = b.toLowerCase().startsWith('0x') ? '0' : b[0].toUpperCase();
+      
+      // 접두어가 다른 경우 접두어 순서로 정렬
+      if (prefixA !== prefixB) {
+        const orderA = prefixOrder[prefixA] || 999;
+        const orderB = prefixOrder[prefixB] || 999;
+        return orderA - orderB; // 접두어 순으로 오름차순
+      }
+      
+      // 접두어가 같은 경우:
+      // UFS 명령어(0x로 시작)는 명령어 값으로 정렬
+      if (a.toLowerCase().startsWith('0x') && b.toLowerCase().startsWith('0x')) {
+        // 16진수 값으로 변환하여 비교
+        const valueA = parseInt(a.slice(2), 16);
+        const valueB = parseInt(b.slice(2), 16);
+        return valueA - valueB;
+      }
+      
+      // 일반 작업은 숫자 부분 추출해서 정렬 (예: W1, W2, W10...)
+      const numA = parseInt((a.match(/\d+/) || ['0'])[0]);
+      const numB = parseInt((b.match(/\d+/) || ['0'])[0]);
+      return numA - numB;
+    });
   }
 
   let seriesColorMap = {};
   let legends = [];
+  
   function prepareChartData() {
     let seriesData = {};
+    if (!data) return [];
     data.forEach(item => {
       const x = parseFloat(item[xAxisKey]);
       const y = parseFloat(item[yAxisKey]);
@@ -115,8 +299,11 @@
     Object.keys(seriesData).forEach(legend => {
       seriesData[legend].sort((a, b) => a[0] - b[0]);
     });
+
+    // legend 목록 설정 및 정렬
+    legends = sortLegends(Object.keys(seriesData));
+
     // legend 목록 및 색상 매핑 설정
-    legends = Object.keys(seriesData);
     legends.forEach(legend => {
       seriesColorMap[legend] = getColorForLegend(legend);
     });
@@ -126,7 +313,21 @@
     const series = legends.map(legend => {
       return {
         name: legend,
-        type: 'scatterGL',
+        type: 'scatter',
+        large: true,
+        largeThreshold: 2000,
+        // 애니메이션 설정
+        animation: true,
+        animationDuration: 1500,
+        animationEasing: 'cubicOut',  // 애니메이션 이징 효과
+        animationDelay: function(idx) {
+          return idx * 5; // 데이터 포인트마다 지연 적용
+        },
+        animationDurationUpdate: 300, // 데이터 업데이트 시 애니메이션 지속 시간
+        animationEasingUpdate: 'cubicInOut', // 업데이트 시 이징 효과
+        animationDelayUpdate: function(idx) {
+          return idx * 5; // 데이터 포인트마다 지연 적용
+        },
         symbolSize: symbolSize,
         data: seriesData[legend],
         itemStyle: {
@@ -136,9 +337,32 @@
     });
     return series;
   }
+  function calculateYAxisPadding() {
+    let maxDigits = 0;
+    
+    // 모든 시리즈의 y값을 확인
+    Object.keys(globalSeriesData).forEach(seriesName => {
+        globalSeriesData[seriesName].forEach(point => {
+            // 소수점 2자리까지만 표시하도록 변환
+            const yValue = Number(point[1]).toFixed(2);
+            // 소수점을 포함한 전체 자리수 계산 (소수점 제외)
+            const digits = yValue.replace('.', '').length;
+            maxDigits = Math.max(maxDigits, digits);
+        });
+    });
+
+    // 8자리일 때 60이므로, 자리수에 비례하여 padding 계산
+    const basePadding = 60;
+    const baseDigits = 8;
+    const calculatedPadding = Math.ceil((maxDigits * basePadding) / baseDigits);
+    
+    console.log('Max digits (including 2 decimal places):', maxDigits, 'Calculated padding:', calculatedPadding);
+    return calculatedPadding;
+  }  
 
   function initChart() {
     const series = prepareChartData();
+    const dynamicPadding = calculateYAxisPadding();
     
     chartInstance = echarts.init(chartContainer);
     const option = {
@@ -154,22 +378,72 @@
           saveAsImage: {}
         }
       },
+      title: {
+        text: chartTitle,
+        left: 'center',
+        top: '15px'
+      },
       legend: {
         data: legends,
         show: legendshow,
         orient: legendorient,
-        left: 'center',
-        top: legendposition
+        left: 'right',
+        top: 'middle',
+        align: 'left',       
+        padding: [5, 10, 5, 10], // 상, 우, 하, 좌 여백
+        itemGap: 8, // 아이템 간격
+        // 테두리 추가
+        borderColor: '#e6f7ff',       // 밝은 하늘색 테두리
+        borderWidth: 1,
+        borderRadius: 8,              // 더 둥근 모서리
+        backgroundColor: 'rgba(255, 255, 255, 0.9)', // 더 투명한 배경
+        // 부드러운 그림자
+        shadowBlur: 10,
+        shadowColor: 'rgba(0, 145, 234, 0.2)',
+        shadowOffsetX: 3,
+        shadowOffsetY: 3,
+         // 글꼴 스타일
+         textStyle: {
+          fontSize: 12,
+          fontWeight: 'normal',
+          color: '#555'              // 부드러운 회색 텍스트
+        },
+        formatter: function(name) {
+          // 긴 이름의 경우 짧게 표시
+          if (name.length > 10) {
+            return name.slice(0, 10) + '...';
+          }
+          return name;
+        } 
+      },
+      grid: {
+        left: '10%',
+        right: '15%',      // 오른쪽 여백 늘려서 legend 공간 확보
+        top: '60px',
+        bottom: '60px',
+        containLabel: true // 라벨까지 포함
       },
       xAxis: {
         type: 'value',
         scale: true,
-        name: xAxisName
+        name: xAxisName,
+        nameLocation: 'middle',
+        nameTextStyle: {
+          fontSize: 13,
+          padding: 15, 
+          fontWeight: 'bolder'
+        }
       },
       yAxis: {
         type: 'value',
         scale: true,
-        name: yAxisName
+        name: yAxisName,
+        nameLocation: 'middle',
+        nameTextStyle: {
+          fontSize: 13,
+          padding: dynamicPadding, // 동적으로 계산된 padding 적용
+          fontWeight: 'bolder'
+        }
       },
       series: series
     };
@@ -179,16 +453,12 @@
     chartInstance.on('restore', () => {
       tooltipVisible = false;
       console.log('restore event');
-      xZoomFrom = 0;
-      xZoomTo = 0;
-      yZoomFrom = 0;
-      yZoomTo = 0;     
       $filtertrace = {
         zoom_column: ycolumn,
-        from_time: xZoomFrom,
-        to_time: xZoomTo,
-        from_lba: yZoomFrom,
-        to_lba: yZoomTo
+        from_time: 0,
+        to_time: 0,
+        from_lba: 0,
+        to_lba: 0
       }; 
     });
 
@@ -210,65 +480,39 @@
         yZoomFrom = yExtent[0];
         yZoomTo = yExtent[1];
       }
+      $filtertrace = {
+        zoom_column: ycolumn,
+        from_time: xZoomFrom,
+        to_time: xZoomTo,
+        from_lba: yZoomFrom,
+        to_lba: yZoomTo
+      };
+      console.log('filtertrace:', $filtertrace);
     });
     console.log('datazoom event registered');
-    $filtertrace = {
-      zoom_column: ycolumn,
-      from_time: xZoomFrom,
-      to_time: xZoomTo,
-      from_lba: yZoomFrom,
-      to_lba: yZoomTo
-    };
-    console.log('filtertrace:', $filtertrace);
+    
+  }
+  // 이전 데이터와 비교를 위한 hash 함수
+  function hashData(data) {
+    if (data?.length === 0) return '';
+    else if (data?.length > 0) return data[0][xAxisKey] + data[0][yAxisKey] + data[0][legendKey];
+    return '';
   }
 
-  $effect(() => {   
-    $filtertrace = {
-      zoom_column: ycolumn,
-      from_time: xZoomFrom,
-      to_time: xZoomTo,
-      from_lba: yZoomFrom,
-      to_lba: yZoomTo
-    };
-    
-	});
-
   $effect(() => {
-    if (JSON.stringify(prevData) !== JSON.stringify(data)) {
+    const currentDataHash = hashData(data);
+    if (prevDataHash !== currentDataHash) {
       console.log('data changed:');
-      prevData = data;
+      prevDataHash = currentDataHash;
       if (chartInstance) {
-        // const series = prepareChartData();
+        const series = prepareChartData();
         
-        // // 차트 옵션 업데이트
-        // chartInstance.setOption({
-        //   series: series
-        // }, { replaceMerge: ['series'] }); // series만 완전히 교체
-        chartContainer.removeEventListener('mousemove', handleMouseMove);
-        if (resizeObserver) {
-          resizeObserver.disconnect();
-        }
-        chartInstance.dispose();
-        initChart();
-        resizeObserver = new ResizeObserver(entries => {
-          for (let entry of entries) {
-            if (entry.target === chartContainer) {
-              updateChartSize();
-            }
-          }
-        });
-        resizeObserver.observe(chartContainer);
-
+        // 차트 옵션 업데이트
+        chartInstance.setOption({
+          series: series
+        }, { replaceMerge: ['series'] }); // series만 완전히 교체
       }
     }
-    // if (chartInstance) {
-    //     const series = prepareChartData();
-        
-    //     // 차트 옵션 업데이트
-    //     chartInstance.setOption({
-    //       series: series
-    //     }, { replaceMerge: ['series'] }); // series만 완전히 교체
-    //   }
   });
 
   
@@ -311,33 +555,7 @@
       chartInstance.resize();
     }
   }
-  
-  // y축이 latency 관련일 때 해당 시간대의 lba 범위를 찾는 함수
-  function findLbaRangeInTimeRange(timeFrom: number, timeTo: number) {
-    let minLba = Infinity;
-    let maxLba = -Infinity;
 
-    Object.keys(globalSeriesData).forEach(seriesName => {
-        globalSeriesData[seriesName].forEach(point => {
-            const time = point[0];
-            const lba = data.find(item => 
-                item[xAxisKey] === time && 
-                item[legendKey] === seriesName
-            )?.[yAxisKey === 'lba' ? yAxisKey : 'lba'];
-
-            if (time >= timeFrom && time <= timeTo && lba !== undefined) {
-                minLba = Math.min(minLba, lba);
-                maxLba = Math.max(maxLba, lba);
-            }
-        });
-    });
-
-    return {
-        from: minLba === Infinity ? 0 : minLba,
-        to: maxLba === -Infinity ? 0 : maxLba
-    };
-  }
-  
   onMount(() => {
     initChart();
     resizeObserver = new ResizeObserver(entries => {
@@ -361,6 +579,94 @@
     }
   });
 </script>
+
+<!-- Title 수정 다이얼로그 -->
+<Dialog.Root open={showTitleDialog} onOpenChange={(open) => showTitleDialog = open}>
+  <Dialog.Content>
+    <Dialog.Header>
+      <Dialog.Title>차트 제목 변경</Dialog.Title>
+      <Dialog.Description>
+        차트에 표시될 제목을 입력하세요.
+      </Dialog.Description>
+    </Dialog.Header>
+    
+    <div class="grid gap-4 py-4">
+      <div class="grid grid-cols-4 items-center gap-4">
+        <Label for="chart-title" class="text-right">
+          제목
+        </Label>
+        <Input id="chart-title" class="col-span-3" bind:value={inputTitle} />
+      </div>
+    </div>
+    
+    <Dialog.Footer>   
+      <Button type="submit" onclick={applyTitleChange}>Save changes</Button>   
+    </Dialog.Footer>
+  </Dialog.Content>
+</Dialog.Root>
+  
+<!-- Symbol 크기 수정 다이얼로그 -->
+<Dialog.Root open={showSymbolSizeDialog} onOpenChange={(open) => showSymbolSizeDialog = open}>
+  <Dialog.Content>
+    <Dialog.Header>
+      <Dialog.Title>포인트 크기 조정</Dialog.Title>
+      <Dialog.Description>
+        차트에 표시되는 포인트 크기를 조정하세요.
+      </Dialog.Description>
+    </Dialog.Header>
+    
+    <div class="grid gap-4 py-4">
+      <div class="grid grid-cols-4 items-center gap-4">
+        <Label for="symbol-size" class="text-right">
+          크기
+        </Label>
+        <div class="col-span-3">
+          <div class="slider-container">
+            <Slider 
+              id="symbol-size" 
+              min={1} 
+              max={10} 
+              step={0.5} 
+              value={[inputSymbolSize]}
+              onValueChange={(values) => inputSymbolSize = values[0]} 
+            />
+          </div>
+          <div class="slider-value">{inputSymbolSize}</div>
+        </div>
+      </div>
+    </div>
+    
+    <Dialog.Footer>   
+      <Button type="submit" onclick={applySymbolSizeChange}>적용</Button>   
+    </Dialog.Footer>
+  </Dialog.Content>
+</Dialog.Root>
+ 
+<ContextMenu.Root>
+  <ContextMenu.Trigger>
+    <div class="chart-container" bind:this={chartContainer}></div>
+
+    {#if tooltipVisible}
+      <div class="custom-tooltip" style="left: {tooltipX + 70}px; top: {tooltipY + 10}px;">
+        {@html tooltipContent}
+      </div>
+    {/if}
+
+    <!-- {#if xZoomFrom !== 0 && xZoomTo !== 0 && yZoomFrom !== 0 && yZoomTo !== 0}
+      <div class="zoom-info">
+        X: {xZoomFrom} ~ {xZoomTo}<br>
+        Y: {yZoomFrom} ~ {yZoomTo}
+      </div>
+    {/if} -->
+  </ContextMenu.Trigger>
+  <ContextMenu.Content>
+    <ContextMenu.Item on:click={openTitleDialog}>차트 제목 변경</ContextMenu.Item>
+    <ContextMenu.Separator />
+    <ContextMenu.Item on:click={openSymbolSizeDialog}>포인트 크기 조정</ContextMenu.Item>
+  </ContextMenu.Content>
+</ContextMenu.Root>
+
+
 
 <style>
   .chart-container {
@@ -392,31 +698,14 @@
     font-size: 12px;
     z-index: 10;
   }
+  /* 슬라이더 스타일 */
+  .slider-container {
+    padding: 0 1rem;
+  }
+  .slider-value {
+    font-size: 1rem;
+    font-weight: bold;
+    text-align: center;
+    margin-top: 0.5rem;
+  }
 </style>
-
-  
- 
-<ContextMenu.Root>
-  <ContextMenu.Trigger>
-    <div class="chart-container" bind:this={chartContainer}></div>
-
-    {#if tooltipVisible}
-      <div class="custom-tooltip" style="left: {tooltipX + 70}px; top: {tooltipY + 10}px;">
-        {@html tooltipContent}
-      </div>
-    {/if}
-
-    <!-- {#if xZoomFrom !== 0 && xZoomTo !== 0 && yZoomFrom !== 0 && yZoomTo !== 0}
-      <div class="zoom-info">
-        X: {xZoomFrom} ~ {xZoomTo}<br>
-        Y: {yZoomFrom} ~ {yZoomTo}
-      </div>
-    {/if} -->
-  </ContextMenu.Trigger>
-  <ContextMenu.Content>
-    <ContextMenu.Item>Item 1</ContextMenu.Item>
-    <ContextMenu.Item>Item 2</ContextMenu.Item>
-    <ContextMenu.Item>Item 3</ContextMenu.Item>
-  </ContextMenu.Content>
-</ContextMenu.Root>
-

@@ -1,13 +1,15 @@
 <script lang='ts'>
     import VirtualList from '@sveltejs/svelte-virtual-list';
-    import { getAllTestInfo } from '../../api/db';
+    import { getAllTestInfo } from '$api/db';
     import { onMount } from 'svelte';
     import { goto } from '$app/navigation';
 
     import { Badge } from "$lib/components/ui/badge";
     import { Circle2 } from 'svelte-loading-spinners';
-
     import Separator from '$lib/components/ui/separator/separator.svelte';
+    import { traceStatusStore, Status } from '$stores/file';
+    import { VirtualTable, type Column } from '$lib/components/ui/virtual-table';
+
 
     interface TestInfo {
         id: number;
@@ -18,18 +20,72 @@
         logname: string;
     }
     let testData:TestInfo[] = $state([]);
-    let start: number = $state(0);
-	let end: number = $state(0);
-    let tracedata;
+    // let start: number = $state(0);
+	// let end: number = $state(0);
     let isLoading = $state(false);
 
-    async function getTestData(id: number) {
-        goto(`/detail/${id}`);
+    // 테이블 컬럼 정의
+    const columns: Column<TestInfo>[] = [
+        { 
+            header: 'ID', 
+            accessor: 'id', 
+            width: '80px' 
+        },
+        { 
+            header: 'Title', 
+            accessor: (item) => `${item.title}`,
+            width: '500px',
+            cell: (item) => `<span class="badge-container"><span class="badge badge-outline">${item.logtype}</span> ${item.title}</span>`
+        },
+        { 
+            header: 'Log Folder', 
+            accessor: 'logfolder', 
+            width: '250px' 
+        },
+        { 
+            header: 'Log File', 
+            accessor: 'logname', 
+            width: '150px' 
+        }
+    ];
+
+    function handleRowClick(event) {
+        // rowClick 이벤트에서 item 객체 추출
+        const item = event.detail.item;
+        
+        // item에서 id 추출하고 페이지 이동
+        if (item && item.id) {
+            goto(`/detail/${item.id}`);
+        }
     }
+    // trace 성공하면 table update
+    $effect(() => {
+        if ($traceStatusStore === Status.Success) {
+            console.log('Trace was successful, updating test data table...');
+            isLoading = true;
+            void (async () => {
+                try {
+                    testData = await getAllTestInfo();
+                    console.log('Test data updated:', testData);
+                } catch (error) {
+                    console.error('Failed to update test data:', error);
+                } finally {
+                    isLoading = false;
+                }
+            })();
+        }
+    });
     
     onMount(async () => {
-        testData = await getAllTestInfo();
-        console.log('testData:', testData);
+        isLoading = true;
+        try {
+            testData = await getAllTestInfo();
+            console.log('testData:', testData);
+        } catch (error) {
+            console.error('Error loading test data:', error);
+        } finally {
+            isLoading = false;
+        }
     });
 </script>
 <div class="container font-sans">
@@ -49,10 +105,10 @@
     {/if}
     
     <!-- 테이블 헤더 -->
-    <div class="header grid grid-cols-[80px_500px_250px_150px] bg-gray-200 font-bold border-b border-gray-300 ">
+    <!-- <div class="header grid grid-cols-[80px_500px_250px_150px] bg-gray-200 font-bold border-b border-gray-300 ">
         <div class="p-2">ID</div>
         <div class="p-2">Title</div>
-        <!-- <div class="p-2">Content</div> -->
+        <div class="p-2">Content</div>
         <div class="p-2">Log Folder</div>
         <div class="p-2">Log File</div>
     </div>
@@ -66,7 +122,16 @@
             </div>
         </VirtualList>
     </div>
-    <p class="footer p-2">showing {start}-{end} of {testData.length} rows</p>
+    <p class="footer p-2">showing {start}-{end} of {testData.length} rows</p>  -->
+    <div class="table-container">
+        <VirtualTable 
+            items={testData} 
+            columns={columns} 
+            itemHeight={36}
+            hoverable={true}
+            on:rowClick={handleRowClick}
+        />
+    </div>
 </div>
 
 
@@ -78,30 +143,11 @@
       height: 100vh;
       overflow: hidden;      
     }
-    .header {
-      flex-shrink: 0;
-      font-size: 12px;
-      margin-top: 20px;
+    .table-container {
+        flex-grow: 1;
+        overflow: hidden;
     }
-    .list-wrapper {
-      flex-grow: 1;
-      overflow-y: auto;
-    }
-    .footer {
-      flex-shrink: 0;
-      font-size: 12px;
-    }
-    .row {
-        transition: background-color 0.2s ease-in-out;
-    }
-    .row:hover {
-        background-color: #f0f0f0;
-        cursor: pointer;
-    }
-    .content-item {
-        /* @apply py-1 px-2; */
-        font-size: 12px;
-    }
+
     /* Spinner overlay styling */
     .spinner-overlay {
         position: absolute;

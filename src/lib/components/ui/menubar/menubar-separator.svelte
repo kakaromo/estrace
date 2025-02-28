@@ -3,7 +3,6 @@
 	import { cn } from "$lib/utils.js";
 
 	type $$Props = MenubarPrimitive.SeparatorProps;
-
 	let className: $$Props["class"] = undefined;
 	export { className as class };
 </script>

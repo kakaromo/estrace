@@ -1,91 +1,198 @@
 <script lang="ts">
     import { page } from '$app/stores';
-    import { onMount, onDestroy } from 'svelte';
+    import { onMount } from 'svelte';
     import { goto } from '$app/navigation';
     import { invoke } from "@tauri-apps/api/core";
     
     import { getTestInfo } from '$api/db';
-    import { trace, selectedTrace, filtertrace, prevFilterTrace, filtertraceChanged } from '$stores/trace';
+    import { trace, 
+        filtertrace, prevFilterTrace, filtertraceChanged,
+        selectedTrace,  prevselectedTrace, filterselectedTraceChanged
+     } from '$stores/trace';
 
     import { Circle2 } from 'svelte-loading-spinners';
-    import { StepBack } from 'svelte-lucide';
+    import { StepBack, FileDown } from 'svelte-lucide';
     import { Button } from "$lib/components/ui/button";
 
-    import pick  from 'lodash/pick';
     import { get, set } from 'idb-keyval';  // IndexedDB 사용 위한 import
 
-    import { ContextMenu } from '$lib/components/ui/context-menu';
-    import * as Select from "$lib/components/ui/select/index.js";
     import { Separator } from '$lib/components/ui/separator';
-    import * as Card from '$lib/components/ui/card/index.js';    
+    import * as Card from '$lib/components/ui/card/index.js';   
+    import * as Dialog from "$lib/components/ui/dialog/index.js";
+    import * as Tooltip from "$lib/components/ui/tooltip/index.js";
+    import { message } from "@tauri-apps/plugin-dialog";
 
-    import { SelectType,LatencyStats, SizeStats, ScatterCharts } from '$components/detail';
+    import { 
+        SelectType,
+        SizeStats,
+        ScatterCharts, 
+        VisualItem, 
+        RWDStats,
+        LatencyTabs 
+    } from '$components/detail';
+    
+    import { 
+        fetchUfsStats, 
+        fetchBlockStats, 
+        filterTraceData, 
+        THRESHOLDS as thresholds 
+    } from '$utils/trace-helper';
 
-    let id: number;
+    // 페이지 ID 및 기본 상태
+    const id = $page.params.id;
     let data = $state({});
     let tracedata = [];
     let filteredData = $state([]);
     let tracetype = $state([]);
-    
-    let isLoading = $state(false);
     let lbachartdata = $state([]);
-    // 개별 변수로 상태 선언
-    let ufsdtocstat = $state(null);
-    let ufsctocstat = $state(null);
-    let ufsctodstat = $state(null);
+    let isLoading = $state(false);
+
+    // 시각화 항목 상태
+    let ispattern = $state(true);
+    let isrwd = $state(false);
+    let isqd = $state(false);
+    let islatency = $state(false);
+    let issizestats = $state(false);
     
-    // 개별 변수로 분리
-    let ufssizecounts = $state(null);
-    let ufstotal_counts = $state(null);
-    let ufsopcode_stats = $state(null);
-
-    // 개별 변수로 상태 선언
-    let blockdtocstat = $state(null);
-    let blockctocstat = $state(null);
-    let blockctodstat = $state(null);
+    // UFS 통계 데이터
+    let ufsStats = $state({
+        dtocStat: null,
+        ctodStat: null,
+        ctocStat: null,
+        sizeCounts: null,
+        continuous: null,
+    });
     
-    // 개별 변수로 분리
-    let blocksizecounts = $state(null);
-    let blocktotal_counts = $state(null);
-    let blockopcode_stats = $state(null);
+    // Block 통계 데이터
+    let blockStats = $state({
+        dtocStat: null,
+        ctodStat: null,
+        ctocStat: null,
+        sizeCounts: null,
+        continuous: null,
+    });
 
-    let thresholds = ['0.1ms', '0.5ms', '1ms', '5ms', '10ms', '50ms', '100ms', '500ms', '1s', '5s', '10s', '50s', '100s', '500s', '1000s'];
+    // 파일 내보내기 상태
+    let isExporting = $state(false);
+    let showExportDialog = $state(false);
+    let exportResult = $state('');
+    let parquetFiles = $state({
+        ufs: '',
+        block: ''
+    });
 
+    let fileNames = $state({
+        ufs: '',
+        block: ''
+    });
 
-    // $page.params를 통해 동적 파라미터 id 값을 가져옵니다.
-    id = $page.params.id;
-
-    let fname = '';
-    let unsubscribe;
-
-    // currentValue가 변경될 때마다 호출되는 함수
+    // 필터가 변경될 때 데이터 업데이트
     $effect(async () => {
         if ($filtertraceChanged) {
             console.log('filtertrace changed from:', $prevFilterTrace);
             console.log('to:', $filtertrace);
             
-            // 현재 값을 이전 값으로 업데이트
+            isLoading = true;
+            
+            // 이전 필터 값 업데이트
             $prevFilterTrace = {...$filtertrace};
-            await ufslatencystats(fname);
-            await blocklatencystats(fname);
-            setFilterData();
+            
+            // 필터링된 데이터 설정
+            await updateFilteredData();
+            
+            // 선택된 유형에 따라 통계 데이터 다시 로드
+            await loadStatsData();
+            
+            isLoading = false;
+        }
+    });
+    
+    // selectedTrace가 변경될 때 통계 데이터 업데이트
+    $effect(async () => {
+        console.log('selectedTrace changed to:', $selectedTrace);
+        
+        if ($selectedTrace && $filterselectedTraceChanged) {
+            console.log('Loading stats for selectedTrace:', $selectedTrace);
+            isLoading = true;
+            
+            $prevselectedTrace = $selectedTrace;
+
+            // 선택된 trace에 대한 필터링된 데이터 업데이트
+            await updateFilteredData();
+            
+            // 통계 데이터 로드
+            await loadStatsData();
+            
+            isLoading = false;
         }
     });
 
-    function setFilterData() {
-        if ($filtertrace.from_time === 0 && $filtertrace.to_time === 0) {
-            filteredData[$selectedTrace] = tracedata[$selectedTrace];
-            console.log('filteredData:', filteredData[$selectedTrace].length);  
-            console.log('tracedata:', tracedata[$selectedTrace].length);
-        } 
-        else {
-            console.log('filtertrace:', $filtertrace);
-            const filter = tracedata[$selectedTrace].filter((item) => {
-                return item.time >= $filtertrace.from_time && item.time <= $filtertrace.to_time && 
-                    item[$filtertrace.zoom_column] >= $filtertrace.from_lba && item[$filtertrace.zoom_column] <= $filtertrace.to_lba;
+    // 필터링된 데이터 설정
+    async function updateFilteredData() {
+        if ($selectedTrace) {
+            filteredData[$selectedTrace] = filterTraceData(tracedata, $selectedTrace, $filtertrace);
+            console.log('filteredData:', filteredData[$selectedTrace].length);
+        }
+    }
+
+    // 선택된 유형에 따라 통계 데이터 로드
+    async function loadStatsData() {
+        if ($selectedTrace === 'ufs') {
+            console.log('Loading UFS stats with filename:', fileNames.ufs);
+            const stats = await fetchUfsStats(fileNames.ufs, $filtertrace);
+            ufsStats = stats;
+            console.log('Updated UFS stats:', ufsStats);
+        } else if ($selectedTrace === 'block') {
+            console.log('Loading Block stats with filename:', fileNames.block);
+            const stats = await fetchBlockStats(fileNames.block, $filtertrace);
+            blockStats = stats;
+            console.log('Updated Block stats:', blockStats);
+        }
+    }
+
+    // CSV 내보내기 함수
+    async function exportToCSV() {
+        const currentType = $selectedTrace;
+        if (!currentType || !parquetFiles[currentType]) {
+            await message('내보낼 파일이 지정되지 않았습니다.');
+            return;
+        }
+        
+        try {
+            isExporting = true;
+            
+            const result = await invoke<string>("export_to_csv", { 
+                parquetPath: parquetFiles[currentType], 
+                fileType: currentType
             });
-            console.log('filter length:', filter.length);
-            filteredData[$selectedTrace] = filter;
+            
+            exportResult = result;
+            showExportDialog = true;
+            
+        } catch (error) {
+            console.error('CSV 내보내기 오류:', error);
+            await message(`내보내기 실패: ${error}`);
+        } finally {
+            isExporting = false;
+        }
+    }
+    
+    // parquet 파일 경로 설정
+    function setParquetFilePaths() {
+        if (data && data.logname) {
+            const names = data.logname.split(',');
+            
+            if (names.length > 0) {
+                fileNames.ufs = names[0];
+                parquetFiles.ufs = names[0];
+            }
+            
+            if (names.length > 1) {
+                fileNames.block = names[1];
+                parquetFiles.block = names[1];
+            }
+            
+            console.log('Parquet files:', parquetFiles);
         }
     }
 
@@ -94,56 +201,45 @@
             isLoading = true;
             const startTotal = performance.now();
             
-            const startTestInfo = performance.now();
+            // 테스트 정보 가져오기
             data = await getTestInfo(id);
-            const endTestInfo = performance.now();
-            console.log("getTestInfo time:", endTestInfo - startTestInfo, "ms");
-
-            const startInvoke = performance.now();
-            // 캐시 키 구성: id와 logfolder, logname을 이용
-            const cacheKey = `traceData_${id}_${data.logfolder}_${data.logname}`;
-            fname = data.logname.split(',')[0];
             
-            // IndexedDB에서 cached 데이터를 불러오기
+            // 캐시 키 구성
+            const cacheKey = `traceData_${id}_${data.logfolder}_${data.logname}`;
+            
+            // IndexedDB에서 캐시된 데이터 불러오기
             let cached = await get(cacheKey);
             if (cached) {
                 tracedata = JSON.parse(cached);
-                console.log('Loaded trace data from sessionStorage.');
+                console.log('Loaded trace data from IndexedDB.');
             } else {
-                const startInvoke = performance.now();
-                let traceStr = await invoke<string>('readtrace', { logfolder: data.logfolder, logname: data.logname });
-                const endInvoke = performance.now();
-                console.log("invoke('readtrace') time:", endInvoke - startInvoke, "ms");
+                // 캐시된 데이터가 없으면 서버에서 가져오기
+                let traceStr = await invoke<string>('readtrace', { 
+                    logfolder: data.logfolder, 
+                    logname: data.logname 
+                });
                 
-                const startParse = performance.now();
                 tracedata = JSON.parse(traceStr);
-                const endParse = performance.now();
-                console.log("JSON.parse time:", endParse - startParse, "ms");
                 
-                // IndexedDB에 trace 데이터를 저장 (큰 용량을 저장 가능합니다)
+                // IndexedDB에 데이터 저장
                 await set(cacheKey, traceStr);
                 console.log('Saved trace data to IndexedDB.');
             }
-            const endInvoke = performance.now();
-            console.log("invoke('readtrace') time:", endInvoke - startInvoke, "ms");
-            // 전역 trace store에 데이터 저장
+            
+            // 데이터 저장 및 초기화
             $trace = tracedata;
             filteredData = tracedata;
-            
             tracetype = Object.keys(tracedata);
-            console.log('tracetype:', tracetype);
+            
+            // 파일 경로 설정
+            setParquetFilePaths();
 
-            const startLbaChart = performance.now();
-            // lbachartdata = await invoke('chart', { logfolder: data.logfolder, logname: data.logname, column: 'lba', time_from: 0, time_to: 0, col_from: 0, col_to: 0 });
-            lbachartdata = pick(tracedata, ['time', 'lba']);
-            const endLbaChart = performance.now();
-            console.log("lbachartdata time:", endLbaChart - startLbaChart, "ms");
+            // 초기 필터링된 데이터 설정
+            await updateFilteredData();
             
-            console.log('tracedata:', Object.keys(tracedata));
-                        
-            await ufslatencystats(fname);
-            await blocklatencystats(fname);
-            
+            // 초기 통계 데이터 로드
+            await loadStatsData();
+
             console.log("Total onMount time:", performance.now() - startTotal, "ms");
             isLoading = false;
         } catch (error) {
@@ -156,81 +252,13 @@
             goto('/');
         }
     });
-
-    async function ufslatencystats(ufsfname: string) {
-        if(tracedata && tracedata.ufs.length > 0) {
-            console.log("data", data);
-            console.log("ufsfname", ufsfname);
-            const startdtocstat = performance.now();        
-            const ufsdtocstatResult:string = await invoke('ufs_latencystats', { logname: ufsfname, column: 'dtoc', thresholds:thresholds, 
-                timeFrom: $filtertrace.from_time, timeTo: $filtertrace.to_time, colFrom: $filtertrace.from_lba, colTo: $filtertrace.to_lba, zoomColumn: $filtertrace.zoom_column });                     
-            ufsdtocstat = JSON.parse(ufsdtocstatResult);                    
-            const enddtocstat = performance.now();        
-            console.log("statusdata time:", enddtocstat - startdtocstat, "ms");
-
-            const startctodstat = performance.now();
-            const ufsctodstatResult:string = await invoke('ufs_latencystats', { logname: ufsfname, column: 'ctod', thresholds:thresholds, 
-            timeFrom: $filtertrace.from_time, timeTo: $filtertrace.to_time, colFrom: $filtertrace.from_lba, colTo: $filtertrace.to_lba, zoomColumn: $filtertrace.zoom_column });                     
-            ufsctodstat = JSON.parse(ufsctodstatResult);                                 
-            const endctodstat = performance.now();
-            console.log("statusdata time:", endctodstat - startctodstat, "ms");
-
-            const startctocstat = performance.now();        
-            const ufsctocstatResult:string = await invoke('ufs_latencystats', { logname: ufsfname, column: 'ctoc', thresholds:thresholds, 
-            timeFrom: $filtertrace.from_time, timeTo: $filtertrace.to_time, colFrom: $filtertrace.from_lba, colTo: $filtertrace.to_lba, zoomColumn: $filtertrace.zoom_column });                     
-            ufsctocstat = JSON.parse(ufsctocstatResult);
-            const endctocstat = performance.now();
-            console.log("statusdata time:", endctocstat - startctocstat, "ms");
-
-            const startSizeCounts = performance.now();
-            const ufssizecountsResult = await invoke('ufs_sizestats', { logname: ufsfname, column: 'dtoc', 
-            timeFrom: $filtertrace.from_time, timeTo: $filtertrace.to_time, colFrom: $filtertrace.from_lba, colTo: $filtertrace.to_lba, zoomColumn: $filtertrace.zoom_column });                     
-            ufssizecounts = JSON.parse(ufssizecountsResult);                 
-            ufstotal_counts = ufssizecounts.total_counts;
-            ufsopcode_stats = ufssizecounts.opcode_stats;
-            const endSizeCounts = performance.now();
-            console.log("sizestats time:", endSizeCounts - startSizeCounts, "ms");
-        } 
-    }
-
-    async function blocklatencystats(blockfname: string) {
-        if (tracedata && tracedata.block.length > 0) {
-            let blockfname = data.logname.split(',')[1];
-            const startdtocstat = performance.now();
-            blockdtocstat = await invoke('block_latencystats', { logname: blockfname, column: 'dtoc', thresholds:thresholds, group: true,
-            timeFrom: $filtertrace.from_time, timeTo: $filtertrace.to_time, colFrom: $filtertrace.from_lba, colTo: $filtertrace.to_lba, zoomColumn: $filtertrace.zoom_column });                     
-            blockdtocstat = JSON.parse(blockdtocstat);
-            const enddtocstat = performance.now();
-            console.log("statusdata time:", enddtocstat - startdtocstat, "ms");
-            const startctodstat = performance.now();
-            blockctodstat = await invoke('block_latencystats', { logname: blockfname, column: 'ctod', thresholds:thresholds, group: true,
-            timeFrom: $filtertrace.from_time, timeTo: $filtertrace.to_time, colFrom: $filtertrace.from_lba, colTo: $filtertrace.to_lba, zoomColumn: $filtertrace.zoom_column });                     
-            blockctodstat = JSON.parse(blockctodstat);
-            const endctodstat = performance.now();
-            console.log("statusdata time:", endctodstat - startctodstat, "ms");
-            const startctocstat = performance.now();
-            blockctocstat = await invoke('block_latencystats', { logname: blockfname, column: 'ctoc', thresholds:thresholds, group: true, 
-            timeFrom: $filtertrace.from_time, timeTo: $filtertrace.to_time, colFrom: $filtertrace.from_lba, colTo: $filtertrace.to_lba, zoomColumn: $filtertrace.zoom_column });                     
-            blockctocstat = JSON.parse(blockctocstat);
-            const endctocstat = performance.now();
-            console.log("statusdata time:", endctocstat - startctocstat, "ms");
-            const startSizeCounts = performance.now();                
-            blocksizecounts = await invoke('block_sizestats', { logname: blockfname, column: 'dtoc', group: true, 
-            timeFrom: $filtertrace.from_time, timeTo: $filtertrace.to_time, colFrom: $filtertrace.from_lba, colTo: $filtertrace.to_lba, zoomColumn: $filtertrace.zoom_column });                     
-            blocksizecounts = JSON.parse(blocksizecounts);
-            blocktotal_counts = blocksizecounts.total_counts;
-            blockopcode_stats = blocksizecounts.opcode_stats;
-            const endSizeCounts = performance.now();
-            console.log("sizestats time:", endSizeCounts - startSizeCounts, "ms");
-        }
-    }
 </script>
 
-    {#if isLoading}
-        <div class="spinner-overlay">
-            <Circle2 color="#FF3E00" size="60" unit="px" />
-        </div>
-    {/if}
+{#if isLoading}
+    <div class="spinner-overlay">
+        <Circle2 color="#FF3E00" size="60" unit="px" />
+    </div>
+{/if}
 <div class="font-sans">
     <header class="py-4 px-6">
         <Button href="/" variant="primary"  class="fixed top-4 right-4 h-12">
@@ -238,18 +266,38 @@
             Back
         </Button>
         {#if tracetype.length > 0}
-        <SelectType bind:tracetype bind:tracedata class="fixed top-4 left-4 h-12"/>
-        <p>선택된 타입: {$selectedTrace}</p>
-        {/if}
-        <Separator class="my-4" />
+        <div class="fixed top-4 left-4 flex items-center gap-2">
+            <SelectType tracetype={tracetype} bind:tracedata class="h-12"/>
+            
+            <Tooltip.Root>
+                <Tooltip.Trigger asChild>
+                    <Button 
+                        variant="outline" 
+                        size="icon"
+                        class="h-12 w-12"
+                        onclick={exportToCSV}
+                        disabled={isExporting || !$selectedTrace || !parquetFiles[$selectedTrace]}
+                    >
+                        {#if isExporting}
+                            <div class="animate-spin h-5 w-5 border-2 border-current border-t-transparent rounded-full" />
+                        {:else}
+                            <FileDown size="20" />
+                        {/if}
+                    </Button>
+                </Tooltip.Trigger>
+                <Tooltip.Content>
+                    <p>현재 데이터를 CSV로 내보내기</p>
+                </Tooltip.Content>
+            </Tooltip.Root>
+        </div>
+        {/if}        
     </header>    
     <main class="mx-auto p-6">
-        {#if $selectedTrace != ''}                     
+        {#if $selectedTrace != ''}
+        <VisualItem bind:ispattern bind:isrwd bind:isqd bind:islatency bind:issizestats />                 
         <div class="grid grid-cols-2 gap-4">
             <div class="col-span-2">
-                <h3 class="text-lg font-medium bg-blue-50">LBA Pattern</h3>  
-                <div class="divider"></div>   
-                <Card.Root>
+                <Card.Root class="{ispattern ? 'block' : 'hidden'}">
                     <Card.Header>
                         <Card.Title>{$selectedTrace.toUpperCase()} Pattern</Card.Title>
                     </Card.Header>
@@ -261,113 +309,99 @@
                         {/if}
                     </Card.Content>
                 </Card.Root>
-                <Separator class="my-4" />
-                <!-- <Card.Header>
-                    <Card.Title>{$selectedTrace.toUpperCase()} Latency</Card.Title>
-                </Card.Header>
-                <Card.Content>
-                    {#if $selectedTrace === 'ufs'} 
-                    <div role="tablist" class="tabs tabs-lifted">
-                        <input type="radio" name="ufslatencychart" role="tab" class="tab" aria-label="DtoC" checked="checked"/>
-                        <div role="tabpanel" class="tab-content bg-base-100 border-base-300 rounded-box p-6">
-                            <ScatterCharts data={filteredData.ufs} xAxisKey='time' yAxisKey='dtoc' legendKey='opcode' yAxisLabel='ms' ycolumn='dtoc'/> 
-                        </div>
-                        <input type="radio" name="ufslatencychart" role="tab" class="tab" aria-label="CtoD"/>
-                        <div role="tabpanel" class="tab-content bg-base-100 border-base-300 rounded-box p-6">
-                            <ScatterCharts data={filteredData.ufs} xAxisKey='time' yAxisKey='ctod' legendKey='opcode' yAxisLabel='ms' ycolumn='ctod'/> 
-                        </div>
-                        <input type="radio" name="ufslatencychart" role="tab" class="tab" aria-label="CtoC"/>
-                        <div role="tabpanel" class="tab-content bg-base-100 border-base-300 rounded-box p-6">
-                            <ScatterCharts data={filteredData.ufs} xAxisKey='time' yAxisKey='ctoc' legendKey='opcode' yAxisLabel='ms' ycolumn='ctoc'/> 
-                        </div>
-                    </div>
-                             
-                    {:else if $selectedTrace === 'block'}
-                    <div role="tablist" class="tabs tabs-lifted">
-                        <input type="radio" name="blocklatencychart" role="tab" class="tab" aria-label="DtoC" checked="checked"/>
-                        <div role="tabpanel" class="tab-content bg-base-100 border-base-300 rounded-box p-6">
-                            <ScatterCharts data={filteredData.block} xAxisKey='time' yAxisKey='dtoc' legendKey='io_type' yAxisLabel='ms' ycolumn='dtoc'/> 
-                        </div>
-                        <input type="radio" name="blocklatencychart" role="tab" class="tab" aria-label="CtoD"/>
-                        <div role="tabpanel" class="tab-content bg-base-100 border-base-300 rounded-box p-6">
-                            <ScatterCharts data={filteredData.block} xAxisKey='time' yAxisKey='ctod' legendKey='io_type' yAxisLabel='ms' ycolumn='ctod'/> 
-                        </div>
-                        <input type="radio" name="blocklatencychart" role="tab" class="tab" aria-label="CtoC"/>
-                        <div role="tabpanel" class="tab-content bg-base-100 border-base-300 rounded-box p-6">
-                            <ScatterCharts data={filteredData.block} xAxisKey='time' yAxisKey='ctoc' legendKey='io_type' yAxisLabel='ms' ycolumn='ctoc'/> 
-                        </div>
-                    </div>
-                    
-                    {/if}
-                </Card.Content> -->
-                <Separator class="my-4" />
-                <Card.Root>
+                <Separator class="my-4 {isqd ? 'block' : 'hidden'}" />
+                <Card.Root class="{isqd ? 'block' : 'hidden'}">
+                    <Card.Header>
+                        <Card.Title>{$selectedTrace.toUpperCase()} QueueDepth</Card.Title>
+                    </Card.Header>
+                    <Card.Content>
+                        {#if $selectedTrace === 'ufs'} 
+                        <ScatterCharts data={filteredData.ufs} xAxisKey='time' yAxisKey='qd' legendKey='opcode' yAxisLabel='count' ycolumn='qd'/>
+                        {:else if $selectedTrace === 'block'}
+                        <ScatterCharts data={filteredData.block} xAxisKey='time' yAxisKey='qd' legendKey='io_type' yAxisLabel='count' ycolumn='qd'/>
+                        {/if}
+                    </Card.Content>
+                </Card.Root>
+                <Separator class="my-4 {isrwd ? 'block' : 'hidden'}"/>
+                <Card.Root class="{isrwd ? 'block' : 'hidden'}">
+                    <Card.Header>
+                        <Card.Title>{$selectedTrace.toUpperCase()} Read/Write/Discard Statistics</Card.Title>
+                    </Card.Header>
+                    <Card.Content>
+                        {#if $selectedTrace === 'ufs'} 
+                        <RWDStats data={ufsStats.continuous} tracetype={$selectedTrace} {isrwd} />
+                        {:else if $selectedTrace === 'block'}
+                        <RWDStats data={blockStats.continuous} tracetype={$selectedTrace} {isrwd} />
+                        {/if}
+                    </Card.Content>
+                </Card.Root>                
+                <Separator class="my-4 {islatency ? 'block' : 'hidden'}" />
+                <Card.Root class="{islatency ? 'block' : 'hidden'}">
                     <Card.Header>
                         <Card.Title>{$selectedTrace.toUpperCase()} Latency</Card.Title>
                     </Card.Header>
                     <Card.Content>
                         {#if $selectedTrace === 'ufs'} 
-                        <div role="tablist" class="tabs tabs-lifted">
-                            <input type="radio" name="ufslatency" role="tab" class="tab" aria-label="DtoC" checked="checked"/>
-                            <div role="tabpanel" class="tab-content bg-base-100 border-base-300 rounded-box p-6">
-                                <LatencyStats tracetype={$selectedTrace} threshold={thresholds} latencystat={ufsdtocstat} /> 
-                            </div>
-                            <input type="radio" name="ufslatency" role="tab" class="tab" aria-label="CtoD"/>
-                            <div role="tabpanel" class="tab-content bg-base-100 border-base-300 rounded-box p-6">
-                                <LatencyStats tracetype={$selectedTrace} threshold={thresholds} latencystat={ufsctodstat} /> 
-                            </div>
-                            <input type="radio" name="ufslatency" role="tab" class="tab" aria-label="CtoC"/>
-                            <div role="tabpanel" class="tab-content bg-base-100 border-base-300 rounded-box p-6">
-                                <LatencyStats tracetype={$selectedTrace} threshold={thresholds} latencystat={ufsctocstat} /> 
-                            </div>
-                        </div>
-                                 
-                        {:else if $selectedTrace === 'block'}
-                        <div role="tablist" class="tabs tabs-lifted">
-                            <input type="radio" name="blocklatency" role="tab" class="tab" aria-label="DTOC" checked="checked"/>
-                            <div role="tabpanel" class="tab-content bg-base-100 border-base-300 rounded-box p-6">
-                                <LatencyStats tracetype={$selectedTrace} threshold={thresholds} latencystat={blockdtocstat} />
-                            </div>
-                            <input type="radio" name="blocklatency" role="tab" class="tab" aria-label="CtoD"/>
-                            <div role="tabpanel" class="tab-content bg-base-100 border-base-300 rounded-box p-6">
-                                <LatencyStats tracetype={$selectedTrace} threshold={thresholds} latencystat={blockctodstat} /> 
-                            </div>
-                            <input type="radio" name="blocklatency" role="tab" class="tab" aria-label="CtoC"/>
-                            <div role="tabpanel" class="tab-content bg-base-100 border-base-300 rounded-box p-6">
-                                <LatencyStats tracetype={$selectedTrace} threshold={thresholds} latencystat={blockctocstat} /> 
-                            </div>
-                        </div>
-                        
+                        <LatencyTabs 
+                            traceType={$selectedTrace} 
+                            filteredData={filteredData.ufs}
+                            legendKey="opcode"
+                            thresholds={thresholds}
+                            dtocStat={ufsStats.dtocStat}
+                            ctodStat={ufsStats.ctodStat}
+                            ctocStat={ufsStats.ctocStat}
+                        />
+                        {:else if $selectedTrace === 'block'}         
+                        <LatencyTabs 
+                            traceType={$selectedTrace} 
+                            filteredData={filteredData.block}
+                            legendKey="io_type"
+                            thresholds={thresholds}
+                            dtocStat={blockStats.dtocStat}
+                            ctodStat={blockStats.ctodStat}
+                            ctocStat={blockStats.ctocStat}
+                        />
                         {/if}
                     </Card.Content>
-                </Card.Root>       
+                </Card.Root>                                
             </div>
-            <div class="col-span-2">
-            <div class="divider"></div>            
-            <Card.Root>
-                <Card.Header>
-                    <Card.Title>{$selectedTrace.toUpperCase()} Size</Card.Title>
-                    <Card.Description>Sice별 Count</Card.Description>
-                </Card.Header>
-                <Card.Content>
-                    {#if $selectedTrace === 'ufs' && ufssizecounts?.opcode_stats} 
-                    <SizeStats opcode_size_counts={ufssizecounts.opcode_stats} />
-                    {:else if $selectedTrace === 'block' &&  blocksizecounts?.opcode_stats}
-                    <SizeStats opcode_size_counts={blocksizecounts.opcode_stats} />
-                    {/if}
-                </Card.Content>
-            </Card.Root> 
+            <div class="col-span-2 {issizestats ? 'block' : 'hidden'}">
+                <Separator class="my-4" />          
+                <Card.Root>
+                    <Card.Header>
+                        <Card.Title>{$selectedTrace.toUpperCase()} Size</Card.Title>
+                        <Card.Description>Size별 Count</Card.Description>
+                    </Card.Header>
+                    <Card.Content>
+                        {#if $selectedTrace === 'ufs' && ufsStats.sizeCounts?.opcode_stats} 
+                        <SizeStats opcode_size_counts={ufsStats.sizeCounts.opcode_stats} />
+                        {:else if $selectedTrace === 'block' && blockStats.sizeCounts?.opcode_stats}
+                        <SizeStats opcode_size_counts={blockStats.sizeCounts.opcode_stats} />
+                        {/if}
+                    </Card.Content>
+                </Card.Root> 
             </div>
-            
-            
-
         </div> 
         {/if} 
     </main>
-    
-
-    
 </div>
+
+<Dialog.Root bind:open={showExportDialog}>
+    <Dialog.Content>
+        <Dialog.Header>
+            <Dialog.Title>내보내기 결과</Dialog.Title>
+            <Dialog.Description>
+                CSV 파일이 생성되었습니다.
+            </Dialog.Description>
+        </Dialog.Header>
+        <div class="p-4 bg-slate-100 rounded">
+            <p class="text-sm break-all">{exportResult}</p>
+        </div>
+        <Dialog.Footer>
+            <Button onclick={() => showExportDialog = false}>확인</Button>
+        </Dialog.Footer>
+    </Dialog.Content>
+</Dialog.Root>
 
 <style>
     .spinner-overlay {

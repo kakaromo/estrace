@@ -1,12 +1,15 @@
 <script lang='ts'>
     import { Grid } from "wx-svelte-grid";
     import { Willow, Material } from "wx-svelte-grid";
-    import * as Tabs from "$lib/components/ui/tabs/index.js";
-    import { Root } from "$lib/components/ui/dialog";
-    import { helper } from "echarts";
 
     // props로부터 전달받은 값
-    let { tracetype, latencystat, threshold } = $props();
+    interface LatencyStatsProps {
+        tracetype: string;
+        latencystat: any;
+        threshold: string[];
+    }
+
+    let { tracetype, latencystat, threshold }:LatencyStatsProps = $props();
 
     // 모든 상태를 $state로 선언
     let latency_counts = $state(null);
@@ -91,16 +94,26 @@
         });
     }
 
+    // 소수점 3자리까지만 표시하는 포맷팅 함수
+    function formatToThreeDecimals(value) {
+        if (value === undefined || value === null) return 0;
+        
+        // 숫자인 경우에만 포맷팅
+        if (typeof value === 'number') {
+            return Number(value.toFixed(3));
+        }
+        return value;
+    }
 
     function buildSummaryGridData() {
         // 기본 컬럼 정의
         const baseColumns = [
-            { id: "type", header: "Type", width: 150 },
+            { id: "type", header: "Type", width: 150, },
             { id: "avg", header: "Avg", width: 150 },
             { id: "min", header: "Min", width: 150 },
             { id: "median", header: "Median", width: 150 },
             { id: "max", header: "Max", width: 150 },
-            { id: "std_dev", header: "Std Dev", width: 150 },
+            { id: "std_dev", header: "Std", width: 150 },
             { id: "sum", header: "Sum", width: 150 }
         ];
 
@@ -129,15 +142,19 @@
             const summary = latency_summary[typeKey];
             let row: any = {
                 type: typeKey,
-                avg: summary.avg || 0,
-                min: summary.min || 0,
-                median: summary.median || 0,
-                max: summary.max || 0,
-                std_dev: summary.std_dev || 0,
-                sum: summary.sum || 0
+                // 소수점 3자리로 제한
+                avg: formatToThreeDecimals(summary.avg),
+                min: formatToThreeDecimals(summary.min),
+                median: formatToThreeDecimals(summary.median),
+                max: formatToThreeDecimals(summary.max),
+                std_dev: formatToThreeDecimals(summary.std_dev),
+                sum: formatToThreeDecimals(summary.sum)
             };
+            
+            // percentiles도 소수점 3자리로 제한
             percentileKeys.forEach(pk => {
-                row[pk] = summary.percentiles ? summary.percentiles[pk] || 0 : 0;
+                const value = summary.percentiles ? summary.percentiles[pk] : 0;
+                row[pk] = formatToThreeDecimals(value);
             });
             return row;
         });
@@ -149,27 +166,28 @@
     // buildTransposedGridData();
     // buildSummaryGridData();
 
-    console.log("grid_columns_summary:", grid_columns_summary);
-    console.log("grid_data_summary:", grid_data_summary);
+    // console.log("grid_columns_summary:", grid_columns_summary);
+    // console.log("grid_data_summary:", grid_data_summary);
 
-    console.log('latency_threshold:', latency_threshold);
-    console.log('latency_type_key:', latency_type_key);
-    console.log('grid_columns:', grid_columns);
-    console.log('grid_data:', grid_data);
+    // console.log('latency_threshold:', latency_threshold);
+    // console.log('latency_type_key:', latency_type_key);
+    // console.log('grid_columns:', grid_columns);
+    // console.log('grid_data:', grid_data);
 </script>
 
 <div class="font-sans">
     <Willow>
         <div class="px-0" style="font-size: 12px;">
-            <Grid data={grid_data} columns={grid_columns}/>
+            <Grid data={grid_data_summary} columns={grid_columns_summary}/>
         </div>
     </Willow>
     <div class="divider"></div>
     <Willow>
         <div class="px-0" style="font-size: 12px;">
-            <Grid data={grid_data_summary} columns={grid_columns_summary}/>
+            <Grid data={grid_data} columns={grid_columns}/>
         </div>
-    </Willow>
+    </Willow>    
+    
 </div>
 
 <style>

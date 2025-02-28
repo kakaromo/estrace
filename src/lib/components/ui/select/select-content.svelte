@@ -4,8 +4,8 @@
 	import { cn, flyAndScale } from "$lib/utils.js";
 
 	type $$Props = SelectPrimitive.ContentProps;
-	type $$Events = SelectPrimitive.ContentEvents;
 
+	let className: $$Props["class"] = undefined;
 	export let sideOffset: $$Props["sideOffset"] = 4;
 	export let inTransition: $$Props["inTransition"] = flyAndScale;
 	export let inTransitionConfig: $$Props["inTransitionConfig"] = undefined;
@@ -15,8 +15,6 @@
 		opacity: 0,
 		duration: 50,
 	};
-
-	let className: $$Props["class"] = undefined;
 	export { className as class };
 </script>
 
@@ -27,11 +25,10 @@
 	{outTransitionConfig}
 	{sideOffset}
 	class={cn(
-		"bg-popover text-popover-foreground relative z-50 min-w-[8rem] overflow-hidden rounded-md border shadow-md outline-none",
+		"bg-popover text-popover-foreground relative z-50 min-w-[8rem] overflow-hidden rounded-md border shadow-md focus:outline-none",
 		className
 	)}
 	{...$$restProps}
-	on:keydown
 >
 	<div class="w-full p-1">
 		<slot />

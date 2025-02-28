@@ -1,5 +1,5 @@
 <script lang='ts'>
-    import { createEventDispatcher, onDestroy } from 'svelte';
+    import { createEventDispatcher, onDestroy, onMount } from 'svelte';
     import { get, writable } from 'svelte/store';
     import { traceFile, Status, traceStatusStore } from '../stores/file.js';
     import { setting } from '../stores/setting.js';    
@@ -26,12 +26,49 @@
     let title = $state('');
     let logfolder = $state('');   
     let content = $state('');
+    
+    // 경과 시간 관련 변수
+    let elapsedSeconds = $state(0);
+    let timerInterval = $state(null);
 
     const unsubscribe = setting.subscribe(value => {
         logfolder = value.logfolder;
     });
+    
+    // 타이머 시작 함수
+    function startTimer() {
+        // 타이머가 이미 실행 중이면 초기화
+        if (timerInterval) {
+            clearInterval(timerInterval);
+        }
+        
+        elapsedSeconds = 0;
+        const startTime = Date.now();
+        
+        timerInterval = setInterval(() => {
+            // 현재 시간과 시작 시간의 차이를 초 단위로 계산
+            elapsedSeconds = Math.floor((Date.now() - startTime) / 1000);
+        }, 1000); // 1초마다 업데이트
+    }
+    
+    // 타이머 중지 함수
+    function stopTimer() {
+        if (timerInterval) {
+            clearInterval(timerInterval);
+            timerInterval = null;
+        }
+    }
+    
+    // 경과 시간을 포맷팅하는 함수
+    function formatElapsedTime(seconds) {
+        const mins = Math.floor(seconds / 60);
+        const secs = seconds % 60;
+        return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+    }
+    
     onDestroy(() => {
         unsubscribe();
+        stopTimer(); // 컴포넌트 소멸 시 타이머 정리
     });
 
     async function handleFileOpen() {
@@ -76,9 +113,14 @@
 
         try {
             traceStatusStore.set(Status.Loading);
+            startTimer(); // 타이머 시작
+            
             const parsed = await invoke<string>('starttrace', { fname: fileName, logfolder: logfolder });            
             console.log('Parsed Trace length:', parsed.length);
             console.log('Parsed Trace:', parsed);
+            
+            stopTimer(); // 타이머 중지
+            
             if (!parsed) {
                 await message('Trace가 실패하였습니다.');
                 traceStatusStore.set(Status.Idle);
@@ -90,16 +132,25 @@
                 filename = filename + "," + parsed.block_parquet_filename;
             }
             await setTestInfo(logtype, title, content, logfolder, filename);
-            await message('Trace가 성공적으로 완료되었습니다.');
+            await message(`Trace가 성공적으로 완료되었습니다. (총 소요시간: ${formatElapsedTime(elapsedSeconds)})`);
+            traceStatusStore.set(Status.Success); // 상태를 명확히 Success로 설정
+            // 잠시 대기 후 다이얼로그 닫기 (UI 업데이트 시간 확보)
+            setTimeout(() => {
+                dialogopen = false; 
+                dispatch('close');
+            }, 500);
         } catch (error) {
+            stopTimer(); // 타이머 중지
             console.error('starttrace 호출 오류:', error);
             await message('Trace가 실패하였습니다.');
             dialogopen = false; // 핸들러 종료 후 dialog off
             dispatch('close'); // 핸들러 종료 후 dialog off
         } finally {
-            traceStatusStore.set(Status.Idle);
-            dialogopen = false; // 핸들러 종료 후 dialog off
-            dispatch('close'); // 핸들러 종료 후 dialog off
+            stopTimer(); // 타이머 중지
+            // 오류 발생 시에만 상태 변경 (성공 시엔 위에서 이미 Success로 설정)
+            if ($traceStatusStore !== Status.Success) {
+                traceStatusStore.set(Status.Idle);
+            }
         }
     }
 </script>
@@ -135,14 +186,16 @@
         </div>
         
         <Dialog.Footer>
-            <div class="flex justify-end items-center">
+            <div class="flex justify-end items-center w-full">
             {#if $traceStatusStore === Status.Loading}
-                <div style="width: 100%;">
-                <BarLoader color="#FF3E00" unit="px" />
+                <div class="w-full flex flex-col items-center">
+                    <div class="mt-2 text-sm font-medium">
+                        처리 중... 경과 시간: {formatElapsedTime(elapsedSeconds)}
+                    </div>
                 </div>
             {/if}
             
-            <Button type="submit" disabled={$traceStatusStore === Status.Loading}  onclick={handleTraceStart}>
+            <Button type="submit" disabled={$traceStatusStore === Status.Loading} onclick={handleTraceStart}>
             {#if $traceStatusStore === Status.Loading}
                 <Reload class="mr-2 h-4 w-4 animate-spin" />
                 Tracing...
