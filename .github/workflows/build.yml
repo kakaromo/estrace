@@ -69,10 +69,9 @@ jobs:
         with:
           tauriScript: npm run tauri
           args: build --target ${{ matrix.target }}
-          
-      # 아티팩트 업로드
-      - name: Upload artifacts
-        uses: actions/upload-artifact@v3
+         
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.platform }}-${{ matrix.arch }}
           path: |
