@@ -1,6 +1,6 @@
 <script lang="ts">
     import * as Select from "$lib/components/ui/select/index.js";
-    import { selectedTrace } from "../../stores/trace.js";
+    import { selectedTrace } from "$stores/trace.js";
 
     interface SelectTypeProps {
         tracedata: any;

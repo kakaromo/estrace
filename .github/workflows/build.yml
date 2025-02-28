@@ -5,6 +5,11 @@ on:
     branches: [ 'main' ]
   pull_request:
     branches: [ 'main' ]
+  workflow_dispatch: # This is for manual triggers.
+
+# 권한 설정 추가
+permissions:
+  contents: write
 
 jobs:
   build:
