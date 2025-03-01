@@ -1,5 +1,5 @@
 <script lang="ts">
-    import { page } from '$app/state';
+    // import { page } from '$app/state';
     import { onMount } from 'svelte';
     import { goto } from '$app/navigation';
     import { invoke } from "@tauri-apps/api/core";
@@ -7,7 +7,7 @@
     import { getTestInfo } from '$api/db';
     import { trace, 
         filtertrace, prevFilterTrace, filtertraceChanged,
-        selectedTrace,  prevselectedTrace, filterselectedTraceChanged
+        selectedTrace,  prevselectedTrace, filterselectedTraceChanged, testinfoid
      } from '$stores/trace';
 
     import type { TestInfo } from '$stores/trace';
@@ -41,7 +41,8 @@
     } from '$utils/trace-helper';
 
     // 페이지 ID 및 기본 상태
-    const id = page.params.id;
+    // const id = page.params.id;
+    const id = $testinfoid;
     let data:TestInfo = $state({});
     let tracedata:any[] = $state([]);
     let filteredData = $state([]);

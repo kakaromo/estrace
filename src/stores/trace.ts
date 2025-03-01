@@ -36,7 +36,7 @@ export const filterselectedTraceChanged = derived(
     return JSON.stringify($selectedTrace) !== JSON.stringify($prevselectedTrace);
   }
 );
-export const currentValue = writable(false);
+export const testinfoid = writable(0);
 
 export type TestInfo = {
   id: number;
@@ -46,3 +46,4 @@ export type TestInfo = {
   logfolder: string;
   logname: string;
 };
+

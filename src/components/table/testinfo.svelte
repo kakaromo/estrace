@@ -1,6 +1,7 @@
 <script lang='ts'>
     import VirtualList from '@sveltejs/svelte-virtual-list';
     import { getAllTestInfo } from '$api/db';
+    import { testinfoid } from '$stores/trace';
     import { onMount } from 'svelte';
     import { goto } from '$app/navigation';
 
@@ -55,7 +56,9 @@
         
         // item에서 id 추출하고 페이지 이동
         if (item && item.id) {
-            goto(`/detail/${item.id}`);
+            $testinfoid = item.id;
+            // goto(`/detail/${item.id}`);
+            goto('/detail/');
         }
     }
     // trace 성공하면 table update
