@@ -1,4 +1,4 @@
-name: 'publish'
+name: 'build'
 
 on:
   workflow_dispatch: # This is for manual triggers.
@@ -25,22 +25,16 @@ on:
 
 
 jobs:
-  publish-tauri:
+  build-tauri:
     # 권한 설정 추가
     permissions:
       contents: write
     strategy:
       fail-fast: false
       matrix:
-        platform:
-          - macos-latest
-          - windows-latest
-          - ubuntu-22.04
-        include:
-          - platform: 'macos-latest' # for Arm based macs (M1 and above).
-            args: '--target aarch64-apple-darwin'
-          - platform: 'macos-latest' # for Intel based macs.
-            args: '--target x86_64-apple-darwin'
+        include:          
+          - platform: 'macos-latest'  # for Universal macOS builds (arm64 and x86_64)
+            args: '--target universal-apple-darwin'
           - platform: 'ubuntu-22.04' # for Tauri v1 you could replace this with ubuntu-20.04.
             args: ''
           - platform: 'windows-latest'
@@ -84,12 +78,4 @@ jobs:
           releaseBody: 'See the assets to download this version and install.'
           releaseDraft: true
           prerelease: false
-          args: ${{ matrix.args }}
-         
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ matrix.platform }}-${{ matrix.target }}
-          path: |
-            src-tauri/target/${{ matrix.target }}/release/bundle/
-            src-tauri/target/release/bundle/
+          args: ${{ matrix.args }}        
