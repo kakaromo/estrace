@@ -23,34 +23,16 @@ on:
           - release
 
 jobs:
-  build-tauri:
-    # 권한 설정 추가
+  # macOS 빌드 작업
+  build-macos:
     permissions:
       contents: write
+    if: ${{ github.event.inputs.platform == 'all' || github.event.inputs.platform == 'macos' }}
+    runs-on: macos-latest
     strategy:
       fail-fast: false
       matrix:
-        include:          
-          - platform: 'macos-latest' # for Arm based macs (M1 and above).
-            target: 'aarch64-apple-darwin'
-            args: '--target aarch64-apple-darwin'
-            os_filter: 'macos'
-          - platform: 'macos-latest' # for Intel based macs.
-            target: 'x86_64-apple-darwin'
-            args: '--target x86_64-apple-darwin'
-            os_filter: 'macos'
-          - platform: 'ubuntu-22.04' # for Tauri v1 you could replace this with ubuntu-20.04.
-            target: 'linux'
-            args: ''
-            os_filter: 'linux'
-          - platform: 'windows-latest'
-            target: 'windows'
-            args: ''
-            os_filter: 'windows'
-        
-    # 선택된 플랫폼 필터링 로직
-    if: ${{ github.event.inputs.platform == 'all' || github.event.inputs.platform == matrix.os_filter }}
-    runs-on: ${{ matrix.platform }}
+        target: ['aarch64-apple-darwin', 'x86_64-apple-darwin']
 
     steps:
       - name: Checkout repository
@@ -64,11 +46,150 @@ jobs:
       - name: Install Rust (stable)
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+
+      - name: install frontend dependencies
+        run: npm install
+
+      # 앱 버전 가져오기
+      - name: Get app version
+        id: get_version
+        shell: bash
+        run: |
+          APP_VERSION=$(node -p "require('./package.json').version")
+          APP_NAME=$(node -p "require('./package.json').name")
+          echo "version=$APP_VERSION" >> $GITHUB_OUTPUT
+          echo "name=$APP_NAME" >> $GITHUB_OUTPUT
+
+      # Tauri 앱 빌드
+      - uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tagName: app-v__VERSION__
+          releaseName: 'App v__VERSION__'
+          releaseBody: 'See the assets to download this version and install.'
+          releaseDraft: true
+          prerelease: false
+          args: --target ${{ matrix.target }} ${{ github.event.inputs.release_type == 'debug' && '' || '--release' }}
+         
+      # 실행 파일 경로 출력
+      - name: List build output
+        shell: bash
+        run: |
+          BUILD_MODE="${{ github.event.inputs.release_type }}"
+          echo "===== Build output files (${BUILD_MODE}) ====="
+          find src-tauri/target/${{ matrix.target }}/${{ github.event.inputs.release_type }}/bundle -type f -name "*.dmg" -o -name "*.app.tar.gz"
+
+      # 실행 파일 직접 업로드
+      - name: Upload macOS binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.get_version.outputs.name }}_${{ steps.get_version.outputs.version }}_${{ github.event.inputs.release_type }}_${{ matrix.target == 'aarch64-apple-darwin' && 'arm64' || 'x64' }}.dmg
+          if-no-files-found: error
+          path: src-tauri/target/${{ matrix.target }}/${{ github.event.inputs.release_type }}/bundle/dmg/*.dmg
+          compression-level: 0  # 압축 없음
+
+  # Windows 빌드 작업
+  build-windows:
+    permissions:
+      contents: write
+    if: ${{ github.event.inputs.platform == 'all' || github.event.inputs.platform == 'windows' }}
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 'lts/*'
+          
+      - name: Install Rust (stable)
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: install frontend dependencies
+        run: npm install
+
+      # 앱 버전 가져오기
+      - name: Get app version
+        id: get_version
+        shell: bash
+        run: |
+          APP_VERSION=$(node -p "require('./package.json').version")
+          APP_NAME=$(node -p "require('./package.json').name")
+          echo "version=$APP_VERSION" >> $GITHUB_OUTPUT
+          echo "name=$APP_NAME" >> $GITHUB_OUTPUT
+
+      # Tauri 앱 빌드
+      - uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tagName: app-v__VERSION__
+          releaseName: 'App v__VERSION__'
+          releaseBody: 'See the assets to download this version and install.'
+          releaseDraft: true
+          prerelease: false
+          args: ${{ github.event.inputs.release_type == 'debug' && '' || '--release' }}
+         
+      # 실행 파일 경로 출력
+      - name: List build output
+        shell: bash
+        run: |
+          BUILD_MODE="${{ github.event.inputs.release_type }}"
+          echo "===== Build output files (${BUILD_MODE}) ====="
+          find src-tauri/target/${{ github.event.inputs.release_type }}/bundle -type f -name "*.msi" -o -name "*.exe" | grep -v "node_modules"
+
+      # 실행 파일 직접 업로드 (Windows MSI)
+      - name: Upload Windows MSI
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.get_version.outputs.name }}_${{ steps.get_version.outputs.version }}_${{ github.event.inputs.release_type }}_windows_x64.msi
+          if-no-files-found: error
+          path: src-tauri/target/${{ github.event.inputs.release_type }}/bundle/msi/*.msi
+          compression-level: 0
+
+      # 실행 파일 직접 업로드 (Windows NSIS)
+      - name: Upload Windows NSIS
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.get_version.outputs.name }}_${{ steps.get_version.outputs.version }}_${{ github.event.inputs.release_type }}_windows_x64.exe
+          if-no-files-found: error
+          path: src-tauri/target/${{ github.event.inputs.release_type }}/bundle/nsis/*.exe
+          compression-level: 0
+      
+      # 실행 파일 직접 업로드 (Windows Portable)
+      - name: Upload Windows Portable
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.get_version.outputs.name }}_${{ steps.get_version.outputs.version }}_${{ github.event.inputs.release_type }}_windows_x64_portable.exe
+          if-no-files-found: warn
+          path: src-tauri/target/${{ github.event.inputs.release_type }}/bundle/*.exe
+          compression-level: 0
+
+  # Linux 빌드 작업
+  build-linux:
+    permissions:
+      contents: write
+    if: ${{ github.event.inputs.platform == 'all' || github.event.inputs.platform == 'linux' }}
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 'lts/*'
+          
+      - name: Install Rust (stable)
+        uses: dtolnay/rust-toolchain@stable
 
       # 리눅스 종속성 설치
       - name: Install Linux dependencies
-        if: matrix.platform == 'ubuntu-22.04'
         run: |
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.0-dev libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
@@ -85,7 +206,6 @@ jobs:
           APP_NAME=$(node -p "require('./package.json').name")
           echo "version=$APP_VERSION" >> $GITHUB_OUTPUT
           echo "name=$APP_NAME" >> $GITHUB_OUTPUT
-          echo "build_mode=${{ github.event.inputs.release_type }}" >> $GITHUB_OUTPUT
 
       # Tauri 앱 빌드
       - uses: tauri-apps/tauri-action@v0
@@ -97,90 +217,30 @@ jobs:
           releaseBody: 'See the assets to download this version and install.'
           releaseDraft: true
           prerelease: false
-          args: ${{ matrix.args }} ${{ github.event.inputs.release_type == 'debug' && '' || '--release' }}
+          args: ${{ github.event.inputs.release_type == 'debug' && '' || '--release' }}
          
-      # 실행 파일 경로 출력 (디버깅 용도)
+      # 실행 파일 경로 출력
       - name: List build output
         shell: bash
         run: |
           BUILD_MODE="${{ github.event.inputs.release_type }}"
           echo "===== Build output files (${BUILD_MODE}) ====="
-          if [ "${{ matrix.platform }}" = "macos-latest" ]; then
-            if [[ "${{ matrix.target }}" == *"apple"* ]]; then
-              find src-tauri/target/${{ matrix.target }}/${{ github.event.inputs.release_type }}/bundle -type f -name "*.dmg" -o -name "*.app.tar.gz"
-            fi
-          elif [ "${{ matrix.platform }}" = "windows-latest" ]; then
-            find src-tauri/target/${{ github.event.inputs.release_type }}/bundle -type f -name "*.msi" -o -name "*.exe" | grep -v "node_modules"
-          else
-            find src-tauri/target/${{ github.event.inputs.release_type }}/bundle -type f -name "*.deb" -o -name "*.AppImage"
-          fi
-
-      # 실행 파일 직접 업로드 (macOS ARM)
-      - name: Upload macOS ARM binary
-        if: matrix.platform == 'macos-latest' && matrix.target == 'aarch64-apple-darwin'
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ steps.get_version.outputs.name }}_${{ steps.get_version.outputs.version }}_${{ github.event.inputs.release_type }}_arm64.dmg
-          if-no-files-found: error
-          path: src-tauri/target/aarch64-apple-darwin/${{ github.event.inputs.release_type }}/bundle/dmg/*.dmg
-          compression-level: 0  # 압축 없음
-
-      # 실행 파일 직접 업로드 (macOS Intel)
-      - name: Upload macOS Intel binary
-        if: matrix.platform == 'macos-latest' && matrix.target == 'x86_64-apple-darwin'
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ steps.get_version.outputs.name }}_${{ steps.get_version.outputs.version }}_${{ github.event.inputs.release_type }}_x64.dmg
-          if-no-files-found: error
-          path: src-tauri/target/x86_64-apple-darwin/${{ github.event.inputs.release_type }}/bundle/dmg/*.dmg
-          compression-level: 0  # 압축 없음
-
-      # 실행 파일 직접 업로드 (Windows MSI)
-      - name: Upload Windows MSI
-        if: matrix.platform == 'windows-latest'
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ steps.get_version.outputs.name }}_${{ steps.get_version.outputs.version }}_${{ github.event.inputs.release_type }}_windows_x64.msi
-          if-no-files-found: error
-          path: src-tauri/target/${{ github.event.inputs.release_type }}/bundle/msi/*.msi
-          compression-level: 0  # 압축 없음
-
-      # 실행 파일 직접 업로드 (Windows NSIS)
-      - name: Upload Windows NSIS
-        if: matrix.platform == 'windows-latest'
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ steps.get_version.outputs.name }}_${{ steps.get_version.outputs.version }}_${{ github.event.inputs.release_type }}_windows_x64.exe
-          if-no-files-found: error
-          path: src-tauri/target/${{ github.event.inputs.release_type }}/bundle/nsis/*.exe
-          compression-level: 0  # 압축 없음
-      
-      # 실행 파일 직접 업로드 (Windows Portable)
-      - name: Upload Windows Portable
-        if: matrix.platform == 'windows-latest'
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ steps.get_version.outputs.name }}_${{ steps.get_version.outputs.version }}_${{ github.event.inputs.release_type }}_windows_x64_portable.exe
-          if-no-files-found: warn
-          path: src-tauri/target/${{ github.event.inputs.release_type }}/bundle/*.exe
-          compression-level: 0  # 압축 없음
+          find src-tauri/target/${{ github.event.inputs.release_type }}/bundle -type f -name "*.deb" -o -name "*.AppImage"
 
       # 실행 파일 직접 업로드 (Linux DEB)
       - name: Upload Linux DEB
-        if: matrix.platform == 'ubuntu-22.04'
         uses: actions/upload-artifact@v4
         with:
           name: ${{ steps.get_version.outputs.name }}_${{ steps.get_version.outputs.version }}_${{ github.event.inputs.release_type }}_linux_amd64.deb
           if-no-files-found: error
           path: src-tauri/target/${{ github.event.inputs.release_type }}/bundle/deb/*.deb
-          compression-level: 0  # 압축 없음
+          compression-level: 0
 
       # AppImage 업로드 (Linux)
       - name: Upload Linux AppImage
-        if: matrix.platform == 'ubuntu-22.04'
         uses: actions/upload-artifact@v4
         with:
           name: ${{ steps.get_version.outputs.name }}_${{ steps.get_version.outputs.version }}_${{ github.event.inputs.release_type }}_linux_amd64.AppImage
-          if-no-files-found: warn # AppImage가 없을 수도 있음
+          if-no-files-found: warn
           path: src-tauri/target/${{ github.event.inputs.release_type }}/bundle/appimage/*.AppImage
-          compression-level: 0  # 압축 없음
+          compression-level: 0
