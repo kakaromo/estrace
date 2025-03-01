@@ -42,8 +42,6 @@ pub fn run() {
             trace::block_sizestats,
             trace::ufs_continuity_stats,
             trace::block_continuity_stats,
-            trace::export_ufs_to_csv,
-            trace::export_block_to_csv,
             trace::export_to_csv,
         ])
         .run(tauri::generate_context!())

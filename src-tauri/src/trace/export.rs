@@ -8,7 +8,6 @@ use datafusion::prelude::*; // RecordBatchWriter 트레이트 추가
 // CSV 내보내기 공통 함수
 pub async fn export_to_csv(
     parquet_path: String,
-    file_type: String,
     output_dir: Option<String>,
 ) -> Result<String, String> {
     // 출력 경로 설정

@@ -167,26 +167,9 @@ pub async fn block_continuity_stats(
 }
 
 #[tauri::command]
-pub async fn export_ufs_to_csv(
-    parquet_path: String,
-    output_dir: Option<String>,
-) -> Result<String, String> {
-    export::export_to_csv(parquet_path, "ufs".to_string(), output_dir).await
-}
-
-#[tauri::command]
-pub async fn export_block_to_csv(
-    parquet_path: String,
-    output_dir: Option<String>,
-) -> Result<String, String> {
-    export::export_to_csv(parquet_path, "block".to_string(), output_dir).await
-}
-
-#[tauri::command]
 pub async fn export_to_csv(
     parquet_path: String,
-    file_type: String,
     output_dir: Option<String>,
 ) -> Result<String, String> {
-    export::export_to_csv(parquet_path, file_type, output_dir).await
+    export::export_to_csv(parquet_path, output_dir).await
 }

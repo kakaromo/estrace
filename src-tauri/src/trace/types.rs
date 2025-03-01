@@ -41,6 +41,8 @@ pub struct Block {
     pub continuous: bool,
 }
 
+// 필요하지만 현재는 사용되지 않는 variant가 있는 경우
+#[allow(dead_code)]
 #[derive(Serialize, Debug, Clone)]
 pub enum LatencyValue {
     F64(f64),

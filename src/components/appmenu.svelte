@@ -2,7 +2,7 @@
   // import * as Menubar from "$lib/components/ui/menubar";
   import { onMount } from 'svelte';
   
-  import { Menu, Submenu, MenuItem} from '@tauri-apps/api/menu'
+  import { Menu, Submenu } from '@tauri-apps/api/menu'
   import { open } from '@tauri-apps/plugin-dialog';
   
   import * as Dialog from "$lib/components/ui/dialog";  

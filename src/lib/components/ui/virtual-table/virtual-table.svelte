@@ -1,21 +1,3 @@
-<script module lang="ts">
-    // 컬럼 정의 타입
-    export interface Column<T> {
-        // 컬럼 제목
-        header: string;
-        // 데이터에서 값을 가져올 키
-        accessor: keyof T | ((item: T) => any);
-        // 컬럼 너비 (픽셀 또는 CSS 너비 값)
-        width: string;
-        // 선택적 셀 렌더링 함수
-        cell?: (item: T) => string | { component: any, props: Record<string, any> };
-        // 정렬 가능 여부
-        sortable?: boolean;
-        // 클래스 이름
-        className?: string;
-    }
-</script>
-
 <script lang="ts">
     import VirtualList from '@sveltejs/svelte-virtual-list';
     import { createEventDispatcher } from 'svelte';
@@ -54,7 +36,7 @@
     const dispatch = createEventDispatcher<{
         rowClick: { item: any };
         rowSelect: { item: any };
-        sort: { column: Column<any>, direction: 'asc' | 'desc' };
+        sort: { column: any, direction: 'asc' | 'desc' };
         exportCsv: { data: string, path: string | null };
     }>();
 
@@ -70,8 +52,23 @@
         dispatch('rowClick', { item });
     }
 
+    // 행 키보드 핸들러 (Enter 또는 Space 키)
+    function handleRowKeyDown(event, item) {
+        // Enter 또는 Space 키 눌렀을 때 클릭과 동일한 동작 수행
+        if (event.key === 'Enter' || event.key === ' ') {
+            event.preventDefault(); // 기본 동작 방지 (스크롤 등)
+            handleRowClick(item);
+        }
+    }
+
+    // 테이블 키보드 핸들러
+    function handleTableKeyDown(event) {
+        // 테이블 레벨의 키보드 탐색 핸들링 (옵션)
+        // 현재는 기본만 구현
+    }
+
     // 셀 내용 가져오기
-    function getCellContent(item: any, column: Column<any>) {
+    function getCellContent(item: any, column: any) {
         if (column.cell) {
             const result = column.cell(item);
             if (typeof result === 'string') {
@@ -90,7 +87,7 @@
     }
 
     // 원시 데이터 가져오기 (HTML 태그 없이)
-    function getRawCellContent(item: any, column: Column<any>) {
+    function getRawCellContent(item: any, column: any) {
         if (typeof column.accessor === 'function') {
             return column.accessor(item);
         }
@@ -209,6 +206,12 @@
         }
     }
     
+    // 내보내기 버튼 클릭 핸들러 (이벤트 전파 중지)
+    function handleExportClick(event) {
+        event.stopPropagation();
+        exportToCsv();
+    }
+    
     // 컴포넌트 마운트시 이벤트 리스너 추가
     onMount(() => {
         document.addEventListener('click', handleDocumentClick);
@@ -226,26 +229,52 @@
 </script>
 
 <!-- 테이블 컨테이너 -->
-<div class="virtual-table-container w-full font-sans" on:contextmenu={handleContextMenu}>
+<div 
+    class="virtual-table-container w-full font-sans" 
+    oncontextmenu={handleContextMenu}
+    onkeydown={handleTableKeyDown}
+    tabindex="0"
+    role="grid" 
+    aria-rowcount={items.length + 1} 
+    aria-colcount={columns.length}
+>
     <!-- 테이블 헤더 -->
-    <div class="header grid {headerClass}" style="grid-template-columns: {gridTemplateColumns};">
-        {#each columns as column}
-            <div class="p-2 {column.className || ''}" class:cursor-pointer={column.sortable}>
+    <div 
+        class="header grid {headerClass}" 
+        style="grid-template-columns: {gridTemplateColumns};"
+        role="row"
+        aria-rowindex="1"
+    >
+        {#each columns as column, colIndex}
+            <div 
+                class="p-2 {column.className || ''}" 
+                class:cursor-pointer={column.sortable}
+                role="columnheader"
+                aria-colindex={colIndex + 1}
+            >
                 {column.header}
             </div>
         {/each}
     </div>
     
     <!-- 테이블 본문 -->
-    <div class="list-wrapper">
+    <div class="list-wrapper" role="rowgroup">
         <VirtualList {items} {itemHeight} bind:start bind:end let:item let:index>
             <div 
                 class={getRowClass(item, index)}
                 style="grid-template-columns: {gridTemplateColumns};"
-                on:click={() => handleRowClick(item)}
+                onclick={() => handleRowClick(item)}
+                onkeydown={(e) => handleRowKeyDown(e, item)}
+                role="row"
+                aria-rowindex={index + 2} 
+                tabindex="0" 
             >
-                {#each columns as column}
-                    <div class="py-1 px-2 content-item overflow-hidden text-ellipsis {column.className || ''}">
+                {#each columns as column, colIndex}
+                    <div 
+                        class="py-1 px-2 content-item overflow-hidden text-ellipsis {column.className || ''}"
+                        role="gridcell"
+                        aria-colindex={colIndex + 1}
+                    >
                         {#if typeof column.cell === 'function'}
                             {@html getCellContent(item, column)}
                         {:else}
@@ -258,42 +287,33 @@
     </div>
 
     <!-- 테이블 푸터 -->
-    <p class="footer p-2 text-sm text-gray-500">
+    <div class="footer p-2 text-sm text-gray-500">
         {#if items.length > 0}
             showing {start + 1}-{Math.min(end, items.length)} of {items.length} rows
         {:else}
             No data available
         {/if}
-    </p>
+    </div>
 
     <!-- 커스텀 컨텍스트 메뉴 - 위치 조정 -->
     {#if showContextMenu}
         <div 
             class="context-menu absolute bg-white shadow-lg rounded-md py-1 z-50"
             style="left: {contextMenuX}px; top: {contextMenuY}px;"
+            role="menu"
         >
             <button 
                 class="menu-item flex items-center gap-2 w-full text-left px-4 py-2 hover:bg-gray-100"
-                on:click|stopPropagation={exportToCsv}
+                onclick={handleExportClick}
                 disabled={isExporting}
+                role="menuitem"
             >
                 {#if isExporting}
-                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="animate-spin">
-                        <circle cx="12" cy="12" r="10" />
-                        <path d="M12 6v6l4 2" />
-                    </svg>
-                    내보내는 중...
+                    <div class="animate-spin h-4 w-4 border-2 border-current border-t-transparent rounded-full mr-2" aria-hidden="true"></div>
+                    <span>내보내는 중...</span>
                 {:else}
-               
-                    <Download />
-                    CSV로 내보내기
-                
-                    <!-- <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-download">
-                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
-                        <polyline points="7 10 12 15 17 10"/>
-                        <line x1="12" y1="15" x2="12" y2="3"/>
-                    </svg>
-                    CSV로 내보내기 -->
+                    <Download size={16} aria-hidden="true" />
+                    <span>CSV로 내보내기</span>
                 {/if}
             </button>
         </div>
@@ -307,6 +327,12 @@
         height: 100%;
         overflow: hidden;
         position: relative; /* 컨텍스트 메뉴 위치 기준점 */
+        outline: none; /* 포커스 아웃라인 제거 (필요에 따라 커스텀 스타일 추가 가능) */
+    }
+    
+    .virtual-table-container:focus-visible {
+        outline: 2px solid #4f46e5; /* 키보드 포커스 시 아웃라인 표시 */
+        outline-offset: -2px;
     }
     
     .header {

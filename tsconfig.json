@@ -10,17 +10,19 @@
     "sourceMap": true,
     "strict": true,
     "moduleResolution": "bundler",
-    "baseUrl": ".",
-    "paths": {
-      "$lib": ["./src/lib"],
-      "$lib/*": ["./src/lib/*"],
-      "$stores": ["./src/stores"],
-      "$stores/*": ["./src/stores/*"],
-      "$api": ["./src/api"],
-      "$api/*": ["./src/api/*"],
-      "$components": ["./src/components"],
-      "$components/*": ["./src/components/*"]
-    }
+    // "baseUrl": ".",
+    // "paths": {
+    //   "$lib": ["./src/lib"],
+    //   "$lib/*": ["./src/lib/*"],
+    //   "$stores": ["./src/stores"],
+    //   "$stores/*": ["./src/stores/*"],
+    //   "$api": ["./src/api"],
+    //   "$api/*": ["./src/api/*"],
+    //   "$components": ["./src/components"],
+    //   "$components/*": ["./src/components/*"],
+    //   "$utils": ["./src/utils"],
+    //   "$utils/*": ["./src/utils/*"],
+    // }
   }
   // Path aliases are handled by https://kit.svelte.dev/docs/configuration#alias
   // except $lib which is handled by https://kit.svelte.dev/docs/configuration#files

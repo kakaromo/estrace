@@ -22,7 +22,7 @@ pub fn sample_ufs(ufs_list: &[UFS]) -> Vec<UFS> {
     if ufs_list.len() <= MAX_PREVIEW_RECORDS {
         ufs_list.to_vec()
     } else {
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
         ufs_list
             .choose_multiple(&mut rng, MAX_PREVIEW_RECORDS)
             .cloned()
@@ -34,7 +34,7 @@ pub fn sample_block(block_list: &[Block]) -> Vec<Block> {
     if block_list.len() <= MAX_PREVIEW_RECORDS {
         block_list.to_vec()
     } else {
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
         block_list
             .choose_multiple(&mut rng, MAX_PREVIEW_RECORDS)
             .cloned()

@@ -43,7 +43,7 @@
     // 페이지 ID 및 기본 상태
     const id = $page.params.id;
     let data:TestInfo = $state({});
-    let tracedata:any[] = [];
+    let tracedata:any[] = $state([]);
     let filteredData = $state([]);
     let tracetype:string[] = $state([]);
     let isLoading:boolean = $state(false);
@@ -264,9 +264,9 @@
                         disabled={isExporting || !$selectedTrace || !parquetFiles[$selectedTrace]}
                     >
                         {#if isExporting}
-                            <div class="animate-spin h-5 w-5 border-2 border-current border-t-transparent rounded-full" />
+                            <div class="animate-spin h-5 w-5 border-2 border-current border-t-transparent rounded-full"></div>
                         {:else}
-                            <FileDown size="20" />
+                            <FileDown size="20"></FileDown>
                         {/if}
                     </Button>
                 </Tooltip.Trigger>
@@ -282,7 +282,7 @@
         <VisualItem bind:ispattern bind:isrwd bind:isqd bind:islatency bind:issizestats />                 
         <div class="grid grid-cols-2 gap-4">
             <div class="col-span-2">
-                <Card.Root class="{ispattern ? 'block' : 'hidden'}">
+                <Card.Root class={ispattern ? 'block' : 'hidden'} >
                     <Card.Header>
                         <Card.Title>{$selectedTrace.toUpperCase()} Pattern</Card.Title>
                     </Card.Header>
@@ -295,7 +295,7 @@
                     </Card.Content>
                 </Card.Root>
                 <Separator class="my-4 {isqd ? 'block' : 'hidden'}" />
-                <Card.Root class="{isqd ? 'block' : 'hidden'}">
+                <Card.Root class={isqd ? 'block' : 'hidden'} >
                     <Card.Header>
                         <Card.Title>{$selectedTrace.toUpperCase()} QueueDepth</Card.Title>
                     </Card.Header>
@@ -307,8 +307,8 @@
                         {/if}
                     </Card.Content>
                 </Card.Root>
-                <Separator class="my-4 {isrwd ? 'block' : 'hidden'}"/>
-                <Card.Root class="{isrwd ? 'block' : 'hidden'}">
+                <Separator class="my-4 {isrwd ? 'block' : 'hidden'}" />
+                <Card.Root class={isrwd ? 'block' : 'hidden'} >
                     <Card.Header>
                         <Card.Title>{$selectedTrace.toUpperCase()} Read/Write/Discard Statistics</Card.Title>
                     </Card.Header>
@@ -321,7 +321,7 @@
                     </Card.Content>
                 </Card.Root>                
                 <Separator class="my-4 {islatency ? 'block' : 'hidden'}" />
-                <Card.Root class="{islatency ? 'block' : 'hidden'}">
+                <Card.Root class={islatency ? 'block' : 'hidden'}>
                     <Card.Header>
                         <Card.Title>{$selectedTrace.toUpperCase()} Latency</Card.Title>
                     </Card.Header>

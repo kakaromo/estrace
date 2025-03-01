@@ -46,7 +46,7 @@
     });
     
     // 차트 컨테이너 참조
-    let chartsContainer;
+    let chartsContainer = $state(null);
     
     // 차트 초기화 타이머
     let chartInitTimer = null;

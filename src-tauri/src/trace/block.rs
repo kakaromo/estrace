@@ -101,7 +101,6 @@ pub fn block_bottom_half_latency_process(block_list: Vec<Block>) -> Vec<Block> {
     // 키를 (sector, io_type, size)로 확장하여 동일 크기의 요청만 중복으로 처리
     let mut processed_issues = HashSet::new();
     let mut deduplicated_blocks = Vec::with_capacity(sorted_blocks.len());
-    let mut duplicate_count = 0;
 
     for block in sorted_blocks {
         if block.action == "block_rq_issue" {
@@ -119,7 +118,6 @@ pub fn block_bottom_half_latency_process(block_list: Vec<Block>) -> Vec<Block> {
             let key = (block.sector, io_operation.to_string(), block.size);
 
             if processed_issues.contains(&key) {
-                duplicate_count += 1;
                 continue;
             }
 
@@ -136,9 +134,14 @@ pub fn block_bottom_half_latency_process(block_list: Vec<Block>) -> Vec<Block> {
                 "other"
             };
 
+            // write 이고 size가 0인 경우에 Flush 표시가 2번 발생 (중복 제거) FF->WS 이런식으로 들어올 수 있음
+            if block.io_type.starts_with('W') && block.size == 0 {            
+                continue;
+            }
+
             let key = (block.sector, io_operation.to_string(), block.size);
             processed_issues.remove(&key);
-        }
+        }       
 
         deduplicated_blocks.push(block);
     }
@@ -155,27 +158,17 @@ pub fn block_bottom_half_latency_process(block_list: Vec<Block>) -> Vec<Block> {
     let mut prev_end_sector: Option<u64> = None;
     let mut prev_io_type: Option<String> = None;
 
-    // 통계 카운터
-    let mut read_count = 0;
-    let mut write_count = 0;
-    let mut discard_count = 0;
-    let mut other_count = 0;
-
     for mut block in deduplicated_blocks {
         // 기본적으로 continuous를 false로 설정
         block.continuous = false;
 
         let io_operation = if block.io_type.starts_with('R') {
-            read_count += 1;
             "read"
         } else if block.io_type.starts_with('W') {
-            write_count += 1;
             "write"
         } else if block.io_type.starts_with('D') {
-            discard_count += 1;
             "discard"
         } else {
-            other_count += 1;
             "other"
         };
 
@@ -229,9 +222,6 @@ pub fn block_bottom_half_latency_process(block_list: Vec<Block>) -> Vec<Block> {
         block.qd = current_qd;
         filtered_blocks.push(block);
     }
-
-    // 디버그 출력 제거
-
     filtered_blocks
 }
 
