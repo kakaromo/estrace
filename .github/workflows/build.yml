@@ -90,42 +90,35 @@ jobs:
       #       src-tauri/target/${{ matrix.target }}/release/bundle/
       #       src-tauri/target/release/bundle/
 
-      # 모든 아티팩트 다운로드
-      - name: 아티팩트 다운로드
-        uses: actions/download-artifact@v4
+      # 실행 파일 경로 출력 (디버깅 용도)
+      - name: List build output
+        if: ${{ github.event.inputs.release_type == 'debug' }}
+        shell: bash
+        run: |
+          echo "===== Build output files ====="
+          if [ "${{ matrix.platform }}" = "macos-latest" ]; then
+            if [ "${{ matrix.target }}" = "universal-apple-darwin" ]; then
+              find src-tauri/target/universal-apple-darwin/release/bundle -type f -name "*.dmg" -o -name "*.app.tar.gz"
+            else
+              find src-tauri/target/release/bundle -type f -name "*.dmg" -o -name "*.app.tar.gz"
+            fi
+          elif [ "${{ matrix.platform }}" = "windows-latest" ]; then
+            find src-tauri/target/release/bundle -type f -name "*.msi" -o -name "*.exe" | grep -v "node_modules"
+          else
+            find src-tauri/target/release/bundle -type f -name "*.deb" -o -name "*.AppImage"
+          fi
+          
+      # 특정 플랫폼의 실행 파일만 아티팩트로 업로드
+      - name: Upload executables as artifacts
+        uses: actions/upload-artifact@v4
         with:
-          path: artifacts
-      
-      # 디버깅: 아티팩트 디렉터리 구조 확인
-      - name: 아티팩트 디렉터리 구조 확인
-        run: |
-          echo "아티팩트 디렉터리 구조:"
-          find artifacts -type f | sort
-      
-      # 디버깅 정보를 기반으로 파일 이동 
-      - name: 릴리스 파일 구성
-        run: |
-          mkdir -p release-files
-          
-          # macOS DMG 파일 찾기 및 복사
-          find artifacts -name "*.dmg" -exec cp {} release-files/ \;
-          
-          # Windows MSI/EXE 파일 찾기 및 복사
-          find artifacts -name "*.msi" -exec cp {} release-files/ \;
-          find artifacts -name "*.exe" -not -path "*/bundle/node-modules/*" -exec cp {} release-files/ \;
-          
-          # Linux AppImage/DEB 파일 찾기 및 복사
-          find artifacts -name "*.AppImage" -exec cp {} release-files/ \;
-          find artifacts -name "*.deb" -exec cp {} release-files/ \;
-          
-          echo "릴리스 파일 확인:"
-          ls -la release-files/
-      
-      # 릴리스 생성
-      - name: 릴리스 생성
-        uses: softprops/action-gh-release@v2
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:          
-          files: |
-            release-files/*
+          name: ${{ matrix.platform }}-executables
+          if-no-files-found: error
+          path: |
+            # macOS
+            src-tauri/target/universal-apple-darwin/release/bundle/**/*.dmg
+            src-tauri/target/release/bundle/**/*.dmg
+            # Windows
+            src-tauri/target/release/bundle/**/*.exe
+            # Linux
+            src-tauri/target/release/bundle/**/*.AppImage
