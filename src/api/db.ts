@@ -9,7 +9,7 @@ let db: Database = null;
 async function getDbPath() {
     const currentPlatform = platform();
     if (currentPlatform === 'windows') {
-        return 'sqlite://C:\\test.db';
+        return 'sqlite:\\test.db';
     } else {
         // Linux 또는 macOS
         const home = await homeDir();
