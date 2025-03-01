@@ -116,8 +116,14 @@ jobs:
           if-no-files-found: error
           path: |
             # macOS
-            src-tauri/target/release/bundle/**/*.dmg
+            if [ "${{ matrix.platform }}" = "macos-latest" ]; then
+              if [ "${{ matrix.target }}" = "aarch64-apple-darwin" ]; then
+                src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/*.dmg
+              else
+                src-tauri/target/x86_64-apple-darwin/release/bundle/dmg/*.dmg
+              fi            
+            fi
             # Windows
-            src-tauri/target/release/bundle/**/*.exe
+            src-tauri/target/release/bundle/nsis/*.exe
             # Linux
-            src-tauri/target/release/bundle/**/*.AppImage
+            src-tauri/target/release/bundle/appimage/*.AppImage
