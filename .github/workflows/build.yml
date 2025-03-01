@@ -116,7 +116,6 @@ jobs:
           if-no-files-found: error
           path: |
             # macOS
-            src-tauri/target/universal-apple-darwin/release/bundle/**/*.dmg
             src-tauri/target/release/bundle/**/*.dmg
             # Windows
             src-tauri/target/release/bundle/**/*.exe
