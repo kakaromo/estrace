@@ -1,5 +1,5 @@
 <script lang="ts">
-    import { page } from '$app/stores';
+    import { page } from '$app/state';
     import { onMount } from 'svelte';
     import { goto } from '$app/navigation';
     import { invoke } from "@tauri-apps/api/core";
@@ -41,7 +41,7 @@
     } from '$utils/trace-helper';
 
     // 페이지 ID 및 기본 상태
-    const id = $page.params.id;
+    const id = page.params.id;
     let data:TestInfo = $state({});
     let tracedata:any[] = $state([]);
     let filteredData = $state([]);
@@ -88,39 +88,44 @@
     });
 
     // 필터가 변경될 때 데이터 업데이트
-    $effect(async () => {
-        if ($filtertraceChanged) {
-            isLoading = true;
-            
-            // 이전 필터 값 업데이트
-            $prevFilterTrace = {...$filtertrace};
-            
-            // 필터링된 데이터 설정
-            await updateFilteredData();
-            
-            // 선택된 유형에 따라 통계 데이터 다시 로드
-            await loadStatsData();
-            
-            isLoading = false;
-        }
-    });
+    $effect(() => {
+        (async () => {
+            if ($filtertraceChanged) {
+                isLoading = true;
+                
+                // 이전 필터 값 업데이트
+                $prevFilterTrace = {...$filtertrace};
+                
+                // 필터링된 데이터 설정
+                await updateFilteredData();
+                
+                // 선택된 유형에 따라 통계 데이터 다시 로드
+                await loadStatsData();
+                
+                isLoading = false;
+            }
+        })();
+    })
+
     
     // selectedTrace가 변경될 때 통계 데이터 업데이트
-    $effect(async () => {
-        if ($selectedTrace && $filterselectedTraceChanged) {
-            isLoading = true;
-            
-            $prevselectedTrace = $selectedTrace;
+    $effect(() => {
+        (async () => {
+            if ($selectedTrace && $filterselectedTraceChanged) {
+                isLoading = true;
+                
+                $prevselectedTrace = $selectedTrace;
 
-            // 선택된 trace에 대한 필터링된 데이터 업데이트
-            await updateFilteredData();
-            
-            // 통계 데이터 로드
-            await loadStatsData();
-            
-            isLoading = false;
-        }
-    });
+                // 선택된 trace에 대한 필터링된 데이터 업데이트
+                await updateFilteredData();
+                
+                // 통계 데이터 로드
+                await loadStatsData();
+                
+                isLoading = false;
+            }
+        })();
+    })
 
     // 필터링된 데이터 설정
     async function updateFilteredData() {
