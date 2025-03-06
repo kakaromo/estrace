@@ -4,7 +4,7 @@
     import { goto } from '$app/navigation';
     import { invoke } from "@tauri-apps/api/core";
     
-    import { getTestInfo } from '$api/db';
+    import { getTestInfo, getBufferSize } from '$api/db';
     import { trace, 
         filtertrace, prevFilterTrace, filtertraceChanged,
         selectedTrace,  prevselectedTrace, filterselectedTraceChanged, testinfoid
@@ -45,7 +45,7 @@
     const id = $testinfoid;
     let data:TestInfo = $state({});
     let tracedata:any[] = $state([]);
-    let filteredData = $state([]);
+    let filteredData = $state({});
     let tracetype:string[] = $state([]);
     let isLoading:boolean = $state(false);
     
@@ -87,6 +87,8 @@
         ufs: '',
         block: ''
     });
+
+    let buffersize = $state(0);
 
     // 필터가 변경될 때 데이터 업데이트
     $effect(() => {
@@ -131,7 +133,10 @@
     // 필터링된 데이터 설정
     async function updateFilteredData() {
         if ($selectedTrace) {
-            filteredData[$selectedTrace] = filterTraceData(tracedata, $selectedTrace, $filtertrace);
+            const result = await filterTraceData(fileNames[$selectedTrace], tracedata, $selectedTrace, $filtertrace);
+            if (result !== null) {
+                filteredData[$selectedTrace] = result;  
+            }
         }
     }
 
@@ -197,7 +202,8 @@
             
             // 테스트 정보 가져오기
             data = await getTestInfo(id);
-            
+            buffersize = await getBufferSize();
+            console.log('buffersize:', buffersize);
             // 캐시 키 구성
             const cacheKey = `traceData_${id}_${data.logfolder}_${data.logname}`;
             
@@ -209,7 +215,8 @@
                 // 캐시된 데이터가 없으면 서버에서 가져오기
                 let traceStr = await invoke<string>('readtrace', { 
                     logfolder: data.logfolder, 
-                    logname: data.logname 
+                    logname: data.logname,
+                    maxrecords: buffersize 
                 });
                 
                 tracedata = JSON.parse(traceStr);
@@ -221,13 +228,15 @@
             // 데이터 저장 및 초기화
             $trace = tracedata;
             filteredData = tracedata;
+            // filteredData['ufs'] = tracedata['ufs']['data'];
+            // filteredData['block'] = tracedata['block']['data'];
             tracetype = Object.keys(tracedata);
-            
+
             // 파일 경로 설정
             setParquetFilePaths();
 
             // 초기 필터링된 데이터 설정
-            await updateFilteredData();
+            // await updateFilteredData();
             
             // 초기 통계 데이터 로드
             await loadStatsData();
@@ -258,7 +267,7 @@
         </Button>
         {#if tracetype.length > 0}
         <div class="fixed top-4 left-4 flex items-center gap-2">
-            <SelectType tracetype={tracetype} bind:tracedata class="h-12"/>
+            <SelectType tracetype={tracetype} tracedata={filteredData} class="h-12"/>
             
             <Tooltip.Root>
                 <Tooltip.Trigger asChild>
@@ -280,6 +289,11 @@
                     <p>현재 데이터를 CSV로 내보내기</p>
                 </Tooltip.Content>
             </Tooltip.Root>
+            {#if $selectedTrace !== '' && tracedata[$selectedTrace].total_count !== tracedata[$selectedTrace].sampled_count}
+            <div class="text-sm font-medium mb-2">total : {tracedata[$selectedTrace].total_count}</div>
+            <div class="text-sm font-medium mb-2">sampling : {tracedata[$selectedTrace].sampled_count}</div>
+            <div class="text-sm font-medium mb-2">sample ratio : {Number(tracedata[$selectedTrace].sampling_ratio.toFixed(2))} %</div>
+            {/if}
         </div>
         {/if}        
     </header>    
@@ -294,9 +308,9 @@
                     </Card.Header>
                     <Card.Content>
                         {#if $selectedTrace === 'ufs'} 
-                        <ScatterCharts data={filteredData.ufs} xAxisKey='time' yAxisKey='lba' legendKey='opcode' yAxisLabel='4KB' ycolumn='lba'/>
+                        <ScatterCharts data={filteredData.ufs.data} xAxisKey='time' yAxisKey='lba' legendKey='opcode' yAxisLabel='4KB' ycolumn='lba'/>
                         {:else if $selectedTrace === 'block'}
-                        <ScatterCharts data={filteredData.block} xAxisKey='time' yAxisKey='sector' legendKey='io_type' yAxisLabel='sector' ycolumn='sector'/>
+                        <ScatterCharts data={filteredData.block.data} xAxisKey='time' yAxisKey='sector' legendKey='io_type' yAxisLabel='sector' ycolumn='sector'/>
                         {/if}
                     </Card.Content>
                 </Card.Root>
@@ -307,9 +321,9 @@
                     </Card.Header>
                     <Card.Content>
                         {#if $selectedTrace === 'ufs'} 
-                        <ScatterCharts data={filteredData.ufs} xAxisKey='time' yAxisKey='qd' legendKey='opcode' yAxisLabel='count' ycolumn='qd'/>
+                        <ScatterCharts data={filteredData.ufs.data} xAxisKey='time' yAxisKey='qd' legendKey='opcode' yAxisLabel='count' ycolumn='qd'/>
                         {:else if $selectedTrace === 'block'}
-                        <ScatterCharts data={filteredData.block} xAxisKey='time' yAxisKey='qd' legendKey='io_type' yAxisLabel='count' ycolumn='qd'/>
+                        <ScatterCharts data={filteredData.block.data} xAxisKey='time' yAxisKey='qd' legendKey='io_type' yAxisLabel='count' ycolumn='qd'/>
                         {/if}
                     </Card.Content>
                 </Card.Root>
@@ -335,7 +349,7 @@
                         {#if $selectedTrace === 'ufs'} 
                         <LatencyTabs 
                             traceType={$selectedTrace} 
-                            filteredData={filteredData.ufs}
+                            filteredData={filteredData.ufs.data}
                             legendKey="opcode"
                             thresholds={thresholds}
                             dtocStat={ufsStats.dtocStat}
@@ -345,7 +359,7 @@
                         {:else if $selectedTrace === 'block'}         
                         <LatencyTabs 
                             traceType={$selectedTrace} 
-                            filteredData={filteredData.block}
+                            filteredData={filteredData.block.data}
                             legendKey="io_type"
                             thresholds={thresholds}
                             dtocStat={blockStats.dtocStat}

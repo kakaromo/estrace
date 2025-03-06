@@ -34,7 +34,11 @@ export async function initial() {
     await db.execute('CREATE TABLE IF NOT EXISTS log (id INTEGER PRIMARY KEY, path TEXT);').catch((e) => { console.log('error', e); });
     await db.execute('CREATE TABLE IF NOT EXISTS testinfo (id INTEGER PRIMARY KEY, logtype TEXT, title TEXT, content TEXT, logfolder TEXT, logname TEXT);').catch((e) => { console.log('error', e); });
     await db.execute('CREATE TABLE IF NOT EXISTS testtype (id INTEGER PRIMARY KEY, path TEXT);').catch((e) => { console.log('error', e); });    
-
+    await db.execute('CREATE TABLE IF NOT EXISTS buffersize (id INTEGER PRIMARY KEY, buffersize INTEGER);').catch((e) => { console.log('error', e); });   
+    const result:number[] = await db.select('SELECT * FROM buffersize');
+    if(result.length === 0) {
+        await db.execute('INSERT OR REPLACE INTO buffersize (id, buffersize) VALUES (1, 500000);');
+    }
 }
 
 export async function getFolder() {
@@ -75,4 +79,16 @@ export async function getTestInfo(id: number) {
 export async function setTestInfo(logtype: string, title: string, content: string, logfolder: string, logname: string) {
     await open();
     await db.execute('INSERT INTO testinfo (logtype, title, content, logfolder, logname) VALUES (?, ?, ?, ?, ?)', [ logtype, title, content, logfolder, logname ]);
+}
+
+
+export async function getBufferSize(buffersize: number) {
+    await open();
+    const result:any[] = await db.select('SELECT * FROM buffersize  WHERE id = 1');
+    return result[0].buffersize;
+}
+
+export async function setBufferSize(buffersize: number) {
+    await open();
+    await db.execute('INSERT OR REPLACE INTO buffersize (id, buffersize) VALUES (1, ?)', [ buffersize ]);
 }

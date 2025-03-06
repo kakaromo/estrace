@@ -43,6 +43,7 @@ pub fn run() {
             trace::ufs_continuity_stats,
             trace::block_continuity_stats,
             trace::export_to_csv,
+            trace::filter_trace,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

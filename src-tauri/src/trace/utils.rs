@@ -9,36 +9,85 @@ use rand::prelude::IndexedRandom;
 use rayon::prelude::*;
 use tauri::async_runtime::spawn_blocking;
 
+use serde::Serialize;
+
 use crate::trace::block::{
     block_bottom_half_latency_process, parse_block_trace, save_block_to_parquet,
 };
 use crate::trace::ufs::{parse_ufs_trace, save_ufs_to_parquet, ufs_bottom_half_latency_process};
 use crate::trace::{
-    Block, LatencySummary, TraceParseResult, BLOCK_CACHE, MAX_PREVIEW_RECORDS, UFS, UFS_CACHE,
+    Block, LatencySummary, TraceParseResult, BLOCK_CACHE, UFS, UFS_CACHE,
 };
 
-// 샘플링 함수들
-pub fn sample_ufs(ufs_list: &[UFS]) -> Vec<UFS> {
-    if ufs_list.len() <= MAX_PREVIEW_RECORDS {
-        ufs_list.to_vec()
+use crate::trace::filter::{filter_ufs_data, filter_block_data};
+
+// 샘플링 결과를 담는 구조체
+#[derive(Serialize, Debug, Clone)]
+pub struct SamplingInfo<T> {
+    pub data: Vec<T>,
+    pub total_count: usize,
+    pub sampled_count: usize,
+    pub sampling_ratio: f64,
+}
+
+// 샘플링 함수들 - max_records 매개변수 추가
+pub fn sample_ufs(ufs_list: &[UFS], max_records: usize) -> SamplingInfo<UFS> {
+    let total_count = ufs_list.len();
+    
+    if total_count <= max_records {
+        // 샘플링이 필요 없는 경우
+        SamplingInfo {
+            data: ufs_list.to_vec(),
+            total_count,
+            sampled_count: total_count,
+            sampling_ratio: 100.0,
+        }
     } else {
+        // 샘플링이 필요한 경우
         let mut rng = rand::rng();
-        ufs_list
-            .choose_multiple(&mut rng, MAX_PREVIEW_RECORDS)
+        let sampled_data = ufs_list
+            .choose_multiple(&mut rng, max_records)
             .cloned()
-            .collect()
+            .collect();
+        
+        let sampling_ratio = (max_records as f64 / total_count as f64) * 100.0;
+        
+        SamplingInfo {
+            data: sampled_data,
+            total_count,
+            sampled_count: max_records,
+            sampling_ratio,
+        }
     }
 }
 
-pub fn sample_block(block_list: &[Block]) -> Vec<Block> {
-    if block_list.len() <= MAX_PREVIEW_RECORDS {
-        block_list.to_vec()
+pub fn sample_block(block_list: &[Block], max_records: usize) -> SamplingInfo<Block> {
+    let total_count = block_list.len();
+    
+    if total_count <= max_records {
+        // 샘플링이 필요 없는 경우
+        SamplingInfo {
+            data: block_list.to_vec(),
+            total_count,
+            sampled_count: total_count,
+            sampling_ratio: 100.0,
+        }
     } else {
+        // 샘플링이 필요한 경우
         let mut rng = rand::rng();
-        block_list
-            .choose_multiple(&mut rng, MAX_PREVIEW_RECORDS)
+        let sampled_data = block_list
+            .choose_multiple(&mut rng, max_records)
             .cloned()
-            .collect()
+            .collect();
+        
+        let sampling_ratio = (max_records as f64 / total_count as f64) * 100.0;
+        
+        SamplingInfo {
+            data: sampled_data,
+            total_count,
+            sampled_count: max_records,
+            sampling_ratio,
+        }
     }
 }
 
@@ -182,17 +231,38 @@ pub fn initialize_ranges(thresholds: &[String]) -> BTreeMap<String, usize> {
     ranges
 }
 
-// readtrace 함수 - parquet 파일에서 데이터 읽기
-pub async fn readtrace(logname: String) -> Result<String, String> {
+// readtrace 함수 - max_records 매개변수 추가
+pub async fn readtrace(logname: String, max_records: usize) -> Result<String, String> {
     // 캐시 확인: 두 캐시 모두 있는지 확인
     {
         let ufs_cache = UFS_CACHE.lock().map_err(|e| e.to_string())?;
         let block_cache = BLOCK_CACHE.lock().map_err(|e| e.to_string())?;
 
         if ufs_cache.contains_key(&logname) || block_cache.contains_key(&logname) {
+            // Create longer-lived empty vectors to use as default values
+            let empty_ufs_vec: Vec<UFS> = Vec::new();
+            let empty_block_vec: Vec<Block> = Vec::new();
+            
+            let ufs_data = ufs_cache.get(&logname).unwrap_or(&empty_ufs_vec);
+            let block_data = block_cache.get(&logname).unwrap_or(&empty_block_vec);
+            
+            // 캐시된 데이터를 샘플링
+            let ufs_sample_info = sample_ufs(ufs_data, max_records);
+            let block_sample_info = sample_block(block_data, max_records);
+            
             let result_json = serde_json::json!({
-                "ufs": ufs_cache.get(&logname).unwrap_or(&Vec::new()),
-                "block": block_cache.get(&logname).unwrap_or(&Vec::new())
+                "ufs": {
+                    "data": ufs_sample_info.data,
+                    "total_count": ufs_sample_info.total_count,
+                    "sampled_count": ufs_sample_info.sampled_count,
+                    "sampling_ratio": ufs_sample_info.sampling_ratio
+                },
+                "block": {
+                    "data": block_sample_info.data,
+                    "total_count": block_sample_info.total_count,
+                    "sampled_count": block_sample_info.sampled_count,
+                    "sampling_ratio": block_sample_info.sampling_ratio
+                }
             });
             return Ok(result_json.to_string());
         }
@@ -512,13 +582,23 @@ pub async fn readtrace(logname: String) -> Result<String, String> {
     }
 
     // 데이터가 많은 경우 샘플링하여 반환
-    let sampleufs = sample_ufs(&ufs_vec);
-    let sampleblock = sample_block(&block_vec);
+    let ufs_sample_info = sample_ufs(&ufs_vec, max_records);
+    let block_sample_info = sample_block(&block_vec, max_records);
 
     // JSON으로 직렬화하여 반환
     let result_json = serde_json::json!({
-        "ufs": sampleufs,
-        "block": sampleblock
+        "ufs": {
+            "data": ufs_sample_info.data,
+            "total_count": ufs_sample_info.total_count,
+            "sampled_count": ufs_sample_info.sampled_count,
+            "sampling_ratio": ufs_sample_info.sampling_ratio
+        },
+        "block": {
+            "data": block_sample_info.data,
+            "total_count": block_sample_info.total_count,
+            "sampled_count": block_sample_info.sampled_count,
+            "sampling_ratio": block_sample_info.sampling_ratio
+        }
     });
 
     Ok(result_json.to_string())
@@ -628,4 +708,69 @@ pub async fn starttrace(fname: String, logfolder: String) -> Result<TraceParseRe
     .map_err(|e| e.to_string())?;
 
     result
+}
+
+
+pub async fn filter_trace(
+    logname: String,
+    tracetype: String,
+    zoom_column: String,
+    time_from: Option<f64>,
+    time_to: Option<f64>,
+    col_from: Option<f64>,
+    col_to: Option<f64>,
+    max_records: usize,
+) -> Result<String, String> {    
+    // 필터링 및 샘플링 결과를 저장할 변수
+    let result = match tracetype.as_str() {
+        "ufs" => {
+            // UFS 데이터 필터링
+            let ufs_vec = filter_ufs_data(
+                &logname,
+                time_from,
+                time_to,
+                &zoom_column,
+                col_from,
+                col_to,
+            )?;
+            
+            // UFS 데이터 샘플링
+            let ufs_sample_info = sample_ufs(&ufs_vec, max_records);
+            
+            // 샘플링 정보를 JSON으로 직렬화하여 반환
+            serde_json::json!({
+                "data": ufs_sample_info.data,
+                "total_count": ufs_sample_info.total_count,
+                "sampled_count": ufs_sample_info.sampled_count,
+                "sampling_ratio": ufs_sample_info.sampling_ratio,
+                "type": "ufs"
+            }).to_string()
+        },
+        "block" => {
+            // Block 데이터 필터링
+            let block_vec = filter_block_data(
+                &logname,
+                time_from,
+                time_to,
+                &zoom_column,
+                col_from,
+                col_to,
+            )?;
+            
+            // Block 데이터 샘플링
+            let block_sample_info = sample_block(&block_vec, max_records);
+            
+            // 샘플링 정보를 JSON으로 직렬화하여 반환
+            serde_json::json!({
+                "data": block_sample_info.data,
+                "total_count": block_sample_info.total_count,
+                "sampled_count": block_sample_info.sampled_count,
+                "sampling_ratio": block_sample_info.sampling_ratio,
+                "type": "block"
+            }).to_string()
+        },
+        _ => return Err("Unsupported trace type".to_string()),
+    };
+
+    Ok(result)
 }

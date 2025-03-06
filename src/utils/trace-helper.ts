@@ -1,4 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
+import { compareTraceCount, traceSizeCount, traceSaimpleCount } from '$stores/trace';
+import { getBufferSize } from "$api/db";
 
 // 공통으로 사용되는 지연시간 임계값 상수
 export const THRESHOLDS = [
@@ -176,21 +178,46 @@ export async function fetchBlockStats(fileName: string, filterParams: any) {
 /**
  * 필터링된 데이터를 반환하는 함수
  */
-export function filterTraceData(traceData: any, selectedTrace: string, filterParams: any) {
+export async function filterTraceData(logname: string, traceData: any, selectedTrace: string, filterParams: any) {
   const { from_time, to_time, from_lba, to_lba, zoom_column } = filterParams;
-  
-  // 필터가 설정되지 않았으면 원본 데이터 반환
-  if (from_time === 0 && to_time === 0) {
-    return traceData[selectedTrace];
+  console.log(traceData);
+  if (selectedTrace === '') {
+    return null;
   }
-  
-  // 필터 적용
-  return traceData[selectedTrace].filter((item) => {
-    return item.time >= from_time && 
-           item.time <= to_time && 
-           item[zoom_column] >= from_lba && 
-           item[zoom_column] <= to_lba;
-  });
+  if (traceData[selectedTrace].total_count === traceData[selectedTrace].sampled_count) {
+    // 필터가 설정되지 않았으면 원본 데이터 반환
+    if (from_time === 0 && to_time === 0) {
+      return traceData[selectedTrace];
+    }
+    // 필터 적용
+    const filteredData = traceData[selectedTrace].data.filter((item) => {
+      return item.time >= from_time &&
+            item.time <= to_time &&
+            item[zoom_column] >= from_lba &&
+            item[zoom_column] <= to_lba;
+    });
+    traceData[selectedTrace].data = filteredData;
+    return traceData[selectedTrace];
+    
+  } else {
+    // 필터링된 데이터 반환
+    console.log('logname:', logname);
+    console.log('selectedTrace:', selectedTrace);
+    let buffersize = await getBufferSize();
+    const traceStr: string = await invoke('filter_trace', {
+      logname: logname,
+      tracetype: selectedTrace,
+      zoomColumn: zoom_column,
+      from_time: from_time,
+      to_time: to_time,
+      from_lba: from_lba,
+      to_lba: to_lba,
+      maxrecords: buffersize
+    });
+    const filteredData : any = JSON.parse(traceStr);
+    console.log('filteredData:', filteredData);
+    return filteredData;
+  }
 }
 
 /**

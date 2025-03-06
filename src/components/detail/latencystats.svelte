@@ -214,7 +214,7 @@
         <!-- 서머리 그리드 -->
         {#if grid_data_summary.length > 0}
             <div class="mb-6">
-                <div class="text-sm font-medium mb-2">요약 통계</div>
+                <div class="text-sm font-medium mb-2">Descriptive Statistics</div>
                 <Willow>
                     <div style="font-size: 12px;">
                         <Grid bind:data={grid_data_summary} bind:columns={grid_columns_summary}/>
@@ -226,7 +226,7 @@
         <!-- 카운트 그리드 -->
         {#if grid_data.length > 0}
             <div>
-                <div class="text-sm font-medium mb-2">지연 시간별 카운트</div>
+                <div class="text-sm font-medium mb-2">latency count</div>
                 <Willow>
                     <div style="font-size: 12px;">
                         <Grid bind:data={grid_data} bind:columns={grid_columns}/>

@@ -7,7 +7,7 @@
   
   import * as Dialog from "$lib/components/ui/dialog";  
   // import SettingDialog from './menu/setting.svelte';
-  import { AboutDialog, SettingDialog } from './menu';
+  import { AboutDialog, SettingDialog, BufferSizeDialog } from './menu';
   import Trace from './trace.svelte'; // 새로 추가됨
   import { getFolder } from "../api/db.js";
   import { traceFile, Status, traceStatusStore } from '../stores/file.js';
@@ -17,6 +17,7 @@
   const macOS = navigator.userAgent.includes('Macintosh')
   let showAboutDialog = false;
   let showSettingsDialog = false;
+  let showBuffersizeDialog = false;
   let showTraceDialog = false; // 새로 추가됨
 
   async function handleFileOpen() {
@@ -82,6 +83,14 @@
           }
         },
         {
+          text: "buffersize",
+          action: () => {
+            showBuffersizeDialog = false;
+            showBuffersizeDialog = true;
+            console.log('Buffersize setting');
+          }
+        },
+        {
           text: "session clear",
           action: () => {
             clear();
@@ -105,6 +114,7 @@
 </script>
 
 <SettingDialog dialogopen={showSettingsDialog} />
+<BufferSizeDialog dialogopen={showBuffersizeDialog} />
 <AboutDialog open={showAboutDialog}/>
 <Trace dialogopen={showTraceDialog} />
 

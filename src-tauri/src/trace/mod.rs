@@ -19,6 +19,9 @@ pub(crate) static UFS_CACHE: Lazy<Mutex<HashMap<String, Vec<UFS>>>> =
 pub(crate) static BLOCK_CACHE: Lazy<Mutex<HashMap<String, Vec<Block>>>> =
     Lazy::new(|| Mutex::new(HashMap::new()));
 
+// 샘플링 관련 상수 - 기본값 설정
+pub const DEFAULT_PREVIEW_RECORDS: usize = 500_000;
+
 // 정규식 패턴
 static UFS_TRACE_RE: Lazy<Regex> = Lazy::new(|| {
     Regex::new(
@@ -32,13 +35,10 @@ static BLOCK_TRACE_RE: Lazy<Regex> = Lazy::new(|| {
     ).unwrap()
 });
 
-// 샘플링 관련 상수
-const MAX_PREVIEW_RECORDS: usize = 4_000_000;
-
 // Tauri 명령 함수들
 #[tauri::command]
-pub async fn readtrace(logname: String) -> Result<String, String> {
-    utils::readtrace(logname).await
+pub async fn readtrace(logname: String, maxrecords: Option<usize>) -> Result<String, String> {
+    utils::readtrace(logname, maxrecords.unwrap_or(DEFAULT_PREVIEW_RECORDS)).await
 }
 
 #[tauri::command]
@@ -172,4 +172,27 @@ pub async fn export_to_csv(
     output_dir: Option<String>,
 ) -> Result<String, String> {
     export::export_to_csv(parquet_path, output_dir).await
+}
+
+#[tauri::command]
+pub async fn filter_trace(
+    logname: String,
+    tracetype: String,
+    zoom_column: String,
+    time_from: Option<f64>,
+    time_to: Option<f64>,
+    col_from: Option<f64>,
+    col_to: Option<f64>,
+    maxrecords: Option<usize>,
+) -> Result<String, String> {  
+    utils::filter_trace(
+        logname, 
+        tracetype, 
+        zoom_column, 
+        time_from, 
+        time_to, 
+        col_from, 
+        col_to,
+        maxrecords.unwrap_or(DEFAULT_PREVIEW_RECORDS)
+    ).await
 }
