@@ -286,3 +286,38 @@ pub async fn reparse_trace(
     // 파싱 결과를 JSON으로 반환
     serde_json::to_string(&result).map_err(|e| e.to_string())
 }
+
+#[tauri::command]
+pub fn delete_parquet_files(file_paths: Vec<String>) -> Result<(), String> {
+    let mut success_count = 0;
+    let mut error_messages = Vec::new();
+
+    for path in file_paths {
+        if path.trim().is_empty() {
+            continue;
+        }
+
+        let file_path = std::path::Path::new(&path);
+        if file_path.exists() {
+            match std::fs::remove_file(file_path) {
+                Ok(_) => {
+                    println!("Successfully deleted file: {}", path);
+                    success_count += 1;
+                }
+                Err(e) => {
+                    let error_msg = format!("Failed to delete file {}: {}", path, e);
+                    println!("Warning: {}", error_msg);
+                    error_messages.push(error_msg);
+                }
+            }
+        } else {
+            println!("File does not exist: {}", path);
+        }
+    }
+
+    if !error_messages.is_empty() {
+        return Err(error_messages.join("; "));
+    }
+
+    Ok(())
+}

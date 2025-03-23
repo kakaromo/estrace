@@ -57,6 +57,7 @@ pub fn run() {
             trace::delete_pattern,
             // Reparse command
             trace::reparse_trace,
+            trace::delete_parquet_files,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

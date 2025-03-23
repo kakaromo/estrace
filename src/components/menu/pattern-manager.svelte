@@ -1,6 +1,5 @@
 <script lang="ts">
     import { onMount } from 'svelte';
-    import { invoke } from "@tauri-apps/api/core";
     import { message } from "@tauri-apps/plugin-dialog";
     
     import { Button } from "$lib/components/ui/button";
@@ -11,15 +10,20 @@
     import * as Tabs from "$lib/components/ui/tabs";
     import * as Select from "$lib/components/ui/select";
     import { Badge } from "$lib/components/ui/badge";
-    import { Loader2, Plus, Trash2, Save, Check } from 'lucide-svelte';
+    import { Loader2, Plus, Trash2, Save, Check, Edit } from 'lucide-svelte';
+    
+    import { getPatterns, getPatternsByTypeFromDb, addPattern, setActivePattern, deletePatternById, updateExistingPattern } from '$api/pattern';
     
     let { dialogopen } = $props();
     
     interface Pattern {
+        id: number;
         name: string;
-        pattern_type: string;
+        type: string;
         pattern: string;
+        description: string;
         is_active: boolean;
+        created_at: string;
     }
     
     // UI state
@@ -28,10 +32,12 @@
     let activeTab = $state('ufs');
     let isLoading = $state(false);
     let showAddDialog = $state(false);
+    let showEditDialog = $state(false); 
     let showConfirmDialog = $state(false);
     let patternToDelete: Pattern | null = $state(null);
+    let patternToEdit: Pattern | null = $state(null);
     
-    // New pattern form values
+    // New/Edit pattern form values
     let newPatternName = $state('');
     let newPatternType = $state('ufs');
     let newPatternRegex = $state('');
@@ -41,12 +47,12 @@
     async function loadPatterns() {
         isLoading = true;
         try {
-            const patternsJson = await invoke<string>('get_patterns');
-            const patterns: Pattern[] = JSON.parse(patternsJson);
+            // Get all patterns from DB
+            const patterns = await getPatterns();
             
             // Split patterns by type
-            ufsPatterns = patterns.filter(p => p.pattern_type === 'ufs');
-            blockPatterns = patterns.filter(p => p.pattern_type === 'block');
+            ufsPatterns = patterns.filter(p => p.type === 'ufs');
+            blockPatterns = patterns.filter(p => p.type === 'block');
         } catch (error) {
             console.error('Error loading patterns:', error);
             await message('패턴 로딩 중 오류가 발생했습니다: ' + error);
@@ -56,44 +62,52 @@
     }
     
     // Add new pattern
-    async function addPattern() {
+    async function submitPattern() {
         isLoading = true;
         try {
-            await invoke('add_pattern', {
-                name: newPatternName,
-                patternType: newPatternType,
-                pattern: newPatternRegex
-            });
+            if (patternToEdit) {
+                // Update existing pattern
+                await updateExistingPattern(
+                    patternToEdit.id,
+                    newPatternName,
+                    newPatternRegex,
+                    newPatternDescription
+                );
+                await message('패턴이 성공적으로 수정되었습니다.');
+                showEditDialog = false;
+                patternToEdit = null;
+            } else {
+                // Add new pattern
+                await addPattern(
+                    newPatternName,
+                    newPatternType,
+                    newPatternRegex,
+                    newPatternDescription
+                );
+                await message('패턴이 성공적으로 추가되었습니다.');
+                showAddDialog = false;
+            }
             
-            // Clear form and close dialog
-            resetNewPatternForm();
-            showAddDialog = false;
-            
-            // Reload patterns
+            // Clear form and reload patterns
+            resetPatternForm();
             await loadPatterns();
-            await message('패턴이 성공적으로 추가되었습니다.');
         } catch (error) {
-            console.error('Error adding pattern:', error);
-            await message('패턴 추가 중 오류가 발생했습니다: ' + error);
+            console.error('Error with pattern operation:', error);
+            await message('패턴 작업 중 오류가 발생했습니다: ' + error);
         } finally {
             isLoading = false;
         }
     }
     
     // Set active pattern
-    async function setActivePattern(pattern: Pattern) {
-        if (pattern.is_active) return; // Already active
-        
+    async function markAsActive(patternId: number) {
         isLoading = true;
         try {
-            await invoke('set_active_pattern', {
-                name: pattern.name,
-                patternType: pattern.pattern_type
-            });
+            await setActivePattern(patternId);
             
             // Reload patterns
             await loadPatterns();
-            await message(`${pattern.name} 패턴이 활성화되었습니다.`);
+            await message('패턴이 활성화되었습니다.');
         } catch (error) {
             console.error('Error setting active pattern:', error);
             await message('패턴 활성화 중 오류가 발생했습니다: ' + error);
@@ -108,10 +122,7 @@
         
         isLoading = true;
         try {
-            await invoke('delete_pattern', {
-                name: patternToDelete.name,
-                patternType: patternToDelete.pattern_type
-            });
+            await deletePatternById(patternToDelete.id);
             
             // Close confirmation dialog
             showConfirmDialog = false;
@@ -128,6 +139,16 @@
         }
     }
     
+    // Open edit dialog
+    function openEditDialog(pattern: Pattern) {
+        patternToEdit = pattern;
+        newPatternName = pattern.name;
+        newPatternType = pattern.type;
+        newPatternRegex = pattern.pattern;
+        newPatternDescription = pattern.description || '';
+        showEditDialog = true;
+    }
+    
     // Open delete confirmation dialog
     function confirmDelete(pattern: Pattern) {
         if (pattern.is_active) {
@@ -139,17 +160,18 @@
         showConfirmDialog = true;
     }
     
-    // Reset new pattern form
-    function resetNewPatternForm() {
+    // Reset pattern form
+    function resetPatternForm() {
         newPatternName = '';
         newPatternType = activeTab;
         newPatternRegex = '';
         newPatternDescription = '';
+        patternToEdit = null;
     }
     
     // Open add pattern dialog
     function openAddDialog() {
-        resetNewPatternForm();
+        resetPatternForm();
         showAddDialog = true;
     }
     
@@ -203,6 +225,7 @@
                                                     <Badge variant="secondary" class="bg-green-100 text-green-800">활성</Badge>
                                                 {/if}
                                             </div>
+                                            <p class="text-xs text-muted-foreground mt-1">{pattern.description || ''}</p>
                                             <div class="mt-2 text-xs font-mono bg-muted p-2 rounded overflow-x-auto">
                                                 {pattern.pattern}
                                             </div>
@@ -212,11 +235,20 @@
                                                 <Button 
                                                     variant="outline" 
                                                     size="sm" 
-                                                    onclick={() => setActivePattern(pattern)}
+                                                    onclick={() => markAsActive(pattern.id)}
                                                 >
                                                     <Check class="mr-1 h-4 w-4" />
                                                     활성화
                                                 </Button>
+                                            {/if}
+                                            <Button 
+                                                variant="outline" 
+                                                size="sm"
+                                                onclick={() => openEditDialog(pattern)}
+                                            >
+                                                <Edit class="h-4 w-4" />
+                                            </Button>
+                                            {#if !pattern.is_active}
                                                 <Button 
                                                     variant="outline" 
                                                     size="sm"
@@ -263,6 +295,7 @@
                                                     <Badge variant="secondary" class="bg-green-100 text-green-800">활성</Badge>
                                                 {/if}
                                             </div>
+                                            <p class="text-xs text-muted-foreground mt-1">{pattern.description || ''}</p>
                                             <div class="mt-2 text-xs font-mono bg-muted p-2 rounded overflow-x-auto">
                                                 {pattern.pattern}
                                             </div>
@@ -272,11 +305,20 @@
                                                 <Button 
                                                     variant="outline" 
                                                     size="sm" 
-                                                    onclick={() => setActivePattern(pattern)}
+                                                    onclick={() => markAsActive(pattern.id)}
                                                 >
                                                     <Check class="mr-1 h-4 w-4" />
                                                     활성화
                                                 </Button>
+                                            {/if}
+                                            <Button 
+                                                variant="outline" 
+                                                size="sm"
+                                                onclick={() => openEditDialog(pattern)}
+                                            >
+                                                <Edit class="h-4 w-4" />
+                                            </Button>
+                                            {#if !pattern.is_active}
                                                 <Button 
                                                     variant="outline" 
                                                     size="sm"
@@ -321,8 +363,8 @@
             <div class="grid grid-cols-4 items-center gap-4">
                 <Label for="pattern-type" class="text-right">유형</Label>
                 <Select.Root 
-                    onSelectedChange={(v) => newPatternType = v?.value} 
                     value={newPatternType}
+                    onSelectedChange={(v) => v && (newPatternType = v.value)} 
                     class="col-span-3"
                 >
                     <Select.Trigger id="pattern-type" class="w-full">
@@ -360,7 +402,7 @@
             <Button variant="outline" onclick={() => showAddDialog = false} class="mr-2">취소</Button>
             <Button 
                 variant="default" 
-                onclick={addPattern}
+                onclick={submitPattern}
                 disabled={!newPatternName || !newPatternRegex || isLoading}
             >
                 {#if isLoading}
@@ -369,6 +411,62 @@
                 {:else}
                     <Save class="mr-2 h-4 w-4" />
                     저장
+                {/if}
+            </Button>
+        </Dialog.Footer>
+    </Dialog.Content>
+</Dialog.Root>
+
+<!-- Edit Pattern Dialog -->
+<Dialog.Root bind:open={showEditDialog}>
+    <Dialog.Content class="max-w-md">
+        <Dialog.Header>
+            <Dialog.Title>패턴 수정</Dialog.Title>
+            <Dialog.Description>
+                패턴 정보를 수정합니다.
+            </Dialog.Description>
+        </Dialog.Header>
+        
+        <div class="space-y-4 py-4">
+            <div class="grid grid-cols-4 items-center gap-4">
+                <Label for="edit-pattern-name" class="text-right">이름</Label>
+                <Input id="edit-pattern-name" bind:value={newPatternName} class="col-span-3" />
+            </div>
+            
+            <div class="grid grid-cols-4 items-start gap-4">
+                <Label for="edit-pattern-regex" class="text-right pt-2">정규식</Label>
+                <Textarea 
+                    id="edit-pattern-regex" 
+                    bind:value={newPatternRegex} 
+                    class="col-span-3 font-mono text-xs"
+                    rows="6"
+                />
+            </div>
+            
+            <div class="grid grid-cols-4 items-start gap-4">
+                <Label for="edit-pattern-desc" class="text-right pt-2">설명</Label>
+                <Textarea 
+                    id="edit-pattern-desc" 
+                    bind:value={newPatternDescription} 
+                    class="col-span-3"
+                    rows="3"
+                />
+            </div>
+        </div>
+        
+        <Dialog.Footer>
+            <Button variant="outline" onclick={() => showEditDialog = false} class="mr-2">취소</Button>
+            <Button 
+                variant="default" 
+                onclick={submitPattern}
+                disabled={!newPatternName || !newPatternRegex || isLoading}
+            >
+                {#if isLoading}
+                    <Loader2 class="mr-2 h-4 w-4 animate-spin" />
+                    처리 중...
+                {:else}
+                    <Save class="mr-2 h-4 w-4" />
+                    업데이트
                 {/if}
             </Button>
         </Dialog.Footer>

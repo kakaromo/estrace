@@ -1,7 +1,14 @@
 // src/api/pattern.ts
 
 import { invoke } from "@tauri-apps/api/core";
-import { getAllPatterns, getPatternsByType, addPattern as dbAddPattern, updatePattern, setPatternActive, deletePattern } from './db';
+import { 
+    getAllPatterns, 
+    getPatternsByType, 
+    addPattern as dbAddPattern, 
+    updatePattern as dbUpdatePattern, 
+    setPatternActive as dbSetPatternActive, 
+    deletePattern as dbDeletePattern 
+} from './db';
 
 export interface Pattern {
     id: number;
@@ -106,7 +113,7 @@ export async function updateExistingPattern(
         }
         
         // Update in DB
-        await updatePattern(id, name, pattern, description);
+        await dbUpdatePattern(id, name, pattern, description);
         
         // Delete old pattern from Rust backend
         await invoke('delete_pattern', {
@@ -137,7 +144,7 @@ export async function updateExistingPattern(
 export async function setActivePattern(id: number): Promise<void> {
     try {
         // First set active in DB
-        await setPatternActive(id);
+        await dbSetPatternActive(id);
         
         // Get updated pattern info
         const patterns = await getPatterns();
@@ -177,7 +184,7 @@ export async function deletePatternById(id: number): Promise<void> {
         }
         
         // Delete from DB
-        await deletePattern(id);
+        await dbDeletePattern(id);
         
         // Delete from Rust backend
         await invoke('delete_pattern', {

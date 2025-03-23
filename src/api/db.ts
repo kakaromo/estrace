@@ -57,13 +57,14 @@ export async function initial() {
             type TEXT NOT NULL,
             pattern TEXT NOT NULL,
             description TEXT,
-            is_active BOOLEAN DEFAULT 1,
+            is_active BOOLEAN DEFAULT 0,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         );
     `).catch((e) => { console.log('error creating trace_patterns table', e); });
     
     // Insert default patterns if the table is empty
     const patterns = await db.select('SELECT COUNT(*) as count FROM trace_patterns');
+    console.log('Patterns:', patterns);
     if (patterns[0].count === 0) {
         // Default UFS pattern
         await db.execute(`

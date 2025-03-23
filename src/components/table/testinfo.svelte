@@ -59,11 +59,22 @@
                 throw new Error(`테스트 정보를 찾을 수 없습니다 (ID: ${id})`);
             }
 
-            // 원본 로그 파일의 전체 경로 구성
-            // 로그 파일 이름은 title.log 형태로 저장된다고 가정
-            const logFilePath = `${testInfo.logfolder}/${testInfo.title}.log`;
+            // 기존 parquet 파일들의 경로 확인
+            const existingFiles = testInfo.logname ? testInfo.logname.split(',') : [];
             
             console.log(`Reparsing trace: ${testInfo.title} (ID: ${id})`);
+            console.log(`Old parquet files: ${existingFiles.join(', ')}`);
+            
+            // 기존 파일 삭제 - 백엔드에서 처리
+            if (existingFiles.length > 0) {
+                try {
+                    await invoke('delete_parquet_files', { filePaths: existingFiles });
+                    console.log('Successfully deleted old parquet files');
+                } catch (error) {
+                    // 파일 삭제 실패해도 계속 진행
+                    console.warn('Error deleting old files:', error);
+                }
+            }
             
             // 백엔드 호출하여 재파싱 실행
             const result = await invoke<string>('reparse_trace', {
