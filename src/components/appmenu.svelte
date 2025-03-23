@@ -7,7 +7,7 @@
   
   import * as Dialog from "$lib/components/ui/dialog";  
   // import SettingDialog from './menu/setting.svelte';
-  import { AboutDialog, SettingDialog, BufferSizeDialog } from './menu';
+  import { AboutDialog, SettingDialog, BufferSizeDialog, PatternManagerDialog } from './menu';
   import Trace from './trace.svelte'; // 새로 추가됨
   import { getFolder } from "../api/db.js";
   import { traceFile, Status, traceStatusStore } from '../stores/file.js';
@@ -19,6 +19,7 @@
   let showSettingsDialog = false;
   let showBuffersizeDialog = false;
   let showTraceDialog = false; // 새로 추가됨
+  let showPatternManagerDialog = false; // 새로 추가됨
 
   async function handleFileOpen() {
     try {
@@ -75,7 +76,7 @@
       text: "Setting",
       items: [
         {
-          text: "setting",
+          text: "Setting",
           action: () => {
             showSettingsDialog = false;
             showSettingsDialog = true;
@@ -83,7 +84,7 @@
           }
         },
         {
-          text: "buffersize",
+          text: "Buffer Size",
           action: () => {
             showBuffersizeDialog = false;
             showBuffersizeDialog = true;
@@ -91,7 +92,15 @@
           }
         },
         {
-          text: "session clear",
+          text: "Pattern Manager",
+          action: () => {
+            showPatternManagerDialog = false;
+            showPatternManagerDialog = true;
+            console.log('Pattern manager');
+          }
+        },
+        {
+          text: "Session Clear",
           action: () => {
             clear();
             console.log('session clear');
@@ -115,49 +124,6 @@
 
 <SettingDialog dialogopen={showSettingsDialog} />
 <BufferSizeDialog dialogopen={showBuffersizeDialog} />
+<PatternManagerDialog dialogopen={showPatternManagerDialog} />
 <AboutDialog open={showAboutDialog}/>
 <Trace dialogopen={showTraceDialog} />
-
-<!-- shadcn Dialog를 이용해 Trace 컴포넌트를 다이얼로그로 띄움 -->
-<!-- <Dialog.Root open={showTraceDialog} onOpenChange={(val) => showTraceDialog = val}>
-  <Dialog.DialogContent>
-    <Trace />
-    <Dialog.DialogClose>
-      <button class="btn">닫기</button>
-    </Dialog.DialogClose>
-  </Dialog.DialogContent>
-</Dialog.Root> -->
-
-<!-- <Dialog.Root bind:open={showSettingsDialog}>
-  <Dialog.DialogContent>
-    <Dialog.DialogHeader>
-      <Dialog.DialogTitle>Settings</Dialog.DialogTitle>
-      <Dialog.DialogDescription>
-        설정 내용을 구성해 주세요.
-      </Dialog.DialogDescription>
-    </Dialog.DialogHeader>
-    <div class="mt-4 flex justify-end">
-      <Dialog.DialogClose>
-        <button class="btn">닫기</button>
-      </Dialog.DialogClose>
-    </div>
-  </Dialog.DialogContent>
-</Dialog.Root> -->
-
-
-<!-- <Menubar.Root>
-  <Menubar.Menu>
-    <Menubar.Trigger>File</Menubar.Trigger>
-    <Menubar.Content>
-      <Menubar.Item>
-        New Tab
-        <Menubar.Shortcut>⌘T</Menubar.Shortcut>
-      </Menubar.Item>
-      <Menubar.Item>New Window</Menubar.Item>
-      <Menubar.Separator />
-      <Menubar.Item>Share</Menubar.Item>
-      <Menubar.Separator />
-      <Menubar.Item>Print</Menubar.Item>
-    </Menubar.Content>
-  </Menubar.Menu>
-</Menubar.Root> -->

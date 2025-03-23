@@ -15,81 +15,8 @@ use crate::trace::utils::{
 };
 use crate::trace::{
     Block, ContinuityCount, ContinuityStats, LatencyStat, LatencyStats, LatencyValue, SizeStats,
-    TotalContinuity, BLOCK_TRACE_RE,
+    TotalContinuity
 };
-
-// Block Trace 파싱 함수
-pub fn parse_block_trace(line: &str) -> Result<Block, String> {
-    let caps = BLOCK_TRACE_RE.captures(line).ok_or("No match")?;
-    let time = caps
-        .name("time")
-        .and_then(|m| m.as_str().parse::<f64>().ok())
-        .ok_or("time parse error")?;
-    let process = caps
-        .name("process")
-        .map(|m| m.as_str().to_string())
-        .unwrap_or_default();
-    let cpu = caps
-        .name("cpu")
-        .and_then(|m| m.as_str().parse::<u32>().ok())
-        .ok_or("cpu parse error")?;
-    let flags = caps
-        .name("flags")
-        .map(|m| m.as_str().to_string())
-        .unwrap_or_default();
-    let action = caps
-        .name("action")
-        .map(|m| m.as_str().to_string())
-        .unwrap_or_default();
-    let devmajor = caps
-        .name("devmajor")
-        .and_then(|m| m.as_str().parse::<u32>().ok())
-        .ok_or("devmajor error")?;
-    let devminor = caps
-        .name("devminor")
-        .and_then(|m| m.as_str().parse::<u32>().ok())
-        .ok_or("devminor error")?;
-    let io_type = caps
-        .name("io_type")
-        .map(|m| m.as_str().to_string())
-        .unwrap_or_default();
-    let extra = caps
-        .name("extra")
-        .map_or(0, |m| m.as_str().parse().unwrap_or(0));
-    let sector = if &caps["sector"] == "18446744073709551615" {
-        0 // 최대값은 0으로 처리
-    } else {
-        caps["sector"].parse().unwrap_or(0)
-    };
-    let size = caps
-        .name("size")
-        .and_then(|m| m.as_str().parse::<u32>().ok())
-        .ok_or("size error")?;
-    let comm = caps
-        .name("comm")
-        .map(|m| m.as_str().to_string())
-        .unwrap_or_default();
-
-    Ok(Block {
-        time,
-        process,
-        cpu,
-        flags,
-        action,
-        devmajor,
-        devminor,
-        io_type,
-        extra,
-        sector,
-        size,
-        comm,
-        qd: 0,
-        dtoc: 0.0,
-        ctoc: 0.0,
-        ctod: 0.0,
-        continuous: false,
-    })
-}
 
 // Block 레이턴시 후처리 함수
 pub fn block_bottom_half_latency_process(block_list: Vec<Block>) -> Vec<Block> {

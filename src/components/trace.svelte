@@ -127,11 +127,16 @@
                 dialogopen = false; // 핸들러 종료 후 dialog off
                 return;
             }
-            let filename = parsed.ufs_parquet_filename 
+            
+            // Save test info and get the ID
+            let filename = parsed.ufs_parquet_filename;
             if (parsed.block_parquet_filename) {
                 filename = filename + "," + parsed.block_parquet_filename;
             }
-            await setTestInfo(logtype, title, content, logfolder, filename);
+            
+            // Save with source log path included
+            await setTestInfo(logtype, title, content, logfolder, filename, fileName);
+            
             await message(`Trace가 성공적으로 완료되었습니다. (총 소요시간: ${formatElapsedTime(elapsedSeconds)})`);
             traceStatusStore.set(Status.Success); // 상태를 명확히 Success로 설정
             // 잠시 대기 후 다이얼로그 닫기 (UI 업데이트 시간 확보)

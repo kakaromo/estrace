@@ -1,3 +1,5 @@
+// src-tauri/src/lib.rs
+
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
 #![cfg_attr(
     all(not(debug_assertions), target_os = "windows"),
@@ -26,6 +28,9 @@ pub fn run() {
         *block_cache = HashMap::new();
     }
 
+    // Initialize default patterns - 수정된 호출 방식
+    trace::initialize_patterns();
+
     tauri::Builder::default()
         .plugin(tauri_plugin_os::init())
         .plugin(tauri_plugin_fs::init())
@@ -44,6 +49,14 @@ pub fn run() {
             trace::block_continuity_stats,
             trace::export_to_csv,
             trace::filter_trace,
+            // Pattern management commands
+            trace::add_pattern,
+            trace::set_active_pattern,
+            trace::get_patterns,
+            trace::get_active_patterns,
+            trace::delete_pattern,
+            // Reparse command
+            trace::reparse_trace,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

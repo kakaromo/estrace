@@ -5,10 +5,12 @@
   import { onMount } from 'svelte';
   import { initial, getAllTestInfo } from "../api/db.js";
   import { Status, traceStatusStore } from '../stores/file.js';
-  import { clear } from 'idb-keyval'
+  import { clear } from 'idb-keyval';
+  import { syncPatterns } from '../api/pattern.js';
 
   let name = $state("");
   let greetMsg = $state("");
+  let isInitializing = $state(true);
 
   async function greet(event: Event) {
     event.preventDefault();
@@ -22,17 +24,37 @@
       await clear();
       (window as any).__idbCleared = true;
     }
-    await initial();   
-    await getAllTestInfo();  
-  });
 
-  
+    try {
+      // Initialize the database
+      await initial();
+      
+      // Sync patterns from DB to Rust backend
+      await syncPatterns();
+      
+      // Load test info
+      await getAllTestInfo();
+    } catch (error) {
+      console.error('Error during initialization:', error);
+    } finally {
+      isInitializing = false;
+    }
+  });
 </script>
 
-<div class="hedden md:block">
-  <AppMenu />
-  <TestInfo />
-</div>
+{#if isInitializing}
+  <div class="flex justify-center items-center h-screen">
+    <div class="flex flex-col items-center">
+      <div class="animate-spin h-10 w-10 border-4 border-blue-500 rounded-full border-t-transparent"></div>
+      <p class="mt-4 text-gray-700">애플리케이션을 초기화하는 중...</p>
+    </div>
+  </div>
+{:else}
+  <div class="hedden md:block">
+    <AppMenu />
+    <TestInfo />
+  </div>
+{/if}
 
 
 <!-- <main class="container">  

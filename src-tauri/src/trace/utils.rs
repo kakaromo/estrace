@@ -12,14 +12,16 @@ use tauri::async_runtime::spawn_blocking;
 use serde::Serialize;
 
 use crate::trace::block::{
-    block_bottom_half_latency_process, parse_block_trace, save_block_to_parquet,
+    block_bottom_half_latency_process, save_block_to_parquet,
 };
-use crate::trace::ufs::{parse_ufs_trace, save_ufs_to_parquet, ufs_bottom_half_latency_process};
+use crate::trace::ufs::{save_ufs_to_parquet, ufs_bottom_half_latency_process};
 use crate::trace::{
     Block, LatencySummary, TraceParseResult, BLOCK_CACHE, UFS, UFS_CACHE,
 };
 
 use crate::trace::filter::{filter_ufs_data, filter_block_data};
+
+use super::{ACTIVE_UFS_PATTERN, ACTIVE_BLOCK_PATTERN};
 
 // 샘플링 결과를 담는 구조체
 #[derive(Serialize, Debug, Clone)]
@@ -627,6 +629,17 @@ pub async fn starttrace(fname: String, logfolder: String) -> Result<TraceParseRe
         // 라인별 병렬 처리
         let lines: Vec<&str> = content.lines().collect();
         let total_lines = lines.len();
+        
+        // 현재 활성화된 패턴 가져오기
+        let active_ufs_pattern = match ACTIVE_UFS_PATTERN.read() {
+            Ok(pattern) => pattern,
+            Err(e) => return Err(format!("UFS 패턴 로드 실패: {}", e)),
+        };
+        
+        let active_block_pattern = match ACTIVE_BLOCK_PATTERN.read() {
+            Ok(pattern) => pattern,
+            Err(e) => return Err(format!("Block 패턴 로드 실패: {}", e)),
+        };
 
         // 청크 단위 처리 (메모리 효율성)
         for chunk_start in (0..total_lines).step_by(chunk_size) {
@@ -643,13 +656,25 @@ pub async fn starttrace(fname: String, logfolder: String) -> Result<TraceParseRe
                     if line.trim().is_empty() {
                         return (Vec::new(), Vec::new(), vec![line_number]);
                     }
-                    if let Ok(ufs) = parse_ufs_trace(line) {
-                        (vec![ufs], Vec::new(), Vec::new())
-                    } else if let Ok(block) = parse_block_trace(line) {
-                        (Vec::new(), vec![block], Vec::new())
-                    } else {
-                        (Vec::new(), Vec::new(), vec![line_number])
+                    
+                    // UFS 패턴으로 파싱 시도
+                    let ufs_caps = active_ufs_pattern.1.captures(line);
+                    if let Some(caps) = ufs_caps {
+                        if let Ok(ufs) = parse_ufs_trace_with_caps(&caps) {
+                            return (vec![ufs], Vec::new(), Vec::new());
+                        }
                     }
+                    
+                    // Block 패턴으로 파싱 시도
+                    let block_caps = active_block_pattern.1.captures(line);
+                    if let Some(caps) = block_caps {
+                        if let Ok(block) = parse_block_trace_with_caps(&caps) {
+                            return (Vec::new(), vec![block], Vec::new());
+                        }
+                    }
+                    
+                    // 어떤 패턴과도 일치하지 않음
+                    (Vec::new(), Vec::new(), vec![line_number])
                 })
                 .reduce(
                     || {
@@ -683,20 +708,28 @@ pub async fn starttrace(fname: String, logfolder: String) -> Result<TraceParseRe
         let timestamp = now.format("%Y%m%d_%H%M%S").to_string();
 
         // 파싱된 UFS 로그를 parquet 파일로 저장
-        let ufs_parquet_filename = save_ufs_to_parquet(
-            &processed_ufs_list,
-            logfolder.clone(),
-            fname.clone(),
-            &timestamp,
-        )?;
+        let ufs_parquet_filename = if !processed_ufs_list.is_empty() {
+            save_ufs_to_parquet(
+                &processed_ufs_list,
+                logfolder.clone(),
+                fname.clone(),
+                &timestamp,
+            )?
+        } else {
+            String::new()
+        };
 
         // Block trace 로그를 parquet 파일로 저장
-        let block_parquet_filename = save_block_to_parquet(
-            &processed_block_list,
-            logfolder.clone(),
-            fname.clone(),
-            &timestamp,
-        )?;
+        let block_parquet_filename = if !processed_block_list.is_empty() {
+            save_block_to_parquet(
+                &processed_block_list,
+                logfolder.clone(),
+                fname.clone(),
+                &timestamp,
+            )?
+        } else {
+            String::new()
+        };
 
         Ok(TraceParseResult {
             missing_lines,
@@ -708,6 +741,129 @@ pub async fn starttrace(fname: String, logfolder: String) -> Result<TraceParseRe
     .map_err(|e| e.to_string())?;
 
     result
+}
+
+// Captures가 이미 있는 경우 UFS 파싱 (중복 코드 방지)
+pub fn parse_ufs_trace_with_caps(caps: &regex::Captures) -> Result<UFS, String> {
+    if caps.len() < 11 {
+        return Err(format!("UFS trace pattern has insufficient capture groups: {}", caps.len()));
+    }
+    
+    let process = &caps[1];
+    let cpu_str = &caps[2];
+    let time_str = &caps[3];
+    let action = &caps[4];
+    let tag_str = &caps[5];
+    let size_str = &caps[6];
+    let lba_str = &caps[7];
+    let opcode = &caps[8];
+    let groupid_str = &caps[9];
+    let hwqid_str = &caps[10];
+
+    let time: f64 = time_str.parse::<f64>().map_err(|e| e.to_string())?;
+    let cpu: u32 = cpu_str.parse::<u32>().map_err(|e| e.to_string())?;
+    let tag: u32 = tag_str.parse::<u32>().map_err(|e| e.to_string())?;
+    let size: i32 = size_str.parse::<i32>().map_err(|e| e.to_string())?;
+    // byte를 4KB 단위로 변환 (4096 bytes = 4KB)
+    let size: u32 = (size.abs() as u32) / 4096;
+    let lba: u64 = lba_str.parse::<u64>().map_err(|e| e.to_string())?;
+    let groupid: u32 = u32::from_str_radix(groupid_str, 16).map_err(|e| e.to_string())?;
+    let hwqid: u32 = hwqid_str.parse::<u32>().map_err(|e| e.to_string())?;
+
+    Ok(UFS {
+        time,
+        process: process.to_string(),
+        cpu,
+        action: action.to_string(),
+        tag,
+        opcode: opcode.to_string(),
+        lba,
+        size,
+        groupid,
+        hwqid,
+        qd: 0,
+        dtoc: 0.0,
+        ctoc: 0.0,
+        ctod: 0.0,
+        continuous: false,
+    })
+}
+
+// Captures가 이미 있는 경우 Block 파싱 (중복 코드 방지)
+pub fn parse_block_trace_with_caps(caps: &regex::Captures) -> Result<Block, String> {
+    // Named captures 사용
+    let time = caps
+        .name("time")
+        .and_then(|m| m.as_str().parse::<f64>().ok())
+        .ok_or("time parse error")?;
+    let process = caps
+        .name("process")
+        .map(|m| m.as_str().to_string())
+        .unwrap_or_default();
+    let cpu = caps
+        .name("cpu")
+        .and_then(|m| m.as_str().parse::<u32>().ok())
+        .ok_or("cpu parse error")?;
+    let flags = caps
+        .name("flags")
+        .map(|m| m.as_str().to_string())
+        .unwrap_or_default();
+    let action = caps
+        .name("action")
+        .map(|m| m.as_str().to_string())
+        .unwrap_or_default();
+    let devmajor = caps
+        .name("devmajor")
+        .and_then(|m| m.as_str().parse::<u32>().ok())
+        .ok_or("devmajor error")?;
+    let devminor = caps
+        .name("devminor")
+        .and_then(|m| m.as_str().parse::<u32>().ok())
+        .ok_or("devminor error")?;
+    let io_type = caps
+        .name("io_type")
+        .map(|m| m.as_str().to_string())
+        .unwrap_or_default();
+    let extra = caps
+        .name("extra")
+        .map_or(0, |m| m.as_str().parse().unwrap_or(0));
+    
+    // For sector, we need to handle the special case of max value
+    let sector_str = caps.name("sector").map(|m| m.as_str()).unwrap_or("0");
+    let sector = if sector_str == "18446744073709551615" {
+        0 // 최대값은 0으로 처리
+    } else {
+        sector_str.parse().unwrap_or(0)
+    };
+    
+    let size = caps
+        .name("size")
+        .and_then(|m| m.as_str().parse::<u32>().ok())
+        .ok_or("size error")?;
+    let comm = caps
+        .name("comm")
+        .map(|m| m.as_str().to_string())
+        .unwrap_or_default();
+
+    Ok(Block {
+        time,
+        process,
+        cpu,
+        flags,
+        action,
+        devmajor,
+        devminor,
+        io_type,
+        extra,
+        sector,
+        size,
+        comm,
+        qd: 0,
+        dtoc: 0.0,
+        ctoc: 0.0,
+        ctod: 0.0,
+        continuous: false,
+    })
 }
 
 

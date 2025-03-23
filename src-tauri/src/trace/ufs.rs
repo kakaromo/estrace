@@ -15,53 +15,8 @@ use crate::trace::utils::{
 };
 use crate::trace::{
     ContinuityCount, ContinuityStats, LatencyStat, LatencyStats, LatencyValue, SizeStats,
-    TotalContinuity, UFS, UFS_TRACE_RE,
+    TotalContinuity, UFS
 };
-
-// UFS Trace 파싱 함수
-pub fn parse_ufs_trace(line: &str) -> Result<UFS, String> {
-    let caps = UFS_TRACE_RE
-        .captures(line)
-        .ok_or("No match for UFS trace")?;
-    let process = &caps[1];
-    let cpu_str = &caps[2];
-    let time_str = &caps[3];
-    let action = &caps[4];
-    let tag_str = &caps[5];
-    let size_str = &caps[6];
-    let lba_str = &caps[7];
-    let opcode = &caps[8];
-    let groupid_str = &caps[9];
-    let hwqid_str = &caps[10];
-
-    let time: f64 = time_str.parse::<f64>().map_err(|e| e.to_string())?;
-    let cpu: u32 = cpu_str.parse::<u32>().map_err(|e| e.to_string())?;
-    let tag: u32 = tag_str.parse::<u32>().map_err(|e| e.to_string())?;
-    let size: i32 = size_str.parse::<i32>().map_err(|e| e.to_string())?;
-    // byte를 4KB 단위로 변환 (4096 bytes = 4KB)
-    let size: u32 = (size.abs() as u32) / 4096;
-    let lba: u64 = lba_str.parse::<u64>().map_err(|e| e.to_string())?;
-    let groupid: u32 = u32::from_str_radix(groupid_str, 16).map_err(|e| e.to_string())?;
-    let hwqid: u32 = hwqid_str.parse::<u32>().map_err(|e| e.to_string())?;
-
-    Ok(UFS {
-        time,
-        process: process.to_string(),
-        cpu,
-        action: action.to_string(),
-        tag,
-        opcode: opcode.to_string(),
-        lba,
-        size, // 이미 4KB 단위
-        groupid,
-        hwqid,
-        qd: 0,
-        dtoc: 0.0,
-        ctoc: 0.0,
-        ctod: 0.0,
-        continuous: false,
-    })
-}
 
 // UFS 레이턴시 후처리 함수
 pub fn ufs_bottom_half_latency_process(mut ufs_list: Vec<UFS>) -> Vec<UFS> {
