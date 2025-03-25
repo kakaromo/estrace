@@ -745,6 +745,7 @@ pub async fn starttrace(fname: String, logfolder: String) -> Result<TraceParseRe
 
 // Captures가 이미 있는 경우 UFS 파싱 (중복 코드 방지)
 pub fn parse_ufs_trace_with_caps(caps: &regex::Captures) -> Result<UFS, String> {
+    println!("Captures: {:?}", caps);
     if caps.len() < 11 {
         return Err(format!("UFS trace pattern has insufficient capture groups: {}", caps.len()));
     }

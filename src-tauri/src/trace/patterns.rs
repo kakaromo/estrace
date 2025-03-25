@@ -14,6 +14,21 @@ pub struct Pattern {
     pub is_active: bool,
 }
 
+// 정규식 테스트를 위한 구조체들
+#[derive(Debug, Serialize, Deserialize)]
+pub struct RegexTestResult {
+    pub success: bool,
+    pub error: Option<String>,
+    pub matches: Option<Vec<RegexMatch>>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct RegexMatch {
+    pub full_match: String,
+    pub captures: Vec<String>,
+    pub groups: Option<HashMap<String, String>>,
+}
+
 /// Add a new pattern to the appropriate cache
 pub fn add_pattern(
     name: String,
@@ -219,4 +234,74 @@ pub fn initialize_patterns() {
     
     let mut block_patterns = BLOCK_PATTERNS.write().unwrap();
     block_patterns.insert("Default Block Pattern".to_string(), default_block_pattern);
+}
+
+/// Test a regex pattern against a text
+pub fn test_regex_pattern(text: String, pattern: String) -> Result<String, String> {
+    // 정규식 컴파일 시도
+    let regex = match Regex::new(&pattern) {
+        Ok(re) => re,
+        Err(e) => {
+            let result = RegexTestResult {
+                success: false,
+                error: Some(format!("Invalid regex pattern: {}", e)),
+                matches: None,
+            };
+            return serde_json::to_string(&result).map_err(|e| e.to_string());
+        }
+    };
+    
+    // 텍스트 분할 (각 라인별로)
+    let lines: Vec<&str> = text.lines().collect();
+    
+    // 매치 결과 수집
+    let mut matches = Vec::new();
+    
+    // 각 라인에 대해 매치 시도
+    for line in lines {
+        // 빈 라인은 건너뛰기
+        if line.trim().is_empty() {
+            continue;
+        }
+        
+        // 라인에 패턴 적용
+        if let Some(caps) = regex.captures(line) {
+            let mut match_result = RegexMatch {
+                full_match: caps.get(0).map_or("", |m| m.as_str()).to_string(),
+                captures: Vec::new(),
+                groups: None,
+            };
+            
+            // 캡처 그룹 추출
+            for i in 0..caps.len() {
+                match_result.captures.push(
+                    caps.get(i).map_or("".to_string(), |m| m.as_str().to_string())
+                );
+            }
+            
+            // 명명된 그룹이 있는지 확인하고 추출
+            let mut named_groups = HashMap::new();
+            let has_named_groups = regex.capture_names().any(|name| name.is_some());
+            
+            if has_named_groups {
+                for name in regex.capture_names().flatten() {
+                    if let Some(m) = caps.name(name) {
+                        named_groups.insert(name.to_string(), m.as_str().to_string());
+                    }
+                }
+                match_result.groups = Some(named_groups);
+            }
+            
+            matches.push(match_result);
+        }
+    }
+    
+    // 결과 생성
+    let result = RegexTestResult {
+        success: true,
+        error: None,
+        matches: if matches.is_empty() { None } else { Some(matches) },
+    };
+    
+    serde_json::to_string(&result).map_err(|e| e.to_string())
 }

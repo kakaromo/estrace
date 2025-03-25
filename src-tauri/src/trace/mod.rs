@@ -289,7 +289,7 @@ pub async fn reparse_trace(
 
 #[tauri::command]
 pub fn delete_parquet_files(file_paths: Vec<String>) -> Result<(), String> {
-    let mut success_count = 0;
+    let mut _success_count = 0;
     let mut error_messages = Vec::new();
 
     for path in file_paths {
@@ -302,7 +302,7 @@ pub fn delete_parquet_files(file_paths: Vec<String>) -> Result<(), String> {
             match std::fs::remove_file(file_path) {
                 Ok(_) => {
                     println!("Successfully deleted file: {}", path);
-                    success_count += 1;
+                    _success_count += 1;
                 }
                 Err(e) => {
                     let error_msg = format!("Failed to delete file {}: {}", path, e);
@@ -320,4 +320,12 @@ pub fn delete_parquet_files(file_paths: Vec<String>) -> Result<(), String> {
     }
 
     Ok(())
+}
+
+#[tauri::command]
+pub fn test_regex_pattern(
+    text: String,
+    pattern: String,
+) -> Result<String, String> {
+    patterns::test_regex_pattern(text, pattern)
 }

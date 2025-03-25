@@ -7,7 +7,7 @@
   
   import * as Dialog from "$lib/components/ui/dialog";  
   // import SettingDialog from './menu/setting.svelte';
-  import { AboutDialog, SettingDialog, BufferSizeDialog, PatternManagerDialog } from './menu';
+  import { AboutDialog, SettingDialog, BufferSizeDialog, PatternManagerDialog, PatternTesterDialog } from './menu';
   import Trace from './trace.svelte'; // 새로 추가됨
   import { getFolder } from "../api/db.js";
   import { traceFile, Status, traceStatusStore } from '../stores/file.js';
@@ -20,6 +20,7 @@
   let showBuffersizeDialog = false;
   let showTraceDialog = false; // 새로 추가됨
   let showPatternManagerDialog = false; // 새로 추가됨
+  let showPatternTesterDialog = false; // 새로 추가됨
 
   async function handleFileOpen() {
     try {
@@ -100,6 +101,14 @@
           }
         },
         {
+          text: "Pattern Tester",
+          action: () => {
+            showPatternTesterDialog = false;
+            showPatternTesterDialog = true;
+            console.log('Pattern tester');
+          }
+        },
+        {
           text: "Session Clear",
           action: () => {
             clear();
@@ -125,5 +134,6 @@
 <SettingDialog dialogopen={showSettingsDialog} />
 <BufferSizeDialog dialogopen={showBuffersizeDialog} />
 <PatternManagerDialog dialogopen={showPatternManagerDialog} />
+<PatternTesterDialog dialogopen={showPatternTesterDialog} />
 <AboutDialog open={showAboutDialog}/>
 <Trace dialogopen={showTraceDialog} />
