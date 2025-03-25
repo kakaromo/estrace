@@ -167,8 +167,11 @@
             <div class="table-body">
                 <VirtualList items={testData} let:item height="calc(100vh - 200px)" itemHeight={36}>
                     <div 
-                        class="table-row hover:bg-gray-100" 
+                        class="table-row hover:bg-gray-100"
+                        role="button"
+                        tabindex="0" 
                         onclick={() => handleRowClick(item)}
+                        onkeydown={(e) => e.key === 'Enter' && handleRowClick(item)}
                     >
                         <div class="cell" style="width: {columnWidths.id}">{item.id}</div>
                         <div class="cell" style="width: {columnWidths.title}">
