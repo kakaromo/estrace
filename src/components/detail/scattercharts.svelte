@@ -90,6 +90,30 @@
     '#FFFF00', '#FFFF33', '#FFFF66', '#FFFF99', '#FFFFCC'
   ];
 
+  // CPU 색상 팔레트 - 0-7 무지개색, 나머지는 구분 가능한 색상들
+  const CPU_PALETTE = [
+    '#FF0000', // 빨간색 (CPU 0)
+    '#FF7F00', // 주황색 (CPU 1)
+    '#FFFF00', // 노란색 (CPU 2)
+    '#00FF00', // 초록색 (CPU 3)
+    '#0000FF', // 파란색 (CPU 4)
+    '#4B0082', // 남색/인디고 (CPU 5)
+    '#8B00FF', // 보라색 (CPU 6)
+    '#FF00FF', // 자홍색/마젠타 (CPU 7)
+    '#1f77b4', // 기존 색상 (CPU 8+)
+    '#ff7f0e',
+    '#2ca02c',
+    '#d62728',
+    '#9467bd', 
+    '#8c564b',
+    '#e377c2',
+    '#7f7f7f',
+    '#bcbd22',
+    '#17becf',
+    '#aec7e8',
+    '#ffbb78'
+  ];
+
   // 색상 매핑 객체 및 인덱스
   let blockWriteMapping = {};
   let blockReadMapping = {};
@@ -158,8 +182,27 @@
     return '#' + Math.floor(Math.random() * 16777215).toString(16);
   }
 
+  // CPU 색상 매핑용 객체 추가
+  let cpuColorMapping = {};
+
   function getColorForLegend(legend) {
     if (typeof legend !== 'string') return getRandomColor();
+    // CPU 레전드 처리 - 레전드가 숫자인 경우 CPU로 간주
+    if (legendKey === 'cpu') {
+      // CPU 색상 매핑
+      if (!(legend in cpuColorMapping)) {
+        const cpuNum = parseInt(legend);
+        console.log('cpuNum:', cpuNum);
+        if (!isNaN(cpuNum)) {
+          // CPU 번호에 맞는 색상 할당 (순환)
+          cpuColorMapping[legend] = CPU_PALETTE[cpuNum % CPU_PALETTE.length];
+        } else {
+          // 숫자가 아닌 경우 임의 색상
+          cpuColorMapping[legend] = getRandomColor();
+        }
+      }
+      return cpuColorMapping[legend];
+    }
 
     // UFS 명령어 확인
     if (legend.toLowerCase().startsWith('0x')) {
@@ -240,60 +283,79 @@
   let legends = [];
   
   // 차트 데이터 준비 함수
-  function prepareChartData() {
-    let seriesData = {};
-    if (!data) return [];
+function prepareChartData() {
+  let seriesData = {};
+  if (!data) return [];
+  
+  data.forEach(item => {
+    const x = parseFloat(item[xAxisKey]);
+    const y = parseFloat(item[yAxisKey]);
     
-    data.forEach(item => {
-      const x = parseFloat(item[xAxisKey]);
-      const y = parseFloat(item[yAxisKey]);
+    // Block 및 UFS 데이터에 대한 필터링 로직 추가
+    // action 필드는 UFS에서는 'command', Block에서는 'action'으로 사용됨
+    const action = item.action || item.command || '';
 
-      if (!isNaN(x) && !isNaN(y)) {
-        const legend = item[legendKey];
-        if (!seriesData[legend]) seriesData[legend] = [];
-        seriesData[legend].push([x, y]);
+    // Block 데이터는 block_rq_issue 또는 block_rq_complete로 식별
+    if (ycolumn === 'dtoc' || ycolumn === 'ctoc') {
+      // 만약 ctod 차트라면 complete 응답만 포함
+      // UFS는 complete_rsp, Block은 block_rq_complete
+      if (!(action === 'complete_rsp' || action === 'block_rq_complete')) {
+        return; // 필터링된 데이터는 건너뜀
       }
-    });
-    
-    // x 값 기준 정렬
-    Object.keys(seriesData).forEach(legend => {
-      seriesData[legend].sort((a, b) => a[0] - b[0]);
-    });
+    } else {
+      // 그 외 차트는 issue/send 요청만 포함
+      // UFS는 send_req, Block은 block_rq_issue
+      if (!(action === 'send_req' || action === 'block_rq_issue')) {
+        return; // 필터링된 데이터는 건너뜀
+      }
+    }
 
-    // 범례 설정 및 정렬
-    legends = sortLegends(Object.keys(seriesData));
-    legends.forEach(legend => {
-      seriesColorMap[legend] = getColorForLegend(legend);
-    });
-    
-    globalSeriesData = seriesData;
-    
-    // 시리즈 생성
-    return legends.map(legend => {
-      return {
-        name: legend,
-        type: 'scatter',
-        large: true,
-        largeThreshold: 2000,
-        animation: true,
-        animationDuration: 1500,
-        animationEasing: 'cubicOut',
-        animationDelay: function(idx) {
-          return idx * 5;
-        },
-        animationDurationUpdate: 300,
-        animationEasingUpdate: 'cubicInOut',
-        animationDelayUpdate: function(idx) {
-          return idx * 5;
-        },
-        symbolSize: symbolSize,
-        data: seriesData[legend],
-        itemStyle: {
-          color: seriesColorMap[legend]
-        }
+    if (!isNaN(x) && !isNaN(y)) {
+      const legend = item[legendKey];
+      if (!seriesData[legend]) seriesData[legend] = [];
+      seriesData[legend].push([x, y]);
+    }
+  });
+  
+  // x 값 기준 정렬
+  Object.keys(seriesData).forEach(legend => {
+    seriesData[legend].sort((a, b) => a[0] - b[0]);
+  });
+
+  // 범례 설정 및 정렬
+  legends = sortLegends(Object.keys(seriesData));
+  legends.forEach(legend => {
+    seriesColorMap[legend] = getColorForLegend(legend);
+  });
+  
+  globalSeriesData = seriesData;
+  
+  // 시리즈 생성
+  return legends.map(legend => {
+    return {
+      name: legend,
+      type: 'scatter',
+      large: true,
+      largeThreshold: 2000,
+      animation: true,
+      animationDuration: 1500,
+      animationEasing: 'cubicOut',
+      animationDelay: function(idx) {
+        return idx * 5;
+      },
+      animationDurationUpdate: 300,
+      animationEasingUpdate: 'cubicInOut',
+      animationDelayUpdate: function(idx) {
+        return idx * 5;
+      },
+      symbolSize: symbolSize,
+      data: seriesData[legend],
+      itemStyle: {
+        color: seriesColorMap[legend]
       }
-    });
-  }
+    }
+  });
+}
 
   // Y축 패딩 계산
   function calculateYAxisPadding() {
@@ -319,7 +381,21 @@
     
     chartInstance = echarts.init(chartContainer);
     const option = {
-      tooltip: { show: false },
+      tooltip: {
+        show: true, // 내장 툴팁 활성화
+        trigger: 'item',
+        formatter: function(params) {
+          // 데이터 포인트에 대한 상세 정보 표시
+          return `${params.seriesName}<br/>
+                  ${xAxisName}: ${params.value[0]}<br/>
+                  ${yAxisName}: ${params.value[1]}`;
+        },
+        backgroundColor: 'rgba(0,0,0,0.7)',
+        textStyle: {
+          color: '#fff'
+        },
+        borderRadius: 4
+      },
       toolbox: {
         show: true,
         feature: {
@@ -459,35 +535,35 @@
 
   // 마우스 이벤트 처리
   function handleMouseMove(e) {
-    const rect = chartContainer.getBoundingClientRect();
-    const offsetX = e.clientX - rect.left;
-    const offsetY = e.clientY - rect.top;
-    const dataCoord = chartInstance.convertFromPixel('grid', [offsetX, offsetY]);
+    // const rect = chartContainer.getBoundingClientRect();
+    // const offsetX = e.clientX - rect.left;
+    // const offsetY = e.clientY - rect.top;
+    // const dataCoord = chartInstance.convertFromPixel('grid', [offsetX, offsetY]);
     
-    let minDist = Infinity;
-    let nearestPoint = null;
+    // let minDist = Infinity;
+    // let nearestPoint = null;
     
-    Object.keys(globalSeriesData).forEach(seriesName => {
-      globalSeriesData[seriesName].forEach(point => {
-        const dx = point[0] - dataCoord[0];
-        const dy = point[1] - dataCoord[1];
-        const dist = Math.sqrt(dx * dx + dy * dy);
+    // Object.keys(globalSeriesData).forEach(seriesName => {
+    //   globalSeriesData[seriesName].forEach(point => {
+    //     const dx = point[0] - dataCoord[0];
+    //     const dy = point[1] - dataCoord[1];
+    //     const dist = Math.sqrt(dx * dx + dy * dy);
         
-        if (dist < minDist && dist < 100) {
-          minDist = dist;
-          nearestPoint = { seriesName, x: point[0], y: point[1] };
-        }
-      });
-    });
+    //     if (dist < minDist && dist < 100) {
+    //       minDist = dist;
+    //       nearestPoint = { seriesName, x: point[0], y: point[1] };
+    //     }
+    //   });
+    // });
     
-    if (nearestPoint) {
-      tooltipContent = `${nearestPoint.seriesName}<br>${xAxisLabel}: ${nearestPoint.x}<br>${yAxisLabel}: ${nearestPoint.y}`;
-      tooltipX = e.pageX;
-      tooltipY = e.pageY;      
-      tooltipVisible = true;
-    } else {
-      tooltipVisible = false;
-    }
+    // if (nearestPoint) {
+    //   tooltipContent = `${nearestPoint.seriesName}<br>${xAxisLabel}: ${nearestPoint.x}<br>${yAxisLabel}: ${nearestPoint.y}`;
+    //   tooltipX = e.pageX;
+    //   tooltipY = e.pageY;      
+    //   tooltipVisible = true;
+    // } else {
+    //   tooltipVisible = false;
+    // }
   }
 
   function updateChartSize() {

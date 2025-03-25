@@ -73,7 +73,7 @@ export async function initial() {
         `, [
             'Default UFS Pattern',
             'ufs',
-            '^\\s*(.*?)\\s+\\[([0-9]+)\\].*?([0-9]+\\.[0-9]+):\\s+ufshcd_command:\\s+(send_req|complete_rsp):.*?tag:\\s*(\\d+).*?size:\\s*([-]?\\d+).*?LBA:\\s*(\\d+).*?opcode:\\s*(0x[0-9a-f]+).*?group_id:\\s*0x([0-9a-f]+).*?hwq_id:\\s*(\\d+)',
+            '^\\s*(?P<process>.*?)\\s+\\[(?P<cpu>[0-9]+)\\].*?(?P<time>[0-9]+\\.[0-9]+):\\s+ufshcd_command:\\s+(?P<command>send_req|complete_rsp):.*?tag:\\s*(?P<tag>\\d+).*?size:\\s*(?P<size>[-]?\\d+).*?LBA:\\s*(?P<lba>\\d+).*?opcode:\\s*(?P<opcode>0x[0-9a-f]+).*?group_id:\\s*0x(?P<group_id>[0-9a-f]+).*?hwq_id:\\s*(?P<hwq_id>\\d+)',
             'Default pattern for parsing UFS traces',
             1
         ]);

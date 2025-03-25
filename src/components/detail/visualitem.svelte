@@ -9,10 +9,11 @@
         ispattern: boolean;
         isrwd: boolean;
         isqd: boolean;
+        iscpu: boolean;
         islatency: boolean;
         issizestats: boolean;
     }
-    let { ispattern = $bindable(), isrwd = $bindable(), isqd = $bindable(), islatency = $bindable(), issizestats = $bindable() }:VisualItemProps = $props();       
+    let { ispattern = $bindable(), isrwd = $bindable(), isqd = $bindable(), iscpu = $bindable(), islatency = $bindable(), issizestats = $bindable() }:VisualItemProps = $props();       
 </script>
 
 <Sheet.Root>
@@ -37,6 +38,10 @@
         <div class="flex items-center space-x-2 pb-4">
             <Checkbox id="qd" bind:checked={isqd}/>
             <Label for="qd">QueueDepth</Label>
+        </div>
+        <div class="flex items-center space-x-2 pb-4">
+            <Checkbox id="cpu" bind:checked={iscpu}/>
+            <Label for="cpu">CPU</Label>
         </div>
         <div class="flex items-center space-x-2 pb-4">
             <Checkbox id="latency" bind:checked={islatency}/>

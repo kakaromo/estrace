@@ -13,7 +13,7 @@
     import type { TestInfo } from '$stores/trace';
 
     import { Circle2 } from 'svelte-loading-spinners';
-    import { StepBack, FileDown } from 'svelte-lucide';
+    import { StepBack, FileDown, RefreshCw } from 'svelte-lucide';
     import { Button } from "$lib/components/ui/button";
 
     import { get, set } from 'idb-keyval';  // IndexedDB 사용 위한 import
@@ -48,11 +48,18 @@
     let filteredData = $state({});
     let tracetype:string[] = $state([]);
     let isLoading:boolean = $state(false);
+
+    // Retry 관련 상태 추가
+    let loadError:string = $state('');
+    let retryCount:number = $state(0);
+    let maxRetries:number = 3;
+    let showRetryDialog:boolean = $state(false);
     
     // 시각화 항목 상태
     let ispattern = $state(true);
     let isrwd = $state(false);
     let isqd = $state(false);
+    let iscpu = $state(false);
     let islatency = $state(false);
     let issizestats = $state(false);
     
@@ -195,6 +202,91 @@
         }
     }
 
+    // 트레이스 데이터 로딩 함수 추출
+    async function loadTraceData() {
+        try {
+            isLoading = true;
+            loadError = '';
+            
+            // 테스트 정보 가져오기
+            data = await getTestInfo(id);
+            buffersize = await getBufferSize();
+            console.log('buffersize:', buffersize);
+            
+            // 캐시 키 구성
+            const cacheKey = `traceData_${id}_${data.logfolder}_${data.logname}`;
+            
+            // IndexedDB에서 캐시된 데이터 불러오기
+            let cached = await get(cacheKey);
+            if (cached) {
+                tracedata = JSON.parse(cached);
+            } else {
+                // 캐시된 데이터가 없으면 서버에서 가져오기
+                let traceStr = await invoke<string>('readtrace', { 
+                    logfolder: data.logfolder, 
+                    logname: data.logname,
+                    maxrecords: buffersize 
+                });
+                
+                tracedata = JSON.parse(traceStr);
+                
+                // IndexedDB에 데이터 저장
+                await set(cacheKey, traceStr);
+            }
+            
+            // 데이터 저장 및 초기화
+            $trace = tracedata;
+            filteredData = tracedata;
+            tracetype = Object.keys(tracedata);
+
+            // 파일 경로 설정
+            setParquetFilePaths();
+
+            // 초기 통계 데이터 로드
+            await loadStatsData();
+            
+            retryCount = 0; // 성공했으므로, 재시도 카운트 초기화
+            return true;
+        } catch (error) {
+            let errorMessage = '데이터 로딩 실패';
+            if (error instanceof Error) {
+                errorMessage = `Error: ${error.message}`;
+                console.error('Error during data loading:', error.message);
+                console.error('Stack trace:', error.stack);
+            } else {
+                console.error('Unknown error:', error);
+                errorMessage = `Unknown error: ${error}`;
+            }
+            
+            loadError = errorMessage;
+            retryCount++;
+            
+            if (retryCount >= maxRetries) {
+                showRetryDialog = true;
+            } else {
+                // 자동 재시도
+                console.log(`자동 재시도 중... (${retryCount}/${maxRetries})`);
+                await new Promise(resolve => setTimeout(resolve, 1000));
+                return loadTraceData();
+            }
+            
+            return false;
+        } finally {
+            isLoading = false;
+        }
+    }
+    
+    // 수동 재시도 함수
+    async function retryLoading() {
+        showRetryDialog = false;
+        retryCount = 0; // 수동 재시도시 카운트 초기화
+        const success = await loadTraceData();
+        if (!success && retryCount >= maxRetries) {
+            // 최대 재시도 횟수 초과하면 홈으로 이동
+            goto('/');
+        }
+    }
+
     onMount(async () => {
         try {
             isLoading = true;
@@ -259,6 +351,7 @@
         <Circle2 color="#FF3E00" size="60" unit="px" />
     </div>
 {/if}
+
 <div class="font-sans">
     <header class="py-4 px-6">
         <Button href="/" variant="primary"  class="fixed top-4 right-4 h-12">
@@ -269,6 +362,23 @@
         <div class="fixed top-4 left-4 flex items-center gap-2">
             <SelectType tracetype={tracetype} tracedata={filteredData} class="h-12"/>
             
+            <!-- Retry 버튼 추가 -->
+            <Tooltip.Root>
+                <Tooltip.Trigger asChild>
+                    <Button 
+                        variant="outline" 
+                        size="icon"
+                        class="h-12 w-12"
+                        onclick={retryLoading}
+                    >
+                        <RefreshCw size="20"></RefreshCw>
+                    </Button>
+                </Tooltip.Trigger>
+                <Tooltip.Content>
+                    <p>데이터 다시 불러오기</p>
+                </Tooltip.Content>
+            </Tooltip.Root>
+
             <Tooltip.Root>
                 <Tooltip.Trigger asChild>
                     <Button 
@@ -299,7 +409,7 @@
     </header>    
     <main class="mx-auto p-6">
         {#if $selectedTrace != ''}
-        <VisualItem bind:ispattern bind:isrwd bind:isqd bind:islatency bind:issizestats />                 
+        <VisualItem bind:ispattern bind:isrwd bind:isqd bind:iscpu bind:islatency bind:issizestats />                 
         <div class="grid grid-cols-2 gap-4">
             <div class="col-span-2">
                 <Card.Root class={ispattern ? 'block' : 'hidden'} >
@@ -324,6 +434,19 @@
                         <ScatterCharts data={filteredData.ufs.data} xAxisKey='time' yAxisKey='qd' legendKey='opcode' yAxisLabel='count' ycolumn='qd'/>
                         {:else if $selectedTrace === 'block'}
                         <ScatterCharts data={filteredData.block.data} xAxisKey='time' yAxisKey='qd' legendKey='io_type' yAxisLabel='count' ycolumn='qd'/>
+                        {/if}
+                    </Card.Content>
+                </Card.Root>
+                <Separator class="my-4 {iscpu ? 'block' : 'hidden'}" />
+                <Card.Root class={iscpu ? 'block' : 'hidden'} >
+                    <Card.Header>
+                        <Card.Title>{$selectedTrace.toUpperCase()} CPU</Card.Title>
+                    </Card.Header>
+                    <Card.Content>
+                        {#if $selectedTrace === 'ufs'} 
+                        <ScatterCharts data={filteredData.ufs.data} xAxisKey='time' yAxisKey='lba' legendKey='cpu' yAxisLabel='4KB' ycolumn='lba'/>
+                        {:else if $selectedTrace === 'block'}
+                        <ScatterCharts data={filteredData.block.data} xAxisKey='time' yAxisKey='sector' legendKey='cpu' yAxisLabel='sector' ycolumn='sector'/>
                         {/if}
                     </Card.Content>
                 </Card.Root>

@@ -43,6 +43,7 @@ pub fn filter_ufs_data(
                         "dtoc" => ufs.dtoc,
                         "ctoc" => ufs.ctoc,
                         "ctod" => ufs.ctod,
+                        "cpu" => ufs.cpu.into(),
                         _ => return false, // 지원하지 않는 컬럼
                     };
                     value >= v_from && value <= v_to
@@ -93,11 +94,12 @@ pub fn filter_block_data(
             time_filtered
                 .into_iter()
                 .filter(|block| {
-                    let value = match zoom_column {
+                    let value: f64 = match zoom_column {
                         "lba" => block.sector as f64,
                         "dtoc" => block.dtoc,
                         "ctoc" => block.ctoc,
                         "ctod" => block.ctod,
+                        "cpu" => block.cpu.into(),
                         _ => return false, // 지원하지 않는 컬럼
                     };
                     value >= v_from && value <= v_to

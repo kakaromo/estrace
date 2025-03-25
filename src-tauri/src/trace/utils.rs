@@ -745,39 +745,63 @@ pub async fn starttrace(fname: String, logfolder: String) -> Result<TraceParseRe
 
 // Captures가 이미 있는 경우 UFS 파싱 (중복 코드 방지)
 pub fn parse_ufs_trace_with_caps(caps: &regex::Captures) -> Result<UFS, String> {
-    println!("Captures: {:?}", caps);
-    if caps.len() < 11 {
-        return Err(format!("UFS trace pattern has insufficient capture groups: {}", caps.len()));
-    }
-    
-    let process = &caps[1];
-    let cpu_str = &caps[2];
-    let time_str = &caps[3];
-    let action = &caps[4];
-    let tag_str = &caps[5];
-    let size_str = &caps[6];
-    let lba_str = &caps[7];
-    let opcode = &caps[8];
-    let groupid_str = &caps[9];
-    let hwqid_str = &caps[10];
-
-    let time: f64 = time_str.parse::<f64>().map_err(|e| e.to_string())?;
-    let cpu: u32 = cpu_str.parse::<u32>().map_err(|e| e.to_string())?;
-    let tag: u32 = tag_str.parse::<u32>().map_err(|e| e.to_string())?;
+    // Named captures 사용
+    let time = caps
+        .name("time")
+        .and_then(|m| m.as_str().parse::<f64>().ok())
+        .ok_or("time parse error")?;
+    let process = caps
+        .name("process")
+        .map(|m| m.as_str().to_string())
+        .unwrap_or_default();
+    let cpu = caps
+        .name("cpu")
+        .and_then(|m| m.as_str().parse::<u32>().ok())
+        .ok_or("cpu parse error")?;
+    let action = caps
+        .name("command")
+        .map(|m| m.as_str().to_string())
+        .unwrap_or_default();
+    let tag = caps
+        .name("tag")
+        .and_then(|m| m.as_str().parse::<u32>().ok())
+        .ok_or("tag parse error")?;
+    let size_str = caps
+        .name("size")
+        .ok_or("size field missing")?
+        .as_str();
     let size: i32 = size_str.parse::<i32>().map_err(|e| e.to_string())?;
     // byte를 4KB 단위로 변환 (4096 bytes = 4KB)
     let size: u32 = (size.abs() as u32) / 4096;
-    let lba: u64 = lba_str.parse::<u64>().map_err(|e| e.to_string())?;
-    let groupid: u32 = u32::from_str_radix(groupid_str, 16).map_err(|e| e.to_string())?;
-    let hwqid: u32 = hwqid_str.parse::<u32>().map_err(|e| e.to_string())?;
+    
+    // LBA 처리 - 터무니 없는 값(최대값) 체크
+    let lba_str = caps.name("lba").map(|m| m.as_str()).unwrap_or("0");
+    let lba = if lba_str == "18446744073709551615" || lba_str == "4294967295" {
+        0 // 최대값은 0으로 처리
+    } else {
+        lba_str.parse().unwrap_or(0)
+    };
+    
+    let opcode = caps
+        .name("opcode")
+        .map(|m| m.as_str().to_string())
+        .unwrap_or_default();
+    let groupid = caps
+        .name("group_id")
+        .and_then(|m| u32::from_str_radix(m.as_str(), 16).ok())
+        .ok_or("group_id parse error")?;
+    let hwqid = caps
+        .name("hwq_id")
+        .and_then(|m| m.as_str().parse::<u32>().ok())
+        .ok_or("hwq_id parse error")?;
 
     Ok(UFS {
         time,
-        process: process.to_string(),
+        process,
         cpu,
-        action: action.to_string(),
+        action,
         tag,
-        opcode: opcode.to_string(),
+        opcode,
         lba,
         size,
         groupid,
