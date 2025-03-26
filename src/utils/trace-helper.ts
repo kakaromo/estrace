@@ -180,44 +180,68 @@ export async function fetchBlockStats(fileName: string, filterParams: any) {
  */
 export async function filterTraceData(logname: string, traceData: any, selectedTrace: string, filterParams: any) {
   const { from_time, to_time, from_lba, to_lba, zoom_column } = filterParams;
-  console.log(traceData);
+  // console.log(filterParams);
   if (selectedTrace === '') {
     return null;
   }
-  if (traceData[selectedTrace].total_count === traceData[selectedTrace].sampled_count) {
-    // 필터가 설정되지 않았으면 원본 데이터 반환
-    if (from_time === 0 && to_time === 0) {
-      return traceData[selectedTrace];
-    }
-    // 필터 적용
-    const filteredData = traceData[selectedTrace].data.filter((item) => {
-      return item.time >= from_time &&
-            item.time <= to_time &&
-            item[zoom_column] >= from_lba &&
-            item[zoom_column] <= to_lba;
-    });
-    traceData[selectedTrace].data = filteredData;
-    return traceData[selectedTrace];
+  // if (traceData[selectedTrace].total_count === traceData[selectedTrace].sampled_count) {
+  //   // 필터가 설정되지 않았으면 원본 데이터 반환
+  //   if (from_time === 0 && to_time === 0) {
+  //     return traceData[selectedTrace];
+  //   }
+  //   // 필터 적용
+  //   const filteredData = traceData[selectedTrace].data.filter((item) => {
+  //     return item.time >= from_time &&
+  //           item.time <= to_time &&
+  //           item[zoom_column] >= from_lba &&
+  //           item[zoom_column] <= to_lba;
+  //   });
+  //   traceData[selectedTrace].data = filteredData;
+  //   return traceData[selectedTrace];
     
-  } else {
-    // 필터링된 데이터 반환
-    console.log('logname:', logname);
-    console.log('selectedTrace:', selectedTrace);
-    let buffersize = await getBufferSize();
+  // } else {
+  //   // 필터링된 데이터 반환
+  //   console.log('logname:', logname);
+  //   console.log('selectedTrace:', selectedTrace);
+  //   let buffersize = await getBufferSize();
+  //   const traceStr: string = await invoke('filter_trace', {
+  //     logname: logname,
+  //     tracetype: selectedTrace,
+  //     zoomColumn: zoom_column,
+  //     from_time: from_time,
+  //     to_time: to_time,
+  //     from_lba: from_lba,
+  //     to_lba: to_lba,
+  //     maxrecords: buffersize
+  //   });
+  //   const filteredData : any = JSON.parse(traceStr);
+  //   console.log('filteredData:', filteredData);
+  //   return filteredData;
+  // }
+
+  let buffersize = await getBufferSize();
+    // const traceStr: string = await invoke('filter_trace', {
+    //   logname: logname,
+    //   tracetype: selectedTrace,
+    //   zoomColumn: zoom_column,
+    //   fromTime: from_time,
+    //   toTime: to_time,
+    //   fromLba: from_lba,
+    //   toLba: to_lba,
+    //   maxrecords: buffersize
+    // });
     const traceStr: string = await invoke('filter_trace', {
       logname: logname,
       tracetype: selectedTrace,
       zoomColumn: zoom_column,
-      from_time: from_time,
-      to_time: to_time,
-      from_lba: from_lba,
-      to_lba: to_lba,
+      timeFrom: from_time, 
+      timeTo: to_time, 
+      colFrom: from_lba, 
+      colTo: to_lba,
       maxrecords: buffersize
     });
     const filteredData : any = JSON.parse(traceStr);
-    console.log('filteredData:', filteredData);
     return filteredData;
-  }
 }
 
 /**

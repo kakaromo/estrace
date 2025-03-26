@@ -203,7 +203,7 @@ pub async fn filter_trace(
     col_from: Option<f64>,
     col_to: Option<f64>,
     maxrecords: Option<usize>,
-) -> Result<String, String> {  
+) -> Result<String, String> {      
     utils::filter_trace(
         logname, 
         tracetype, 

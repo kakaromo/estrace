@@ -9,7 +9,7 @@
   import { Button } from "$lib/components/ui/button";
   import { Slider } from "$lib/components/ui/slider";
 
-  import { filtertrace } from '$stores/trace';
+  import { filtertrace, prevFilterTrace } from '$stores/trace';
 
   interface ScatterChartProps {
     data: any[];
@@ -192,7 +192,6 @@
       // CPU 색상 매핑
       if (!(legend in cpuColorMapping)) {
         const cpuNum = parseInt(legend);
-        console.log('cpuNum:', cpuNum);
         if (!isNaN(cpuNum)) {
           // CPU 번호에 맞는 색상 할당 (순환)
           cpuColorMapping[legend] = CPU_PALETTE[cpuNum % CPU_PALETTE.length];
@@ -476,13 +475,15 @@ function prepareChartData() {
     // restore 이벤트 핸들러
     chartInstance.on('restore', () => {
       tooltipVisible = false;
+      
       $filtertrace = {
         zoom_column: ycolumn,
         from_time: 0,
         to_time: 0,
         from_lba: 0,
         to_lba: 0
-      }; 
+      };
+        
     });
 
     // 이벤트 핸들러 등록
