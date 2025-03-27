@@ -9,7 +9,7 @@
   import { Button } from "$lib/components/ui/button";
   import { Slider } from "$lib/components/ui/slider";
 
-  import { filtertrace, prevFilterTrace } from '$stores/trace';
+  import { filtertrace } from '$stores/trace';
 
   interface ScatterChartProps {
     data: any[];

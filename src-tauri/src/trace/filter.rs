@@ -94,7 +94,7 @@ pub fn filter_block_data(
                 .into_iter()
                 .filter(|block| {
                     let value: f64 = match zoom_column {
-                        "lba" => block.sector as f64,
+                        "sector" => block.sector as f64,
                         "dtoc" => block.dtoc,
                         "ctoc" => block.ctoc,
                         "ctod" => block.ctod,
