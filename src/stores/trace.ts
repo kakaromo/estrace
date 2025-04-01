@@ -59,6 +59,7 @@ export type TestInfo = {
   content: string;
   logfolder: string;
   logname: string;
+  sourcelog_path: string;
 };
 
 

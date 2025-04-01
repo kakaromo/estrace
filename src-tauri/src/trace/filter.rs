@@ -43,6 +43,7 @@ pub fn filter_ufs_data(
                         "dtoc" => ufs.dtoc,
                         "ctoc" => ufs.ctoc,
                         "ctod" => ufs.ctod,
+                        "qd" => ufs.qd as f64,
                         _ => return false, // 지원하지 않는 컬럼
                     };
                     value >= v_from && value <= v_to
@@ -98,6 +99,7 @@ pub fn filter_block_data(
                         "dtoc" => block.dtoc,
                         "ctoc" => block.ctoc,
                         "ctod" => block.ctod,
+                        "qd" => block.qd as f64,
                         _ => return false, // 지원하지 않는 컬럼
                     };
                     value >= v_from && value <= v_to

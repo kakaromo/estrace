@@ -84,6 +84,8 @@ pub fn block_bottom_half_latency_process(block_list: Vec<Block>) -> Vec<Block> {
     let mut last_complete_qd0_time: Option<f64> = None;
     let mut prev_end_sector: Option<u64> = None;
     let mut prev_io_type: Option<String> = None;
+    let mut first_c:bool = false;
+    let mut first_complete_time: f64 = 0.0;
 
     for mut block in deduplicated_blocks {
         // 기본적으로 continuous를 false로 설정
@@ -126,6 +128,8 @@ pub fn block_bottom_half_latency_process(block_list: Vec<Block>) -> Vec<Block> {
                     if let Some(t) = last_complete_qd0_time {
                         block.ctod = (block.time - t) * MILLISECONDS as f64;
                     }
+                    first_c = true;
+                    first_complete_time = block.time;
                 }
             }
             "block_rq_complete" => {
@@ -133,8 +137,17 @@ pub fn block_bottom_half_latency_process(block_list: Vec<Block>) -> Vec<Block> {
                 if let Some(first_issue_time) = req_times.remove(&key) {
                     block.dtoc = (block.time - first_issue_time) * MILLISECONDS as f64;
                 }
-                if let Some(last) = last_complete_time {
-                    block.ctoc = (block.time - last) * MILLISECONDS as f64;
+
+                match first_c {
+                    true => {
+                        block.ctoc = (block.time - first_complete_time) * MILLISECONDS as f64;
+                        first_c = false;
+                    }
+                    false => {
+                        if let Some(t) = last_complete_time {
+                            block.ctoc = (block.time - t) * MILLISECONDS as f64;
+                        }                    
+                    }
                 }
 
                 current_qd = current_qd.saturating_sub(1);

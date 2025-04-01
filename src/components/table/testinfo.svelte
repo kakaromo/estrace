@@ -26,6 +26,9 @@
     let testData:TestInfo[] = $state([]);
     let isLoading = $state(false);
     let reparsingId = $state<number | null>(null);
+
+    let start = $state(0);
+    let end = $state(0);
     
     // 열 너비 정의
     const columnWidths = {
@@ -165,7 +168,7 @@
             
             <!-- 테이블 바디 (VirtualList 사용) -->
             <div class="table-body">
-                <VirtualList items={testData} let:item height="calc(100vh - 200px)" itemHeight={36}>
+                <VirtualList items={testData} bind:start bind:end let:item height="calc(100vh - 200px)" itemHeight={36}>
                     <div 
                         class="table-row hover:bg-gray-100"
                         role="button"
@@ -209,6 +212,7 @@
                     </div>
                 </VirtualList>
             </div>
+            <p>showing {start}-{end} of {testData.length} rows</p>
         </div>
     </div>
 </div>

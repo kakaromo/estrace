@@ -404,6 +404,7 @@
             <div class="text-sm font-medium mb-2">sampling : {tracedata[$selectedTrace].sampled_count}</div>
             <div class="text-sm font-medium mb-2">sample ratio : {Number(tracedata[$selectedTrace].sampling_ratio.toFixed(2))} %</div>
             {/if}
+            <div class="text-sm font-medium mb-2">{data.title}</div>
         </div>
         {/if}        
     </header>    

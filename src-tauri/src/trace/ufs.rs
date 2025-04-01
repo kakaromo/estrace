@@ -27,6 +27,8 @@ pub fn ufs_bottom_half_latency_process(mut ufs_list: Vec<UFS>) -> Vec<UFS> {
     let mut current_qd: u32 = 0;
     let mut last_complete_time: Option<f64> = None;
     let mut last_complete_qd0_time: Option<f64> = None;
+    let mut first_c:bool = false;
+    let mut first_complete_time: f64 = 0.0;
 
     // 이전 send_req의 정보를 저장할 변수들
     let mut prev_send_req: Option<(u64, u32, String)> = None; // (lba, size, opcode)
@@ -52,6 +54,8 @@ pub fn ufs_bottom_half_latency_process(mut ufs_list: Vec<UFS>) -> Vec<UFS> {
                     if let Some(t) = last_complete_qd0_time {
                         ufs.ctod = (ufs.time - t) * MILLISECONDS as f64;
                     }
+                    first_c = true;
+                    first_complete_time = ufs.time;
                 }
             }
             "complete_rsp" => {
@@ -62,8 +66,16 @@ pub fn ufs_bottom_half_latency_process(mut ufs_list: Vec<UFS>) -> Vec<UFS> {
                 if let Some(send_time) = req_times.remove(&(ufs.tag, ufs.opcode.clone())) {
                     ufs.dtoc = (ufs.time - send_time) * MILLISECONDS as f64;
                 }
-                if let Some(last) = last_complete_time {
-                    ufs.ctoc = (ufs.time - last) * MILLISECONDS as f64;
+                match first_c {
+                    true => {
+                        ufs.ctoc = (ufs.time - first_complete_time) * MILLISECONDS as f64;
+                        first_c = false;
+                    }
+                    false => {
+                        if let Some(t) = last_complete_time {
+                            ufs.ctoc = (ufs.time - t) * MILLISECONDS as f64;
+                        }                    
+                    }
                 }
                 if current_qd == 0 {
                     last_complete_qd0_time = Some(ufs.time);
