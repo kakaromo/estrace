@@ -23,6 +23,8 @@
     "fs:default",
     "fs:allow-app-read",
     "fs:allow-app-write",
-    "os:default"
+    "os:default",
+    "clipboard-manager:default",
+    "clipboard-manager:allow-write-text"
   ]
 }

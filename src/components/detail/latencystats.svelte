@@ -2,6 +2,16 @@
     import { onMount } from 'svelte';
     import { Grid } from "wx-svelte-grid";
     import { Willow } from "wx-svelte-grid";
+    import * as ContextMenu from "$lib/components/ui/context-menu/index.js";
+    import { Download } from "svelte-lucide";
+
+    import { toast } from "svelte-sonner";
+    import { Toaster } from "$lib/components/ui/sonner";
+
+    // Tauri v2 API 가져오기
+    import { save } from '@tauri-apps/plugin-dialog';
+    import { writeTextFile } from '@tauri-apps/plugin-fs';
+    import { writeText } from '@tauri-apps/plugin-clipboard-manager';
 
     // props 정의
     interface LatencyStatsProps {
@@ -20,6 +30,10 @@
     let errorMsg = $state<string|null>(null);
     let isLoading = $state(true);
     let prevLatencystat = $state(null);
+
+    // 컨텍스트 메뉴 상태
+    let summaryContextMenuOpen = $state(false);
+    let countsContextMenuOpen = $state(false);
 
     // latencystat 변경 시 데이터 처리
     $effect(() => {
@@ -198,7 +212,127 @@
         }
         return value;
     }
+
+    // 요약 통계 CSV 다운로드 함수
+    async function downloadSummaryCSV() {
+        if (!grid_data_summary || grid_data_summary.length === 0) return;
+        
+        // CSV 헤더 생성
+        let csvContent = grid_columns_summary.map(col => col.header).join(',') + '\n';
+        
+        // 데이터 행 추가
+        grid_data_summary.forEach(row => {
+            const rowData = grid_columns_summary.map(col => `"${row[col.id] ?? ''}"`).join(',');
+            csvContent += rowData + '\n';
+        });
+        
+        // 파일 저장 다이얼로그 표시
+        const filePath = await save({
+            filters: [{
+                name: 'CSV',
+                extensions: ['csv']
+            }],
+            defaultPath: `latency_summary_stats.csv`
+        });
+        
+        if (filePath) {
+            // 파일에 CSV 내용 쓰기
+            await writeTextFile(filePath, csvContent);
+            console.log(`CSV exported to ${filePath}`);
+        }
+    }
+    
+    // 지연 시간 카운트 CSV 다운로드 함수
+    async function downloadCountsCSV() {
+        if (!grid_data || grid_data.length === 0) return;
+        
+        // CSV 헤더 생성
+        let csvContent = grid_columns.map(col => col.header).join(',') + '\n';
+        
+        // 데이터 행 추가
+        grid_data.forEach(row => {
+            const rowData = grid_columns.map(col => `"${row[col.id] ?? ''}"`).join(',');
+            csvContent += rowData + '\n';
+        });
+        
+        // 파일 저장 다이얼로그 표시
+        const filePath = await save({
+            filters: [{
+                name: 'CSV',
+                extensions: ['csv']
+            }],
+            defaultPath: `latency_counts.csv`
+        });
+        
+        if (filePath) {
+            // 파일에 CSV 내용 쓰기
+            await writeTextFile(filePath, csvContent);
+            console.log(`CSV exported to ${filePath}`);
+        }
+    }
+    
+    // 요약 통계 그리드에서 Ctrl+A 처리
+    async function handleSummaryKeyDown(event: KeyboardEvent) {
+        // Ctrl+A 또는 Command+A 감지
+        if ((event.ctrlKey || event.metaKey) && event.key === 'a') {
+            event.preventDefault();
+            
+            if (!grid_data_summary || grid_data_summary.length === 0) return;
+            
+            // 헤더 생성 (탭으로 구분)
+            let clipboardText = grid_columns_summary.map(col => col.header).join('\t') + '\n';
+            
+            // 데이터 행 추가
+            grid_data_summary.forEach(row => {
+                const rowData = grid_columns_summary.map(col => row[col.id] ?? '').join('\t');
+                clipboardText += rowData + '\n';
+            });
+            
+            try {
+                await writeText(clipboardText);
+                console.log("Descriptive Statistics 데이터가 클립보드에 복사되었습니다.");
+                toast.success("Descriptive Statistics 데이터가 클립보드에 복사되었습니다", {
+                    description: "엑셀에 붙여넣기 가능합니다.",
+                    duration: 2000,
+                });
+            } catch (error) {
+                console.error("클립보드 복사 실패:", error);
+            }
+        }
+    }
+    
+    // latency range count 그리드에서 Ctrl+A 처리
+    async function handleCountsKeyDown(event: KeyboardEvent) {
+        // Ctrl+A 또는 Command+A 감지
+        if ((event.ctrlKey || event.metaKey) && event.key === 'a') {
+            event.preventDefault();
+            
+            if (!grid_data || grid_data.length === 0) return;
+            
+            // 헤더 생성 (탭으로 구분)
+            let clipboardText = grid_columns.map(col => col.header).join('\t') + '\n';
+            
+            // 데이터 행 추가
+            grid_data.forEach(row => {
+                const rowData = grid_columns.map(col => row[col.id] ?? '').join('\t');
+                clipboardText += rowData + '\n';
+            });
+            
+            try {
+                await writeText(clipboardText);
+                console.log("latency range count 데이터가 클립보드에 복사되었습니다.");
+                toast.success("latency range count 데이터가 클립보드에 복사되었습니다", {
+                    description: "엑셀에 붙여넣기 가능합니다.",
+                    duration: 2000,
+                });
+            } catch (error) {
+                console.error("클립보드 복사 실패:", error);
+            }
+        }
+    }
 </script>
+
+<Toaster />
 
 <div class="p-2">
     {#if errorMsg}
@@ -215,11 +349,36 @@
         {#if grid_data_summary.length > 0}
             <div class="mb-6">
                 <div class="text-sm font-medium mb-2">Descriptive Statistics</div>
-                <Willow>
-                    <div style="font-size: 12px;">
-                        <Grid bind:data={grid_data_summary} bind:columns={grid_columns_summary}/>
-                    </div>
-                </Willow>
+                <ContextMenu.Root bind:open={summaryContextMenuOpen}>
+                    <ContextMenu.Trigger>
+                        <Willow>
+                            <!-- svelte-ignore a11y_interactive_supports_focus -->
+                            <div 
+                                style="font-size: 12px;"
+                                role="grid"
+                                aria-label="요약 통계"
+                                tabindex="0"
+                                onkeydown={handleSummaryKeyDown}
+                                class="grid-container"
+                            >
+                                <Grid bind:data={grid_data_summary} bind:columns={grid_columns_summary}/>
+                            </div>
+                        </Willow>
+                    </ContextMenu.Trigger>
+                    <ContextMenu.Content class="w-48">
+                        <ContextMenu.Item onclick={downloadSummaryCSV}>
+                            <Download class="mr-2 h-4 w-4" />
+                            <span>CSV로 다운로드</span>
+                        </ContextMenu.Item>
+                        <ContextMenu.Separator />
+                        <ContextMenu.Item>
+                            <span>행: {grid_data_summary.length}개</span>
+                        </ContextMenu.Item>
+                        <ContextMenu.Item onclick={() => handleSummaryKeyDown({ctrlKey: true, key: 'a', preventDefault: () => {}})}>
+                            <span>모든 데이터 복사 (Ctrl+A)</span>
+                        </ContextMenu.Item>
+                    </ContextMenu.Content>
+                </ContextMenu.Root>
             </div>
         {/if}
         
@@ -227,11 +386,36 @@
         {#if grid_data.length > 0}
             <div>
                 <div class="text-sm font-medium mb-2">latency count</div>
-                <Willow>
-                    <div style="font-size: 12px;">
-                        <Grid bind:data={grid_data} bind:columns={grid_columns}/>
-                    </div>
-                </Willow>
+                <ContextMenu.Root bind:open={countsContextMenuOpen}>
+                    <ContextMenu.Trigger>
+                        <Willow>
+                            <!-- svelte-ignore a11y_interactive_supports_focus -->
+                            <div 
+                                style="font-size: 12px;"
+                                role="grid"
+                                aria-label="지연 시간 카운트"
+                                tabindex="0"
+                                onkeydown={handleCountsKeyDown}
+                                class="grid-container"
+                            >
+                                <Grid bind:data={grid_data} bind:columns={grid_columns}/>
+                            </div>
+                        </Willow>
+                    </ContextMenu.Trigger>
+                    <ContextMenu.Content class="w-48">
+                        <ContextMenu.Item onclick={downloadCountsCSV}>
+                            <Download class="mr-2 h-4 w-4" />
+                            <span>CSV로 다운로드</span>
+                        </ContextMenu.Item>
+                        <ContextMenu.Separator />
+                        <ContextMenu.Item>
+                            <span>행: {grid_data.length}개</span>
+                        </ContextMenu.Item>
+                        <ContextMenu.Item onclick={() => handleCountsKeyDown({ctrlKey: true, key: 'a', preventDefault: () => {}})}>
+                            <span>모든 데이터 복사 (Ctrl+A)</span>
+                        </ContextMenu.Item>
+                    </ContextMenu.Content>
+                </ContextMenu.Root>
             </div>
         {/if}
     {/if}
@@ -246,5 +430,14 @@
         background-color: #fff3cd;
         color: #856404;
         border: 1px solid #ffeeba;
+    }
+    
+    /* 그리드 포커스 스타일 */
+    .grid-container {
+        outline: none;
+    }
+    
+    .grid-container:focus {
+        outline: 1px solid rgba(66, 153, 225, 0.5);
     }
 </style>

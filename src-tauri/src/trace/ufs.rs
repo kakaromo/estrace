@@ -15,7 +15,7 @@ use crate::trace::utils::{
 };
 use crate::trace::{
     ContinuityCount, ContinuityStats, LatencyStat, LatencyStats, LatencyValue, SizeStats,
-    TotalContinuity, UFS
+    TotalContinuity, UFS,
 };
 
 // UFS 레이턴시 후처리 함수
@@ -27,7 +27,7 @@ pub fn ufs_bottom_half_latency_process(mut ufs_list: Vec<UFS>) -> Vec<UFS> {
     let mut current_qd: u32 = 0;
     let mut last_complete_time: Option<f64> = None;
     let mut last_complete_qd0_time: Option<f64> = None;
-    let mut first_c:bool = false;
+    let mut first_c: bool = false;
     let mut first_complete_time: f64 = 0.0;
 
     // 이전 send_req의 정보를 저장할 변수들
@@ -74,7 +74,7 @@ pub fn ufs_bottom_half_latency_process(mut ufs_list: Vec<UFS>) -> Vec<UFS> {
                     false => {
                         if let Some(t) = last_complete_time {
                             ufs.ctoc = (ufs.time - t) * MILLISECONDS as f64;
-                        }                    
+                        }
                     }
                 }
                 if current_qd == 0 {

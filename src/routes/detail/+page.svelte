@@ -30,7 +30,8 @@
         ScatterCharts, 
         VisualItem, 
         RWDStats,
-        LatencyTabs 
+        LatencyTabs,
+        CPUTabs 
     } from '$components/detail';
     
     import { 
@@ -445,10 +446,10 @@
                     </Card.Header>
                     <Card.Content>
                         {#if $selectedTrace === 'ufs'} 
-                        <ScatterCharts data={filteredData.ufs.data} xAxisKey='time' yAxisKey='lba' legendKey='cpu' yAxisLabel='4KB' ycolumn='lba'/>
+                        <CPUTabs traceType={$selectedTrace} data={filteredData.ufs.data} legendKey='cpu' />
                         {:else if $selectedTrace === 'block'}
-                        <ScatterCharts data={filteredData.block.data} xAxisKey='time' yAxisKey='sector' legendKey='cpu' yAxisLabel='sector' ycolumn='sector'/>
-                        {/if}
+                        <CPUTabs traceType={$selectedTrace} data={filteredData.block.data} legendKey='cpu' />
+                        {/if}                        
                     </Card.Content>
                 </Card.Root>
                 <Separator class="my-4 {isrwd ? 'block' : 'hidden'}" />

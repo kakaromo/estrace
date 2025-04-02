@@ -45,14 +45,24 @@
   prevData = data;
 
   // 차트 요소
-  let chartContainer;
-  let chartInstance;
-  let resizeObserver;
+  let chartContainer: any;
+  let chartInstance: any;
+  let resizeObserver: any;
 
   // zoom 범위 및 tooltip 상태
   let { xZoomFrom, xZoomTo, yZoomFrom, yZoomTo } = $state({ xZoomFrom: 0, xZoomTo: 0, yZoomFrom: 0, yZoomTo: 0 });
   let {tooltipVisible, tooltipContent, tooltipX, tooltipY} = $state({tooltipVisible: false, tooltipContent: '', tooltipX: 0, tooltipY: 0});
-  let globalSeriesData = {};
+  let globalSeriesData: Record<string, number[][]> = {};
+
+  // X축 범위 설정 상태 변수
+  let showXAxisRangeDialog = $state(false);
+  let inputXMin = $state(0);
+  let inputXMax = $state(0);
+  
+  // Y축 범위 설정 상태 변수
+  let showYAxisRangeDialog = $state(false);
+  let inputYMin = $state(0);
+  let inputYMax = $state(0);
 
   // 색상 상수
   const WRITE_COLOR = '#FF0000';
@@ -61,7 +71,7 @@
   const FLUSH_COLOR = '#FFFF00';
 
   // UFS 명령어별 고정 컬러 매핑
-  const UFS_COMMAND_COLORS = {
+  const UFS_COMMAND_COLORS: { [key: string]: string } = {
     '0x2a': '#FF0000', // Write
     '0xa2': '#FF3333', // Write 관련
     '0x28': '#0000FF', // Read
@@ -115,24 +125,24 @@
   ];
 
   // 색상 매핑 객체 및 인덱스
-  let blockWriteMapping = {};
-  let blockReadMapping = {};
-  let blockDiscardMapping = {};
-  let blockFlushMapping = {};
+  let blockWriteMapping: Record<string, string> = {};
+  let blockReadMapping: Record<string, string> = {};
+  let blockDiscardMapping: Record<string, string> = {};
+  let blockFlushMapping: Record<string, string> = {};
   let writePaletteIndex = 0;
   let readPaletteIndex = 0;
   let discardPaletteIndex = 0;
   let flushPaletteIndex = 0;
 
   // 차트 옵션 업데이트 함수
-  function updateChartOption(options) {
+  function updateChartOption(options: { title?: { text: any; left: string; top: string; }; series?: any; }) {
     if (chartInstance) {
       chartInstance.setOption(options);
     }
   }
   
   // 차트 타이틀 관련 함수
-  function setChartTitle(title) {
+  function setChartTitle(title: string) {
     chartTitle = title;
     updateChartOption({
       title: {
@@ -164,7 +174,7 @@
     
     if (chartInstance) {
       const option = chartInstance.getOption();
-      const updatedSeries = option.series.map(series => {
+      const updatedSeries = option.series.map((series: { symbolSize: number; }) => {
         series.symbolSize = symbolSize;
         return series;
       });
@@ -183,9 +193,9 @@
   }
 
   // CPU 색상 매핑용 객체 추가
-  let cpuColorMapping = {};
+  let cpuColorMapping: Record<string, string> = {};
 
-  function getColorForLegend(legend) {
+  function getColorForLegend(legend: string | string[]) {
     if (typeof legend !== 'string') return getRandomColor();
     // CPU 레전드 처리 - 레전드가 숫자인 경우 CPU로 간주
     if (legendKey === 'cpu') {
@@ -245,10 +255,86 @@
         return getRandomColor();
     }
   }
+
+  // X축 범위 설정 함수
+  function openXAxisRangeDialog() {
+    // 현재 차트의 X축 범위 가져오기
+    const xAxisModel = chartInstance.getModel().getComponent('xAxis', 0);
+    if (xAxisModel) {
+      const xExtent = xAxisModel.axis.scale.getExtent();
+      inputXMin = xExtent[0];
+      inputXMax = xExtent[1];
+    }
+    showXAxisRangeDialog = true;
+  }
+  
+  function applyXAxisRange() {
+    if (chartInstance && inputXMin < inputXMax) {
+      // X축 범위 설정
+      chartInstance.setOption({
+        xAxis: {
+          min: inputXMin,
+          max: inputXMax
+        }
+      });
+      
+      // 상태 변수 업데이트
+      xZoomFrom = inputXMin;
+      xZoomTo = inputXMax;
+      
+      // filtertrace 스토어 업데이트
+      $filtertrace = {
+        zoom_column: ycolumn,
+        from_time: inputXMin,
+        to_time: inputXMax,
+        from_lba: yZoomFrom,
+        to_lba: yZoomTo
+      };
+    }
+    showXAxisRangeDialog = false;
+  }
+  
+  // Y축 범위 설정 함수
+  function openYAxisRangeDialog() {
+    // 현재 차트의 Y축 범위 가져오기
+    const yAxisModel = chartInstance.getModel().getComponent('yAxis', 0);
+    if (yAxisModel) {
+      const yExtent = yAxisModel.axis.scale.getExtent();
+      inputYMin = yExtent[0];
+      inputYMax = yExtent[1];
+    }
+    showYAxisRangeDialog = true;
+  }
+  
+  function applyYAxisRange() {
+    if (chartInstance && inputYMin < inputYMax) {
+      // Y축 범위 설정
+      chartInstance.setOption({
+        yAxis: {
+          min: inputYMin,
+          max: inputYMax
+        }
+      });
+      
+      // 상태 변수 업데이트
+      yZoomFrom = inputYMin;
+      yZoomTo = inputYMax;
+      
+      // filtertrace 스토어 업데이트
+      $filtertrace = {
+        zoom_column: ycolumn,
+        from_time: xZoomFrom,
+        to_time: xZoomTo,
+        from_lba: inputYMin,
+        to_lba: inputYMax
+      };
+    }
+    showYAxisRangeDialog = false;
+  }
   
   // 범례 정렬 함수
-  function sortLegends(legends) {
-    const prefixOrder = {
+  function sortLegends(legends: string[]) {
+    const prefixOrder:any = {
       'R': 1, // Read
       'W': 2, // Write
       'D': 3, // Discard
@@ -278,12 +364,12 @@
     });
   }
 
-  let seriesColorMap = {};
-  let legends = [];
+  let seriesColorMap: Record<string, string> = {};
+  let legends: string[] = [];
   
   // 차트 데이터 준비 함수
 function prepareChartData() {
-  let seriesData = {};
+  let seriesData: Record<string, number[][]> = {};
   if (!data) return [];
   
   data.forEach(item => {
@@ -310,7 +396,7 @@ function prepareChartData() {
     }
 
     if (!isNaN(x) && !isNaN(y)) {
-      const legend = item[legendKey];
+      const legend = String(item[legendKey]);
       if (!seriesData[legend]) seriesData[legend] = [];
       seriesData[legend].push([x, y]);
     }
@@ -318,7 +404,7 @@ function prepareChartData() {
   
   // x 값 기준 정렬
   Object.keys(seriesData).forEach(legend => {
-    seriesData[legend].sort((a, b) => a[0] - b[0]);
+    seriesData[legend].sort((a: number[], b: number[]) => a[0] - b[0]);
   });
 
   // 범례 설정 및 정렬
@@ -339,12 +425,12 @@ function prepareChartData() {
       animation: true,
       animationDuration: 1500,
       animationEasing: 'cubicOut',
-      animationDelay: function(idx) {
+      animationDelay: function(idx: number) {
         return idx * 5;
       },
       animationDurationUpdate: 300,
       animationEasingUpdate: 'cubicInOut',
-      animationDelayUpdate: function(idx) {
+      animationDelayUpdate: function(idx: number) {
         return idx * 5;
       },
       symbolSize: symbolSize,
@@ -361,7 +447,7 @@ function prepareChartData() {
     let maxDigits = 0;
     
     Object.keys(globalSeriesData).forEach(seriesName => {
-        globalSeriesData[seriesName].forEach(point => {
+        globalSeriesData[seriesName].forEach((point: any[]) => {
             const yValue = Number(point[1]).toFixed(2);
             const digits = yValue.replace('.', '').length;
             maxDigits = Math.max(maxDigits, digits);
@@ -383,7 +469,7 @@ function prepareChartData() {
       tooltip: {
         show: true, // 내장 툴팁 활성화
         trigger: 'item',
-        formatter: function(params) {
+        formatter: function(params: { seriesName: any; value: any[]; }) {
           // 데이터 포인트에 대한 상세 정보 표시
           return `${params.seriesName}<br/>
                   ${xAxisName}: ${params.value[0]}<br/>
@@ -432,7 +518,7 @@ function prepareChartData() {
           fontWeight: 'normal',
           color: '#555'
         },
-        formatter: function(name) {
+        formatter: function(name: string) {
           if (name.length > 10) {
             return name.slice(0, 10) + '...';
           }
@@ -483,7 +569,34 @@ function prepareChartData() {
         from_lba: 0,
         to_lba: 0
       };
-        
+    });
+
+    // X축 dataZoom 명시적으로 초기화
+    chartInstance.dispatchAction({
+      type: 'dataZoom',
+      id: 'dataZoomX',
+      start: 0,
+      end: 100
+    });
+    
+    // Y축 dataZoom 명시적으로 초기화
+    chartInstance.dispatchAction({
+      type: 'dataZoom',
+      id: 'dataZoomY',
+      start: 0,
+      end: 100
+    });
+    
+    // 내부 상태 변수도 초기화
+    xZoomFrom = 0;
+    xZoomTo = 0;
+    yZoomFrom = 0;
+    yZoomTo = 0;
+    
+    // 차트 업데이트 (필요한 경우)
+    chartInstance.setOption({
+      xAxis: { scale: true },
+      yAxis: { scale: true }
     });
 
     // 이벤트 핸들러 등록
@@ -515,14 +628,36 @@ function prepareChartData() {
   }
 
   // 데이터 변경 감지 및 차트 업데이트
-  function hashData(data) {
-    if (data?.length === 0) return '';
-    else if (data?.length > 0) return data[0][xAxisKey] + data[0][yAxisKey] + data[0][legendKey];
+  function hashData(data: string | any[]) {
+    if (!data || data?.length === 0) return '';
+  
+    // filtertrace 값에 기반한 해시 생성
+    if ($filtertrace) {
+      const filterHash = JSON.stringify({
+        zoom_column: $filtertrace.zoom_column,
+        from_time: $filtertrace.from_time,
+        to_time: $filtertrace.to_time,
+        from_lba: $filtertrace.from_lba,
+        to_lba: $filtertrace.to_lba
+      });
+      
+      // 데이터가 있다면 첫 항목도 함께 고려
+      if (data.length > 0) {
+        return filterHash + data[0][xAxisKey] + data[0][yAxisKey] + data[0][legendKey];
+      }
+      return filterHash;
+    }
+    
+    // filtertrace가 없는 경우 기존 방식으로 폴백
+    if (data.length > 0) {
+      return data[0][xAxisKey] + data[0][yAxisKey] + data[0][legendKey];
+    }
     return '';
   }
 
   $effect(() => {
     const currentDataHash = hashData(data);
+    console.log('prevDataHash:', prevDataHash, 'currentDataHash:', currentDataHash, "filtertrace", $filtertrace);
     if (prevDataHash !== currentDataHash) {
       prevDataHash = currentDataHash;
       if (chartInstance) {
@@ -535,7 +670,7 @@ function prepareChartData() {
   });
 
   // 마우스 이벤트 처리
-  function handleMouseMove(e) {
+  function handleMouseMove(e: any) {
     // const rect = chartContainer.getBoundingClientRect();
     // const offsetX = e.clientX - rect.left;
     // const offsetY = e.clientY - rect.top;
@@ -658,6 +793,92 @@ function prepareChartData() {
     </Dialog.Footer>
   </Dialog.Content>
 </Dialog.Root>
+
+<!-- X축 범위 설정 다이얼로그 -->
+<Dialog.Root open={showXAxisRangeDialog} onOpenChange={(open) => showXAxisRangeDialog = open}>
+  <Dialog.Content>
+    <Dialog.Header>
+      <Dialog.Title>X축 범위 설정</Dialog.Title>
+      <Dialog.Description>
+        {xAxisName} 축의 표시 범위를 설정하세요.
+      </Dialog.Description>
+    </Dialog.Header>
+    
+    <div class="grid gap-4 py-4">
+      <div class="grid grid-cols-4 items-center gap-4">
+        <Label for="x-min" class="text-right">
+          최소값
+        </Label>
+        <Input 
+          id="x-min" 
+          type="number" 
+          class="col-span-3" 
+          bind:value={inputXMin} 
+          step="any" 
+        />
+      </div>
+      <div class="grid grid-cols-4 items-center gap-4">
+        <Label for="x-max" class="text-right">
+          최대값
+        </Label>
+        <Input 
+          id="x-max" 
+          type="number" 
+          class="col-span-3" 
+          bind:value={inputXMax} 
+          step="any" 
+        />
+      </div>
+    </div>
+    
+    <Dialog.Footer>   
+      <Button type="submit" onclick={applyXAxisRange}>적용</Button>   
+    </Dialog.Footer>
+  </Dialog.Content>
+</Dialog.Root>
+
+<!-- Y축 범위 설정 다이얼로그 -->
+<Dialog.Root open={showYAxisRangeDialog} onOpenChange={(open) => showYAxisRangeDialog = open}>
+  <Dialog.Content>
+    <Dialog.Header>
+      <Dialog.Title>Y축 범위 설정</Dialog.Title>
+      <Dialog.Description>
+        {yAxisName} 축의 표시 범위를 설정하세요.
+      </Dialog.Description>
+    </Dialog.Header>
+    
+    <div class="grid gap-4 py-4">
+      <div class="grid grid-cols-4 items-center gap-4">
+        <Label for="y-min" class="text-right">
+          최소값
+        </Label>
+        <Input 
+          id="y-min" 
+          type="number" 
+          class="col-span-3" 
+          bind:value={inputYMin} 
+          step="any" 
+        />
+      </div>
+      <div class="grid grid-cols-4 items-center gap-4">
+        <Label for="y-max" class="text-right">
+          최대값
+        </Label>
+        <Input 
+          id="y-max" 
+          type="number" 
+          class="col-span-3" 
+          bind:value={inputYMax} 
+          step="any" 
+        />
+      </div>
+    </div>
+    
+    <Dialog.Footer>   
+      <Button type="submit" onclick={applyYAxisRange}>적용</Button>   
+    </Dialog.Footer>
+  </Dialog.Content>
+</Dialog.Root>
  
 <ContextMenu.Root>
   <ContextMenu.Trigger>
@@ -673,6 +894,8 @@ function prepareChartData() {
     <ContextMenu.Item on:click={openTitleDialog}>차트 제목 변경</ContextMenu.Item>
     <ContextMenu.Separator />
     <ContextMenu.Item on:click={openSymbolSizeDialog}>포인트 크기 조정</ContextMenu.Item>
+    <ContextMenu.Item on:click={openXAxisRangeDialog}>X축 범위 설정</ContextMenu.Item>
+    <ContextMenu.Item on:click={openYAxisRangeDialog}>Y축 범위 설정</ContextMenu.Item>
   </ContextMenu.Content>
 </ContextMenu.Root>
 

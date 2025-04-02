@@ -11,17 +11,13 @@ use tauri::async_runtime::spawn_blocking;
 
 use serde::Serialize;
 
-use crate::trace::block::{
-    block_bottom_half_latency_process, save_block_to_parquet,
-};
+use crate::trace::block::{block_bottom_half_latency_process, save_block_to_parquet};
 use crate::trace::ufs::{save_ufs_to_parquet, ufs_bottom_half_latency_process};
-use crate::trace::{
-    Block, LatencySummary, TraceParseResult, BLOCK_CACHE, UFS, UFS_CACHE,
-};
+use crate::trace::{Block, LatencySummary, TraceParseResult, BLOCK_CACHE, UFS, UFS_CACHE};
 
-use crate::trace::filter::{filter_ufs_data, filter_block_data};
+use crate::trace::filter::{filter_block_data, filter_ufs_data};
 
-use super::{ACTIVE_UFS_PATTERN, ACTIVE_BLOCK_PATTERN};
+use super::{ACTIVE_BLOCK_PATTERN, ACTIVE_UFS_PATTERN};
 
 // 샘플링 결과를 담는 구조체
 #[derive(Serialize, Debug, Clone)]
@@ -35,7 +31,7 @@ pub struct SamplingInfo<T> {
 // 샘플링 함수들 - max_records 매개변수 추가
 pub fn sample_ufs(ufs_list: &[UFS], max_records: usize) -> SamplingInfo<UFS> {
     let total_count = ufs_list.len();
-    
+
     if total_count <= max_records {
         // 샘플링이 필요 없는 경우
         SamplingInfo {
@@ -51,9 +47,9 @@ pub fn sample_ufs(ufs_list: &[UFS], max_records: usize) -> SamplingInfo<UFS> {
             .choose_multiple(&mut rng, max_records)
             .cloned()
             .collect();
-        
+
         let sampling_ratio = (max_records as f64 / total_count as f64) * 100.0;
-        
+
         SamplingInfo {
             data: sampled_data,
             total_count,
@@ -65,7 +61,7 @@ pub fn sample_ufs(ufs_list: &[UFS], max_records: usize) -> SamplingInfo<UFS> {
 
 pub fn sample_block(block_list: &[Block], max_records: usize) -> SamplingInfo<Block> {
     let total_count = block_list.len();
-    
+
     if total_count <= max_records {
         // 샘플링이 필요 없는 경우
         SamplingInfo {
@@ -81,9 +77,9 @@ pub fn sample_block(block_list: &[Block], max_records: usize) -> SamplingInfo<Bl
             .choose_multiple(&mut rng, max_records)
             .cloned()
             .collect();
-        
+
         let sampling_ratio = (max_records as f64 / total_count as f64) * 100.0;
-        
+
         SamplingInfo {
             data: sampled_data,
             total_count,
@@ -244,14 +240,14 @@ pub async fn readtrace(logname: String, max_records: usize) -> Result<String, St
             // Create longer-lived empty vectors to use as default values
             let empty_ufs_vec: Vec<UFS> = Vec::new();
             let empty_block_vec: Vec<Block> = Vec::new();
-            
+
             let ufs_data = ufs_cache.get(&logname).unwrap_or(&empty_ufs_vec);
             let block_data = block_cache.get(&logname).unwrap_or(&empty_block_vec);
-            
+
             // 캐시된 데이터를 샘플링
             let ufs_sample_info = sample_ufs(ufs_data, max_records);
             let block_sample_info = sample_block(block_data, max_records);
-            
+
             let result_json = serde_json::json!({
                 "ufs": {
                     "data": ufs_sample_info.data,
@@ -629,13 +625,13 @@ pub async fn starttrace(fname: String, logfolder: String) -> Result<TraceParseRe
         // 라인별 병렬 처리
         let lines: Vec<&str> = content.lines().collect();
         let total_lines = lines.len();
-        
+
         // 현재 활성화된 패턴 가져오기
         let active_ufs_pattern = match ACTIVE_UFS_PATTERN.read() {
             Ok(pattern) => pattern,
             Err(e) => return Err(format!("UFS 패턴 로드 실패: {}", e)),
         };
-        
+
         let active_block_pattern = match ACTIVE_BLOCK_PATTERN.read() {
             Ok(pattern) => pattern,
             Err(e) => return Err(format!("Block 패턴 로드 실패: {}", e)),
@@ -656,7 +652,7 @@ pub async fn starttrace(fname: String, logfolder: String) -> Result<TraceParseRe
                     if line.trim().is_empty() {
                         return (Vec::new(), Vec::new(), vec![line_number]);
                     }
-                    
+
                     // UFS 패턴으로 파싱 시도
                     let ufs_caps = active_ufs_pattern.1.captures(line);
                     if let Some(caps) = ufs_caps {
@@ -664,7 +660,7 @@ pub async fn starttrace(fname: String, logfolder: String) -> Result<TraceParseRe
                             return (vec![ufs], Vec::new(), Vec::new());
                         }
                     }
-                    
+
                     // Block 패턴으로 파싱 시도
                     let block_caps = active_block_pattern.1.captures(line);
                     if let Some(caps) = block_caps {
@@ -672,7 +668,7 @@ pub async fn starttrace(fname: String, logfolder: String) -> Result<TraceParseRe
                             return (Vec::new(), vec![block], Vec::new());
                         }
                     }
-                    
+
                     // 어떤 패턴과도 일치하지 않음
                     (Vec::new(), Vec::new(), vec![line_number])
                 })
@@ -766,14 +762,11 @@ pub fn parse_ufs_trace_with_caps(caps: &regex::Captures) -> Result<UFS, String> 
         .name("tag")
         .and_then(|m| m.as_str().parse::<u32>().ok())
         .ok_or("tag parse error")?;
-    let size_str = caps
-        .name("size")
-        .ok_or("size field missing")?
-        .as_str();
+    let size_str = caps.name("size").ok_or("size field missing")?.as_str();
     let size: i32 = size_str.parse::<i32>().map_err(|e| e.to_string())?;
     // byte를 4KB 단위로 변환 (4096 bytes = 4KB)
     let size: u32 = (size.abs() as u32) / 4096;
-    
+
     // LBA 처리 - 터무니 없는 값(최대값) 체크
     let lba_str = caps.name("lba").map(|m| m.as_str()).unwrap_or("0");
     let lba = if lba_str == "18446744073709551615" || lba_str == "4294967295" {
@@ -781,7 +774,7 @@ pub fn parse_ufs_trace_with_caps(caps: &regex::Captures) -> Result<UFS, String> 
     } else {
         lba_str.parse().unwrap_or(0)
     };
-    
+
     let opcode = caps
         .name("opcode")
         .map(|m| m.as_str().to_string())
@@ -852,7 +845,7 @@ pub fn parse_block_trace_with_caps(caps: &regex::Captures) -> Result<Block, Stri
     let extra = caps
         .name("extra")
         .map_or(0, |m| m.as_str().parse().unwrap_or(0));
-    
+
     // For sector, we need to handle the special case of max value
     let sector_str = caps.name("sector").map(|m| m.as_str()).unwrap_or("0");
     let sector = if sector_str == "18446744073709551615" {
@@ -860,7 +853,7 @@ pub fn parse_block_trace_with_caps(caps: &regex::Captures) -> Result<Block, Stri
     } else {
         sector_str.parse().unwrap_or(0)
     };
-    
+
     let size = caps
         .name("size")
         .and_then(|m| m.as_str().parse::<u32>().ok())
@@ -891,7 +884,6 @@ pub fn parse_block_trace_with_caps(caps: &regex::Captures) -> Result<Block, Stri
     })
 }
 
-
 pub async fn filter_trace(
     logname: String,
     tracetype: String,
@@ -901,23 +893,17 @@ pub async fn filter_trace(
     col_from: Option<f64>,
     col_to: Option<f64>,
     max_records: usize,
-) -> Result<String, String> {    
+) -> Result<String, String> {
     // 필터링 및 샘플링 결과를 저장할 변수
     let result = match tracetype.as_str() {
         "ufs" => {
             // UFS 데이터 필터링
-            let ufs_vec = filter_ufs_data(
-                &logname,
-                time_from,
-                time_to,
-                &zoom_column,
-                col_from,
-                col_to,
-            )?;
-            
+            let ufs_vec =
+                filter_ufs_data(&logname, time_from, time_to, &zoom_column, col_from, col_to)?;
+
             // UFS 데이터 샘플링
             let ufs_sample_info = sample_ufs(&ufs_vec, max_records);
-            
+
             // 샘플링 정보를 JSON으로 직렬화하여 반환
             serde_json::json!({
                 "data": ufs_sample_info.data,
@@ -925,22 +911,17 @@ pub async fn filter_trace(
                 "sampled_count": ufs_sample_info.sampled_count,
                 "sampling_ratio": ufs_sample_info.sampling_ratio,
                 "type": "ufs"
-            }).to_string()
-        },
+            })
+            .to_string()
+        }
         "block" => {
             // Block 데이터 필터링
-            let block_vec = filter_block_data(
-                &logname,
-                time_from,
-                time_to,
-                &zoom_column,
-                col_from,
-                col_to,
-            )?;
-            
+            let block_vec =
+                filter_block_data(&logname, time_from, time_to, &zoom_column, col_from, col_to)?;
+
             // Block 데이터 샘플링
             let block_sample_info = sample_block(&block_vec, max_records);
-            
+
             // 샘플링 정보를 JSON으로 직렬화하여 반환
             serde_json::json!({
                 "data": block_sample_info.data,
@@ -948,8 +929,9 @@ pub async fn filter_trace(
                 "sampled_count": block_sample_info.sampled_count,
                 "sampling_ratio": block_sample_info.sampling_ratio,
                 "type": "block"
-            }).to_string()
-        },
+            })
+            .to_string()
+        }
         _ => return Err("Unsupported trace type".to_string()),
     };
 

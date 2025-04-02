@@ -39,52 +39,60 @@
     let prevDataHash = '';
 
     // 차트 컨테이너 및 차트 정의
-    let chartElements = $state({
+    let chartElements = $state<{
+        [key: string]: { container: null | HTMLElement, instance: null | echarts.ECharts };
+        read: { container: null | HTMLElement, instance: null | echarts.ECharts };
+        write: { container: null | HTMLElement, instance: null | echarts.ECharts };
+        discard: { container: null | HTMLElement, instance: null | echarts.ECharts };
+    }>({
         read: { container: null, instance: null },
         write: { container: null, instance: null },
         discard: { container: null, instance: null }
     });
     
     // 차트 컨테이너 참조
-    let chartsContainer = $state(null);
+    let chartsContainer = $state<HTMLDivElement | null>(null);
     
     // 차트 초기화 타이머
-    let chartInitTimer = null;
+    let chartInitTimer: NodeJS.Timeout | null = null;
     
     // 차트 데이터 상태
-    let chartData = $state(null);
+    let chartData = $state<{
+        pieData: { [key: string]: any[] },
+        stats: { [key: string]: any }
+    } | null>(null);
     
     // IO 타입 정의
     const IO_TYPES = [
         {
             id: 'read',
-            key: tracetype => tracetype === 'ufs' ? '0x28' : 'R',
-            title: tracetype => `${tracetype.toUpperCase()} Read Continuity`,
+            key: (tracetype: string) => tracetype === 'ufs' ? '0x28' : 'R',
+            title: (tracetype: string) => `${tracetype.toUpperCase()} Read Continuity`,
             name: 'Read Continuity',
             colors: ['#4ade80', '#fb7185'],
             statTitle: 'Read Statistics'
         },
         {
             id: 'write',
-            key: tracetype => tracetype === 'ufs' ? '0x2a' : 'W',
-            title: tracetype => `${tracetype.toUpperCase()} Write Continuity`,
+            key: (tracetype: string) => tracetype === 'ufs' ? '0x2a' : 'W',
+            title: (tracetype: string) => `${tracetype.toUpperCase()} Write Continuity`,
             name: 'Write Continuity',
             colors: ['#60a5fa', '#f97316'],
             statTitle: 'Write Statistics'
         },
         {
             id: 'discard',
-            key: tracetype => tracetype === 'ufs' ? '0x42' : 'D',
-            title: tracetype => {
+            key: (tracetype: string) => tracetype === 'ufs' ? '0x42' : 'D',
+            title: (tracetype: string) => {
                 const label = tracetype === 'ufs' ? 'UNMAP' : 'Discard';
                 return `${tracetype.toUpperCase()} ${label} Continuity`;
             },
-            name: tracetype => {
+            name: (tracetype: string) => {
                 const label = tracetype === 'ufs' ? 'UNMAP' : 'Discard';
                 return `${label} Continuity`;
             },
             colors: ['#a855f7', '#fbbf24'],
-            statTitle: tracetype => tracetype === 'ufs' ? 'UNMAP Statistics' : 'Discard Statistics'
+            statTitle: (tracetype: string) => tracetype === 'ufs' ? 'UNMAP Statistics' : 'Discard Statistics'
         }
     ];
     
@@ -102,7 +110,10 @@
     // 차트 데이터 전처리
     function prepareChartData() {
         // 기본 데이터 구조
-        const result = {
+        const result: {
+            pieData: { [key: string]: any[] },
+            stats: { [key: string]: any }
+        } = {
             pieData: {},
             stats: {}
         };
@@ -157,12 +168,12 @@
     }
     
     // 차트 옵션 생성
-    function createChartOption(ioType, pieData) {
+    function createChartOption(ioType: { id: string; key: (tracetype: any) => "0x28" | "R"; title: (tracetype: any) => string; name: string; colors: string[]; statTitle: string; } | { id: string; key: (tracetype: any) => "0x2a" | "W"; title: (tracetype: any) => string; name: string; colors: string[]; statTitle: string; } | { id: string; key: (tracetype: string) => "0x42" | "D"; title: (tracetype: any) => string; name: (tracetype: any) => string; colors: string[]; statTitle: (tracetype: any) => "UNMAP Statistics" | "Discard Statistics"; }, pieData: any[]) {
         const title = typeof ioType.title === 'function' ? ioType.title(tracetype) : ioType.title;
         const name = typeof ioType.name === 'function' ? ioType.name(tracetype) : ioType.name;
         
         // 모든 값이 0인지 확인
-        const isAllZero = pieData.every(item => item.value === 0);
+        const isAllZero = pieData.every((item: { value: number; }) => item.value === 0);
         
         return {
             title: {
@@ -257,8 +268,9 @@
     // 차트 크기 리사이즈
     function resizeCharts() {
         IO_TYPES.forEach(ioType => {
-            if (chartElements[ioType.id]?.instance) {
-                chartElements[ioType.id].instance.resize();
+            const instance = chartElements[ioType.id]?.instance;
+            if (instance) {
+                instance.resize();
             }
         });
     }
@@ -267,7 +279,7 @@
     function disposeCharts() {
         IO_TYPES.forEach(ioType => {
             if (chartElements[ioType.id]?.instance) {
-                chartElements[ioType.id].instance.dispose();
+                chartElements[ioType.id].instance?.dispose();
                 chartElements[ioType.id].instance = null;
             }
         });
@@ -292,7 +304,7 @@
     }
     
     // 통계 제목 가져오기
-    function getStatTitle(ioType) {
+    function getStatTitle(ioType: { id: string; key: (tracetype: any) => "0x28" | "R"; title: (tracetype: any) => string; name: string; colors: string[]; statTitle: string; } | { id: string; key: (tracetype: any) => "0x2a" | "W"; title: (tracetype: any) => string; name: string; colors: string[]; statTitle: string; } | { id: string; key: (tracetype: string) => "0x42" | "D"; title: (tracetype: any) => string; name: (tracetype: any) => string; colors: string[]; statTitle: (tracetype: any) => "UNMAP Statistics" | "Discard Statistics"; }) {
         return typeof ioType.statTitle === 'function' 
             ? ioType.statTitle(tracetype) 
             : ioType.statTitle;

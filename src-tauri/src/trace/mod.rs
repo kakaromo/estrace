@@ -3,10 +3,10 @@
 mod block;
 mod export;
 mod filter;
+pub mod patterns;
 mod types;
 mod ufs;
 mod utils;
-pub mod patterns; // 'mod patterns'를 'pub mod patterns'로 변경
 
 use once_cell::sync::Lazy;
 use regex::Regex;
@@ -203,41 +203,33 @@ pub async fn filter_trace(
     col_from: Option<f64>,
     col_to: Option<f64>,
     maxrecords: Option<usize>,
-) -> Result<String, String> {      
+) -> Result<String, String> {
     utils::filter_trace(
-        logname, 
-        tracetype, 
-        zoom_column, 
-        time_from, 
-        time_to, 
-        col_from, 
+        logname,
+        tracetype,
+        zoom_column,
+        time_from,
+        time_to,
+        col_from,
         col_to,
-        maxrecords.unwrap_or(DEFAULT_PREVIEW_RECORDS)
-    ).await
+        maxrecords.unwrap_or(DEFAULT_PREVIEW_RECORDS),
+    )
+    .await
 }
 
 // Pattern management commands
 #[tauri::command]
-pub fn add_pattern(
-    name: String,
-    pattern_type: String,
-    pattern: String,
-) -> Result<(), String> {
+pub fn add_pattern(name: String, pattern_type: String, pattern: String) -> Result<(), String> {
     patterns::add_pattern(name, pattern_type, pattern)
 }
 
 #[tauri::command]
-pub fn set_active_pattern(
-    name: String,
-    pattern_type: String,
-) -> Result<(), String> {
+pub fn set_active_pattern(name: String, pattern_type: String) -> Result<(), String> {
     patterns::set_active_pattern(name, pattern_type)
 }
 
 #[tauri::command]
-pub fn get_patterns(
-    pattern_type: Option<String>,
-) -> Result<String, String> {
+pub fn get_patterns(pattern_type: Option<String>) -> Result<String, String> {
     patterns::get_patterns(pattern_type)
 }
 
@@ -247,10 +239,7 @@ pub fn get_active_patterns() -> Result<String, String> {
 }
 
 #[tauri::command]
-pub fn delete_pattern(
-    name: String,
-    pattern_type: String,
-) -> Result<(), String> {
+pub fn delete_pattern(name: String, pattern_type: String) -> Result<(), String> {
     patterns::delete_pattern(name, pattern_type)
 }
 
@@ -323,9 +312,6 @@ pub fn delete_parquet_files(file_paths: Vec<String>) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub fn test_regex_pattern(
-    text: String,
-    pattern: String,
-) -> Result<String, String> {
+pub fn test_regex_pattern(text: String, pattern: String) -> Result<String, String> {
     patterns::test_regex_pattern(text, pattern)
 }

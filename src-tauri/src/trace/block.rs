@@ -15,7 +15,7 @@ use crate::trace::utils::{
 };
 use crate::trace::{
     Block, ContinuityCount, ContinuityStats, LatencyStat, LatencyStats, LatencyValue, SizeStats,
-    TotalContinuity
+    TotalContinuity,
 };
 
 // Block 레이턴시 후처리 함수
@@ -62,13 +62,13 @@ pub fn block_bottom_half_latency_process(block_list: Vec<Block>) -> Vec<Block> {
             };
 
             // write 이고 size가 0인 경우에 Flush 표시가 2번 발생 (중복 제거) FF->WS 이런식으로 들어올 수 있음
-            if block.io_type.starts_with('W') && block.size == 0 {            
+            if block.io_type.starts_with('W') && block.size == 0 {
                 continue;
             }
 
             let key = (block.sector, io_operation.to_string(), block.size);
             processed_issues.remove(&key);
-        }       
+        }
 
         deduplicated_blocks.push(block);
     }
@@ -84,7 +84,7 @@ pub fn block_bottom_half_latency_process(block_list: Vec<Block>) -> Vec<Block> {
     let mut last_complete_qd0_time: Option<f64> = None;
     let mut prev_end_sector: Option<u64> = None;
     let mut prev_io_type: Option<String> = None;
-    let mut first_c:bool = false;
+    let mut first_c: bool = false;
     let mut first_complete_time: f64 = 0.0;
 
     for mut block in deduplicated_blocks {
@@ -146,7 +146,7 @@ pub fn block_bottom_half_latency_process(block_list: Vec<Block>) -> Vec<Block> {
                     false => {
                         if let Some(t) = last_complete_time {
                             block.ctoc = (block.time - t) * MILLISECONDS as f64;
-                        }                    
+                        }
                     }
                 }
 
