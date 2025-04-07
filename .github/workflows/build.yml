@@ -166,7 +166,7 @@ jobs:
         with:
           name: ${{ steps.get_version.outputs.name }}_${{ steps.get_version.outputs.version }}_${{ github.event.inputs.release_type }}_windows_x64_portable.exe
           if-no-files-found: warn
-          path: src-tauri/target/${{ github.event.inputs.release_type }}/bundle/*.exe
+          path: src-tauri/target/${{ github.event.inputs.release_type }}/*.exe
           compression-level: 0
 
   # Linux 빌드 작업
