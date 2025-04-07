@@ -1,10 +1,10 @@
 <script lang='ts'>
-    import { getAllTestInfo, updateReparseResult } from '$api/db';
+    import { getAllTestInfo, updateReparseResult, deleteTestInfo, deleteMultipleTestInfo } from '$api/db';
     import { testinfoid, initialTraceData } from '$stores/trace';
     import { onMount } from 'svelte';
     import { goto } from '$app/navigation';
     import { invoke } from "@tauri-apps/api/core";
-    import { message } from "@tauri-apps/plugin-dialog";
+    import { message, confirm } from "@tauri-apps/plugin-dialog";
 
     import { Badge } from "$lib/components/ui/badge";
     import { Circle2 } from 'svelte-loading-spinners';
@@ -26,17 +26,20 @@
     let testData:TestInfo[] = $state([]);
     let isLoading = $state(false);
     let reparsingId = $state<number | null>(null);
+    let selectedItems = $state<Set<number>>(new Set());
+    let selectAll = $state(false);
 
     let start = $state(0);
     let end = $state(0);
     
     // 열 너비 정의
     const columnWidths = {
-        id: '80px',
-        title: '350px',
+        checkbox: '40px',
+        id: '70px',
+        title: '330px',
         logfolder: '200px',
         logname: '150px',
-        actions: '150px'
+        actions: '210px'
     };
 
     // 행 클릭 핸들러 - 상세 정보로 이동
@@ -44,6 +47,282 @@
         initialTraceData();
         $testinfoid = item.id;
         goto('/detail/');
+    }
+    
+    // 체크박스 클릭 시 이벤트 버블링 방지
+    function handleCheckboxClick(event: Event) {
+        event.stopPropagation();
+    }
+    
+    // 항목 선택 핸들러
+    function toggleItemSelection(event: Event, id: number) {
+        event.stopPropagation();
+        
+        // 새 Set 객체를 생성하여 반응성 트리거
+        const newSelectedItems = new Set(selectedItems);
+        
+        if (newSelectedItems.has(id)) {
+            newSelectedItems.delete(id);
+        } else {
+            newSelectedItems.add(id);
+        }
+        
+        // 새 객체로 할당하여 반응성 보장
+        selectedItems = newSelectedItems;
+        
+        // 전체 선택 상태 업데이트
+        selectAll = testData.length > 0 && selectedItems.size === testData.length;
+    }
+    
+    // 전체 선택/해제 핸들러
+    function toggleSelectAll() {
+        if (selectAll) {
+            // 모두 해제 - 새 Set 객체 생성으로 반응성 트리거
+            selectedItems = new Set();
+        } else {
+            // 모두 선택
+            selectedItems = new Set(testData.map(item => item.id));
+        }
+        selectAll = !selectAll;
+    }
+    
+    // 폴더 경로 추출 함수 개선 - 더 정확한 test 폴더 식별
+    function extractFolderPaths(lognames: string[]): string[] {
+        const folderPaths = new Set<string>();
+        
+        lognames.forEach(logname => {
+            if (!logname) return;
+            
+            const path = logname.trim();
+            if (path === '') return;
+            
+            console.log('Processing path:', path);
+            
+            // 경로에서 파일명을 제외한 디렉토리 경로 추출
+            // 윈도우, 리눅스 모두 지원하기 위해 '/'와 '\\' 모두 확인
+            const normalizedPath = path.replace(/\\/g, '/'); // 모든 백슬래시를 슬래시로 변환
+            const lastSlashIndex = normalizedPath.lastIndexOf('/');
+            
+            if (lastSlashIndex > 0) {
+                // 디렉토리 경로 추출 (파일명 제외)
+                const folderPath = path.substring(0, lastSlashIndex);
+                console.log('Extracted folder path:', folderPath);
+                
+                // test 폴더를 찾는 로직 개선
+                // 다양한 패턴의 test 폴더를 지원
+                const normalizedFolderPath = folderPath.replace(/\\/g, '/').toLowerCase();
+                
+                // 여러 패턴 체크
+                const testPatterns = ['/test', '/tests', '/test_', '_test'];
+                let foundTestPath = null;
+                
+                // 여러 패턴 중 가장 마지막에 나오는 test 경로를 찾음
+                for (const pattern of testPatterns) {
+                    const testDirIndex = normalizedFolderPath.lastIndexOf(pattern);
+                    if (testDirIndex >= 0) {
+                        // test 폴더 경로 추출 (pattern을 포함하는 위치까지)
+                        const testPathCandidate = folderPath.substring(0, 
+                            folderPath.length - (normalizedFolderPath.length - testDirIndex) + pattern.length);
+                        
+                        // 가장 마지막에 나오는 패턴을 사용
+                        if (!foundTestPath || testDirIndex > normalizedFolderPath.lastIndexOf(foundTestPath)) {
+                            foundTestPath = testPathCandidate;
+                        }
+                    }
+                }
+                
+                if (foundTestPath) {
+                    console.log('Found test folder path:', foundTestPath);
+                    folderPaths.add(foundTestPath);
+                } else {
+                    // test 폴더를 못 찾은 경우 원래 폴더 경로 추가
+                    console.log('No test folder found, using original path:', folderPath);
+                    folderPaths.add(folderPath);
+                }
+            }
+        });
+        
+        console.log('All folders to delete:', [...folderPaths]);
+        return Array.from(folderPaths);
+    }
+    
+    // 폴더 삭제 함수 개선 - 더 나은 오류 처리 및 재시도 로직
+    async function deleteFolder(folderPath: string): Promise<boolean> {
+        if (!folderPath || folderPath.trim() === '') {
+            console.log('Empty folder path, skipping');
+            return true;
+        }
+        
+        try {
+            console.log('Attempting to delete folder:', folderPath);
+            await invoke('delete_folder', { folderPath });
+            console.log('Successfully deleted folder:', folderPath);
+            return true;
+        } catch (error) {
+            console.warn(`Failed to delete folder ${folderPath}:`, error);
+            
+            // 폴더가 이미 삭제되었는지 확인하는 로직을 추가할 수 있지만,
+            // 현재는 단순히 실패로 처리
+            return false;
+        }
+    }
+    
+    // 선택한 항목 삭제 핸들러 개선
+    async function handleDeleteSelected() {
+        if (selectedItems.size === 0) {
+            await message('삭제할 항목을 선택해주세요.');
+            return;
+        }
+        
+        const confirmed = await confirm(
+            `선택한 ${selectedItems.size}개 항목을 삭제하시겠습니까?`,
+            { title: '삭제 확인', type: 'warning' }
+        );
+        
+        if (confirmed) {
+            try {
+                isLoading = true;
+                
+                // 선택된 항목의 parquet 파일 삭제
+                const selectedTestData = testData.filter(item => selectedItems.has(item.id));
+                const filesToDelete = selectedTestData
+                    .flatMap(item => item.logname ? item.logname.split(',') : [])
+                    .filter(Boolean);
+                
+                if (filesToDelete.length > 0) {
+                    try {
+                        // 1. 먼저 파일 삭제
+                        console.log('Files to delete:', filesToDelete);
+                        await invoke('delete_parquet_files', { filePaths: filesToDelete });
+                        console.log('Successfully deleted parquet files');
+                        
+                        // 2. 모든 관련 폴더 삭제 (test 폴더 찾기)
+                        const folderPaths = extractFolderPaths(filesToDelete);
+                        
+                        // 더 명확한 로깅
+                        console.log(`Attempting to delete ${folderPaths.length} folders`);
+                        
+                        for (const folderPath of folderPaths) {
+                            // 각 폴더 삭제 시도
+                            const success = await deleteFolder(folderPath);
+                            
+                            if (!success) {
+                                console.warn(`Could not delete folder: ${folderPath}. Will continue with other operations.`);
+                                
+                                // 실패한 경우에도 계속 진행
+                                // 추가 오류 정보 로깅
+                                try {
+                                    // 재시도 - 일부 파일 시스템은 지연 후 삭제가 성공하는 경우도 있음
+                                    console.log('Retrying folder deletion after delay...');
+                                    await new Promise(resolve => setTimeout(resolve, 500));
+                                    await deleteFolder(folderPath);
+                                } catch (retryError) {
+                                    console.warn('Retry also failed:', retryError);
+                                }
+                            }
+                        }
+                    } catch (error) {
+                        console.warn('Error during file/folder deletion:', error);
+                        // 파일/폴더 삭제에 실패해도 DB에서는 삭제 진행
+                    }
+                }
+                
+                // DB에서 삭제
+                await deleteMultipleTestInfo(Array.from(selectedItems));
+                
+                // 테이블 데이터 새로고침
+                testData = await getAllTestInfo();
+                
+                // 선택 항목 초기화
+                selectedItems = new Set(); // clear()를 사용하지 않고 새 Set 객체 할당
+                selectAll = false;
+                
+                await message(`선택한 항목이 삭제되었습니다.`);
+            } catch (error) {
+                console.error('Delete failed:', error);
+                await message(`삭제 실패: ${error.message || error}`);
+            } finally {
+                isLoading = false;
+            }
+        }
+    }
+    
+    // 단일 항목 삭제 핸들러 개선
+    async function handleDeleteItem(event: Event, id: number) {
+        event.stopPropagation();
+        
+        const testInfo = testData.find(item => item.id === id);
+        if (!testInfo) return;
+        
+        const confirmed = await confirm(
+            `"${testInfo.title}" 항목을 삭제하시겠습니까?`,
+            { title: '삭제 확인', type: 'warning' }
+        );
+        
+        if (confirmed) {
+            try {
+                isLoading = true;
+                
+                // parquet 파일 삭제
+                const filesToDelete = testInfo.logname ? testInfo.logname.split(',') : [];
+                if (filesToDelete.length > 0) {
+                    try {
+                        // 1. 먼저 파일 삭제
+                        await invoke('delete_parquet_files', { filePaths: filesToDelete });
+                        console.log('Successfully deleted parquet files');
+                        
+                        // 2. 모든 관련 폴더 삭제 (test 폴더 찾기)
+                        const folderPaths = extractFolderPaths(filesToDelete);
+                        console.log(`Attempting to delete ${folderPaths.length} folders`);
+                        
+                        for (const folderPath of folderPaths) {
+                            // 각 폴더 삭제 시도
+                            const success = await deleteFolder(folderPath);
+                            
+                            if (!success) {
+                                console.warn(`Could not delete folder: ${folderPath}. Will continue with other operations.`);
+                                
+                                // 실패한 경우에도 계속 진행
+                                // 추가 오류 정보 로깅
+                                try {
+                                    // 재시도 - 일부 파일 시스템은 지연 후 삭제가 성공하는 경우도 있음
+                                    console.log('Retrying folder deletion after delay...');
+                                    await new Promise(resolve => setTimeout(resolve, 500));
+                                    await deleteFolder(folderPath);
+                                } catch (retryError) {
+                                    console.warn('Retry also failed:', retryError);
+                                }
+                            }
+                        }
+                    } catch (error) {
+                        console.warn('Error during file/folder deletion:', error);
+                        // 파일/폴더 삭제에 실패해도 DB에서는 삭제 진행
+                    }
+                }
+                
+                // DB에서 삭제
+                await deleteTestInfo(id);
+                
+                // selectedItems에서도 제거
+                if (selectedItems.has(id)) {
+                    // 새 Set 객체를 생성하여 반응성 트리거
+                    const newSelectedItems = new Set(selectedItems);
+                    newSelectedItems.delete(id);
+                    selectedItems = newSelectedItems;
+                }
+                
+                // 테이블 데이터 새로고침
+                testData = await getAllTestInfo();
+                selectAll = testData.length > 0 && selectedItems.size === testData.length;
+                
+                await message('항목이 삭제되었습니다.');
+            } catch (error) {
+                console.error('Delete failed:', error);
+                await message(`삭제 실패: ${error.message || error}`);
+            } finally {
+                isLoading = false;
+            }
+        }
     }
     
     // 재파싱 버튼 클릭 핸들러
@@ -140,11 +419,29 @@
 
 <div class="container font-sans">
     <div class="space-y-1">
-        <div>
-            <h3 class="text-lg font-medium">
-                Trace Information
-            </h3>
-            <p class="text-muted-foreground text-sm">테스트 트레이스 정보 목록입니다. 항목을 클릭하여 상세 정보를 확인하거나 재파싱할 수 있습니다.</p>
+        <div class="flex justify-between items-center">
+            <div>
+                <h3 class="text-lg font-medium">
+                    Trace Information
+                </h3>
+                <p class="text-muted-foreground text-sm">테스트 트레이스 정보 목록입니다. 항목을 클릭하여 상세 정보를 확인하거나 재파싱할 수 있습니다.</p>
+            </div>
+            
+            <div>
+                <Button 
+                    variant="destructive" 
+                    size="sm" 
+                    disabled={selectedItems.size === 0}
+                    onclick={handleDeleteSelected}
+                >
+                    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="mr-1">
+                        <path d="M3 6h18"></path>
+                        <path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"></path>
+                        <path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"></path>
+                    </svg>
+                    선택 항목 삭제 ({selectedItems.size})
+                </Button>
+            </div>
         </div>
         <Separator class="my-4" />
     </div>
@@ -159,6 +456,14 @@
         <div class="virtual-table">
             <!-- 테이블 헤더 -->
             <div class="table-header">
+                <div class="header-cell" style="width: {columnWidths.checkbox}">
+                    <input 
+                        type="checkbox" 
+                        checked={selectAll} 
+                        onchange={toggleSelectAll}
+                        disabled={testData.length === 0}
+                    />
+                </div>
                 <div class="header-cell" style="width: {columnWidths.id}">ID</div>
                 <div class="header-cell" style="width: {columnWidths.title}">Title</div>
                 <div class="header-cell" style="width: {columnWidths.logfolder}">Log Folder</div>
@@ -176,6 +481,14 @@
                         onclick={() => handleRowClick(item)}
                         onkeydown={(e) => e.key === 'Enter' && handleRowClick(item)}
                     >
+                        <div class="cell" style="width: {columnWidths.checkbox}">
+                            <input 
+                                type="checkbox" 
+                                checked={selectedItems.has(item.id)} 
+                                onclick={handleCheckboxClick}
+                                onchange={(e) => toggleItemSelection(e, item.id)}
+                            />
+                        </div>
                         <div class="cell" style="width: {columnWidths.id}">{item.id}</div>
                         <div class="cell" style="width: {columnWidths.title}">
                             <span class="badge-container">
@@ -200,12 +513,24 @@
                                     {:else}
                                         <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                                             <path d="M21 2v6h-6"/>
-                                            <path d="M3 12a9 9 0 0 1 15-6.7L21 8"/>
+                                            <path d="M3 12a9 9 0 0 1-15-6.7L21 8"/>
                                             <path d="M3 22v-6h6"/>
                                             <path d="M21 12a9 9 0 0 1-15 6.7L3 16"/>
                                         </svg>
                                         <span>Reparse</span>
                                     {/if}
+                                </button>
+                                
+                                <button 
+                                    class="delete-button" 
+                                    onclick={(e) => handleDeleteItem(e, item.id)}
+                                >
+                                    <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                        <path d="M3 6h18"></path>
+                                        <path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"></path>
+                                        <path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"></path>
+                                    </svg>
+                                    <span>Delete</span>
                                 </button>
                             </div>
                         </div>
@@ -307,7 +632,7 @@
         justify-content: center;
     }
     
-    .reparse-button {
+    .reparse-button, .delete-button {
         display: flex;
         align-items: center;
         gap: 4px;
@@ -324,9 +649,25 @@
         background-color: #e5e7eb;
     }
     
+    .delete-button {
+        background-color: #fee2e2;
+        border-color: #fecaca;
+    }
+    
+    .delete-button:hover {
+        background-color: #fecaca;
+    }
+    
     .reparse-button.reparsing {
         background-color: #dbeafe;
         border-color: #93c5fd;
         cursor: not-allowed;
+    }
+    
+    /* Checkbox styling */
+    input[type="checkbox"] {
+        width: 16px;
+        height: 16px;
+        cursor: pointer;
     }
 </style>

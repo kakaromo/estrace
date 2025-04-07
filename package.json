@@ -26,6 +26,7 @@
     "echarts-gl": "^2.0.9",
     "idb-keyval": "^6.2.1",
     "lodash": "^4.17.21",
+    "plotly.js-dist-min": "^3.0.1",
     "svelte-loading-spinners": "^0.3.6",
     "svelte-lucide": "^2.0.1",
     "svelte-radix": "^2.0.1",

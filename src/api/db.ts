@@ -2,24 +2,23 @@ import Database from '@tauri-apps/plugin-sql';
 import { setting } from "$stores/setting";
 import type { TestInfo } from "$stores/trace";
 import { platform } from '@tauri-apps/plugin-os';
-import { join, homeDir } from '@tauri-apps/api/path';
+import { join, homeDir, appLocalDataDir } from '@tauri-apps/api/path';
 
 let db: Database = null;
 
 async function getDbPath() {
-    const currentPlatform = platform();
-    if (currentPlatform === 'windows') {
-        return 'sqlite:\\test.db';
-    } else {
-        // Linux 또는 macOS
-        const home = await homeDir();
-        return `sqlite://${await join(home, 'test.db')}`;
-    }
+    // 모든 OS에서 앱 실행 파일 위치에 DB 파일을 생성하기 위해
+    // appLocalDataDir 사용 (이 위치는 앱 실행 파일과 가까운 위치)
+    const appDir = await appLocalDataDir();
+    console.log(`Using DB path in app directory: ${appDir}`);
+    return `sqlite://${await join(appDir, 'test.db')}`;
 }
 
 async function open() {
     if(!db) {
         const dbPath = await getDbPath();
+        console.log(`DB path: ${dbPath}`);
+        // Check if the database file exists
         db = await Database.load(dbPath);    
     }
     return db;
@@ -66,14 +65,14 @@ export async function initial() {
     const patterns = await db.select('SELECT COUNT(*) as count FROM trace_patterns');
     console.log('Patterns:', patterns);
     if (patterns[0].count === 0) {
-        // Default UFS pattern
+        // Default UFS pattern - hwq_id에 음수도 허용하도록 수정
         await db.execute(`
             INSERT INTO trace_patterns (name, type, pattern, description, is_active)
             VALUES (?, ?, ?, ?, ?)
         `, [
             'Default UFS Pattern',
             'ufs',
-            '^\\s*(?P<process>.*?)\\s+\\[(?P<cpu>[0-9]+)\\].*?(?P<time>[0-9]+\\.[0-9]+):\\s+ufshcd_command:\\s+(?P<command>send_req|complete_rsp):.*?tag:\\s*(?P<tag>\\d+).*?size:\\s*(?P<size>[-]?\\d+).*?LBA:\\s*(?P<lba>\\d+).*?opcode:\\s*(?P<opcode>0x[0-9a-f]+).*?group_id:\\s*0x(?P<group_id>[0-9a-f]+).*?hwq_id:\\s*(?P<hwq_id>\\d+)',
+            '^\\s*(?P<process>.*?)\\s+\\[(?P<cpu>[0-9]+)\\].*?(?P<time>[0-9]+\\.[0-9]+):\\s+ufshcd_command:\\s+(?P<command>send_req|complete_rsp):.*?tag:\\s*(?P<tag>\\d+).*?size:\\s*(?P<size>[-]?\\d+).*?LBA:\\s*(?P<lba>\\d+).*?opcode:\\s*(?P<opcode>0x[0-9a-f]+).*?group_id:\\s*0x(?P<group_id>[0-9a-f]+).*?hwq_id:\\s*(?P<hwq_id>[-]?\\d+)',
             'Default pattern for parsing UFS traces',
             1
         ]);
@@ -151,6 +150,28 @@ export async function setTestInfo(logtype: string, title: string, content: strin
     }
 }
 
+/**
+ * 특정 ID의 테스트 정보를 삭제합니다.
+ */
+export async function deleteTestInfo(id: number) {
+    await open();
+    await db.execute('DELETE FROM testinfo WHERE id = ?', [id]);
+}
+
+/**
+ * 여러 테스트 정보를 한 번에 삭제합니다.
+ */
+export async function deleteMultipleTestInfo(ids: number[]) {
+    await open();
+    
+    // ID가 없으면 아무 작업도 하지 않음
+    if (!ids || ids.length === 0) return;
+    
+    // IN 절에서 사용할 플레이스홀더 생성 (?, ?, ? 등)
+    const placeholders = ids.map(() => '?').join(',');
+    
+    await db.execute(`DELETE FROM testinfo WHERE id IN (${placeholders})`, ids);
+}
 
 export async function getBufferSize(buffersize: number) {
     await open();

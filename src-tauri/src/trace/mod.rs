@@ -34,7 +34,7 @@ pub(crate) static ACTIVE_UFS_PATTERN: Lazy<RwLock<(String, Regex)>> = Lazy::new(
     RwLock::new((
         "Default UFS Pattern".to_string(),
         Regex::new(
-            r"^\s*(.*?)\s+\[([0-9]+)\].*?([0-9]+\.[0-9]+):\s+ufshcd_command:\s+(send_req|complete_rsp):.*?tag:\s*(\d+).*?size:\s*([-]?\d+).*?LBA:\s*(\d+).*?opcode:\s*(0x[0-9a-f]+).*?group_id:\s*0x([0-9a-f]+).*?hwq_id:\s*(\d+)"
+            r"^\s*(.*?)\s+\[([0-9]+)\].*?([0-9]+\.[0-9]+):\s+ufshcd_command:\s+(send_req|complete_rsp):.*?tag:\s*(\d+).*?size:\s*([-]?\d+).*?LBA:\s*(\d+).*?opcode:\s*(0x[0-9a-f]+).*?group_id:\s*0x([0-9a-f]+).*?hwq_id:\s*([-]?\d+)"
         ).unwrap()
     ))
 });
@@ -276,6 +276,7 @@ pub async fn reparse_trace(
     serde_json::to_string(&result).map_err(|e| e.to_string())
 }
 
+// 파일 및 폴더 삭제 관련 명령
 #[tauri::command]
 pub fn delete_parquet_files(file_paths: Vec<String>) -> Result<(), String> {
     let mut _success_count = 0;
@@ -309,6 +310,50 @@ pub fn delete_parquet_files(file_paths: Vec<String>) -> Result<(), String> {
     }
 
     Ok(())
+}
+
+#[tauri::command]
+pub fn delete_folder(folder_path: String) -> Result<(), String> {
+    if folder_path.trim().is_empty() {
+        return Ok(());
+    }
+
+    let path = std::path::Path::new(&folder_path);
+    
+    // 폴더 존재 여부 먼저 확인
+    if !path.exists() {
+        println!("Folder does not exist: {}", folder_path);
+        return Ok(());
+    }
+    
+    // 실제로 디렉토리인지 확인
+    if !path.is_dir() {
+        println!("Path exists but is not a directory: {}", folder_path);
+        return Ok(());
+    }
+
+    // 삭제 시도
+    println!("Attempting to delete folder: {}", folder_path);
+    match std::fs::remove_dir_all(path) {
+        Ok(_) => {
+            println!("Successfully deleted folder: {}", folder_path);
+            Ok(())
+        }
+        Err(e) => {
+            // 더 자세한 에러 메시지
+            let error_msg = format!("Failed to delete folder {}: {} (Error type: {:?})", 
+                folder_path, e, e.kind());
+            println!("Error: {}", error_msg);
+            
+            // Windows에서는 일부 조건에서 폴더 삭제가 지연될 수 있으므로
+            // 권한 관련 문제인지 확인
+            if e.kind() == std::io::ErrorKind::PermissionDenied {
+                Err(format!("권한 거부: 폴더 {} 삭제 실패 - 다른 프로세스가 사용 중일 수 있음", folder_path))
+            } else {
+                Err(error_msg)
+            }
+        }
+    }
 }
 
 #[tauri::command]

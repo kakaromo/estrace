@@ -263,7 +263,7 @@
     if (xAxisModel) {
       const xExtent = xAxisModel.axis.scale.getExtent();
       inputXMin = xExtent[0];
-      inputXMax = xExtent[1];
+      inputXMax = xExtent[1];      
     }
     showXAxisRangeDialog = true;
   }
@@ -484,13 +484,28 @@ function prepareChartData() {
       toolbox: {
         show: true,
         feature: {
-          dataZoom: {},
+          dataZoom: { },
           dataView: { readOnly: false },
-          magicType: { type: ['line', 'bar'] },
           restore: {},
           saveAsImage: {}
         }
       },
+      dataZoom: [
+        {
+          type: 'inside',
+          id: 'dataZoomX',
+          xAxisIndex: [0],
+          start: 0,
+          end: 100
+        },
+        {
+          type: 'inside',
+          id: 'dataZoomY',
+          yAxisIndex: [0],
+          start: 0,
+          end: 100
+        }
+      ],
       title: {
         text: chartTitle,
         left: 'center',
@@ -625,6 +640,8 @@ function prepareChartData() {
         to_lba: yZoomTo
       };
     });
+
+    chartInstance.on('datazoom')
   }
 
   // 데이터 변경 감지 및 차트 업데이트
@@ -657,7 +674,8 @@ function prepareChartData() {
 
   $effect(() => {
     const currentDataHash = hashData(data);
-    console.log('prevDataHash:', prevDataHash, 'currentDataHash:', currentDataHash, "filtertrace", $filtertrace);
+    // console.log('prevDataHash:', prevDataHash, 'currentDataHash:', currentDataHash, "filtertrace", $filtertrace);
+       
     if (prevDataHash !== currentDataHash) {
       prevDataHash = currentDataHash;
       if (chartInstance) {
