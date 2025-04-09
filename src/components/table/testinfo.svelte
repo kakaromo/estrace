@@ -6,6 +6,7 @@
     import { invoke } from "@tauri-apps/api/core";
     import { message, confirm } from "@tauri-apps/plugin-dialog";
     import { open } from "@tauri-apps/plugin-shell";
+    import { revealItemInDir } from '@tauri-apps/plugin-opener';
 
     import { Badge } from "$lib/components/ui/badge";
     import { Circle2 } from 'svelte-loading-spinners';
@@ -13,7 +14,7 @@
     import { Button } from "$lib/components/ui/button";
     import { traceStatusStore, Status } from '$stores/file';
     import VirtualList from '@sveltejs/svelte-virtual-list';
-    import { Trash2, RefreshCw, Loader2 } from 'lucide-svelte';
+    import { Trash2, RefreshCw, Loader2, FolderOpen } from 'lucide-svelte';
 
     interface TestInfo {
         id: number;
@@ -463,26 +464,27 @@
         }
     });
 
-    // 파일 경로에서 실제 폴더 경로 추출
-    function getActualFolderPath(logname: string): string {
-        if (!logname) return '';
+    // 경로에서 폴더 부분 추출하는 함수
+    function getFolderPath(path: string): string {
+        if (!path) return '';
         
-        const paths = logname.split(',');
-        if (paths.length === 0 || !paths[0]) return '';
+        // 콤마로 구분된 경우 첫 번째 경로만 사용
+        const actualPath = path.includes(',') ? path.split(',')[0] : path;
         
-        const normalizedPath = paths[0].replace(/\\/g, '/');
+        // 경로에서 폴더 부분 추출
+        const normalizedPath = actualPath.replace(/\\/g, '/');
         const lastSlashIndex = normalizedPath.lastIndexOf('/');
         
         if (lastSlashIndex > 0) {
-            return paths[0].substring(0, lastSlashIndex);
+            return actualPath.substring(0, lastSlashIndex);
         }
         
         return '';
     }
     
-    // 탐색기에서 폴더 열기
+    // 파일 탐색기에서 경로 열기
     async function openInExplorer(event: Event, path: string) {
-        event.stopPropagation(); // 이벤트 버블링 방지 (행 클릭 방지)
+        event.stopPropagation(); // 이벤트 버블링 방지
         
         if (!path || path.trim() === '') {
             await message('열 수 있는 경로가 없습니다.');
@@ -490,11 +492,10 @@
         }
         
         try {
-            // 폴더 경로가 존재하는지 확인 (선택사항)
-            // 존재하면 열기
-            await open(path);
+            console.log('파일 탐색기에서 열기:', path);
+            await revealItemInDir(path);
         } catch (error) {
-            console.error('Failed to open explorer:', error);
+            console.error('파일 탐색기 열기 실패:', error);
             await message(`파일 탐색기를 열 수 없습니다: ${error.message || '경로가 유효하지 않습니다'}`);
         }
     }
@@ -556,23 +557,23 @@
                         onchange={toggleSelectAll}
                         disabled={testData.length === 0}
                     />
-                    <div class="resize-handle" onmousedown={(e) => startResize(e, 'checkbox')}></div>
+                    <div class="resize-handle" role="separator" aria-orientation="vertical" onmousedown={(e) => startResize(e, 'checkbox')}></div>
                 </div>
                 <div class="header-cell" style="width: {columnWidths.id}">
                     ID
-                    <div class="resize-handle" onmousedown={(e) => startResize(e, 'id')}></div>
+                    <div class="resize-handle" role="separator" aria-orientation="vertical" onmousedown={(e) => startResize(e, 'id')}></div>
                 </div>
                 <div class="header-cell" style="width: {columnWidths.title}">
                     Title
-                    <div class="resize-handle" onmousedown={(e) => startResize(e, 'title')}></div>
+                    <div class="resize-handle" role="separator" aria-orientation="vertical" onmousedown={(e) => startResize(e, 'title')}></div>
                 </div>
                 <div class="header-cell" style="width: {columnWidths.logfolder}">
                     Log Folder
-                    <div class="resize-handle" onmousedown={(e) => startResize(e, 'logfolder')}></div>
+                    <div class="resize-handle" role="separator" aria-orientation="vertical" onmousedown={(e) => startResize(e, 'logfolder')}></div>
                 </div>
                 <div class="header-cell" style="width: {columnWidths.logname}">
                     Log File
-                    <div class="resize-handle" onmousedown={(e) => startResize(e, 'logname')}></div>
+                    <div class="resize-handle" role="separator" aria-orientation="vertical" onmousedown={(e) => startResize(e, 'logname')}></div>
                 </div>
                 <div class="header-cell" style="width: {columnWidths.actions}">
                     Actions
@@ -607,18 +608,24 @@
                         <div 
                             class="cell clickable-cell" 
                             style="width: {columnWidths.logfolder}"
-                            onclick={(e) => openInExplorer(e, getActualFolderPath(item.logname))}
-                            title="클릭하여 폴더 열기"
+                            onclick={(e) => openInExplorer(e, getFolderPath(item.sourcelog_path))}
+                            title="클릭하여 소스 로그 폴더 열기"
                         >
-                            {getActualFolderPath(item.logname)}
+                            <div class="folder-path">
+                                <span>{getFolderPath(item.sourcelog_path)}</span>
+                                <FolderOpen size={14} class="folder-icon" />
+                            </div>
                         </div>
                         <div 
                             class="cell clickable-cell" 
                             style="width: {columnWidths.logname}"
-                            onclick={(e) => item.logname && openInExplorer(e, getActualFolderPath(item.logname))}
-                            title="클릭하여 폴더 열기"
+                            onclick={(e) => item.logname && openInExplorer(e, getFolderPath(item.logname))}
+                            title="클릭하여 파싱된 파일 폴더 열기"
                         >
-                            {item.logname ? item.logname.split(',').map(path => getFileName(path)).join(', ') : ''}
+                            <div class="folder-path">
+                                <span>{getFolderPath(item.logname)}</span>
+                                <FolderOpen size={14} class="folder-icon" />
+                            </div>
                         </div>
                         <div class="cell" style="width: {columnWidths.actions}">
                             <div class="action-buttons">
@@ -825,5 +832,28 @@
     .clickable-cell:hover {
         color: #1d4ed8; /* 호버 시 더 진한 파란색 */
         background-color: #f0f9ff; /* 밝은 파란색 배경 */
+    }
+    
+    /* 폴더 경로 컨테이너 */
+    .folder-path {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+    }
+    
+    .folder-path span {
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+    
+    .folder-icon {
+        opacity: 0;
+        margin-left: 4px;
+        flex-shrink: 0;
+    }
+    
+    .clickable-cell:hover .folder-icon {
+        opacity: 1;
     }
 </style>
