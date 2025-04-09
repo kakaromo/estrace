@@ -319,13 +319,13 @@ pub fn delete_folder(folder_path: String) -> Result<(), String> {
     }
 
     let path = std::path::Path::new(&folder_path);
-    
+
     // 폴더 존재 여부 먼저 확인
     if !path.exists() {
         println!("Folder does not exist: {}", folder_path);
         return Ok(());
     }
-    
+
     // 실제로 디렉토리인지 확인
     if !path.is_dir() {
         println!("Path exists but is not a directory: {}", folder_path);
@@ -341,14 +341,21 @@ pub fn delete_folder(folder_path: String) -> Result<(), String> {
         }
         Err(e) => {
             // 더 자세한 에러 메시지
-            let error_msg = format!("Failed to delete folder {}: {} (Error type: {:?})", 
-                folder_path, e, e.kind());
+            let error_msg = format!(
+                "Failed to delete folder {}: {} (Error type: {:?})",
+                folder_path,
+                e,
+                e.kind()
+            );
             println!("Error: {}", error_msg);
-            
+
             // Windows에서는 일부 조건에서 폴더 삭제가 지연될 수 있으므로
             // 권한 관련 문제인지 확인
             if e.kind() == std::io::ErrorKind::PermissionDenied {
-                Err(format!("권한 거부: 폴더 {} 삭제 실패 - 다른 프로세스가 사용 중일 수 있음", folder_path))
+                Err(format!(
+                    "권한 거부: 폴더 {} 삭제 실패 - 다른 프로세스가 사용 중일 수 있음",
+                    folder_path
+                ))
             } else {
                 Err(error_msg)
             }

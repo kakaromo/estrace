@@ -5,6 +5,7 @@
     import { goto } from '$app/navigation';
     import { invoke } from "@tauri-apps/api/core";
     import { message, confirm } from "@tauri-apps/plugin-dialog";
+    import { open } from "@tauri-apps/plugin-shell";
 
     import { Badge } from "$lib/components/ui/badge";
     import { Circle2 } from 'svelte-loading-spinners';
@@ -12,6 +13,7 @@
     import { Button } from "$lib/components/ui/button";
     import { traceStatusStore, Status } from '$stores/file';
     import VirtualList from '@sveltejs/svelte-virtual-list';
+    import { Trash2, RefreshCw, Loader2 } from 'lucide-svelte';
 
     interface TestInfo {
         id: number;
@@ -32,16 +34,61 @@
     let start = $state(0);
     let end = $state(0);
     
-    // 열 너비 정의
-    const columnWidths = {
+    // 열 너비 정의 - 반응형 상태로 변경
+    let columnWidths = $state({
         checkbox: '40px',
         id: '70px',
         title: '330px',
         logfolder: '200px',
         logname: '150px',
         actions: '210px'
-    };
-
+    });
+    
+    // 컬럼 리사이징 관련 상태 변수
+    let isResizing = $state(false);
+    let currentResizingColumn = $state<string | null>(null);
+    let startX = $state(0);
+    let startWidth = $state(0);
+    
+    // 컬럼 리사이징 시작 핸들러
+    function startResize(event: MouseEvent, columnKey: string) {
+        event.preventDefault();
+        isResizing = true;
+        currentResizingColumn = columnKey;
+        startX = event.clientX;
+        
+        // 현재 컬럼 너비를 숫자로 파싱
+        startWidth = parseInt(columnWidths[columnKey], 10);
+        
+        // 전역 이벤트 리스너 추가
+        document.addEventListener('mousemove', handleMouseMove);
+        document.addEventListener('mouseup', stopResize);
+    }
+    
+    // 마우스 이동 시 리사이징 처리
+    function handleMouseMove(event: MouseEvent) {
+        if (!isResizing || !currentResizingColumn) return;
+        
+        const delta = event.clientX - startX;
+        const newWidth = Math.max(50, startWidth + delta); // 최소 너비 50px
+        
+        // 새 너비로 업데이트
+        columnWidths = {
+            ...columnWidths,
+            [currentResizingColumn]: `${newWidth}px`
+        };
+    }
+    
+    // 리사이징 종료 핸들러
+    function stopResize() {
+        isResizing = false;
+        currentResizingColumn = null;
+        
+        // 전역 이벤트 리스너 제거
+        document.removeEventListener('mousemove', handleMouseMove);
+        document.removeEventListener('mouseup', stopResize);
+    }
+    
     // 행 클릭 핸들러 - 상세 정보로 이동
     function handleRowClick(item: TestInfo) {
         initialTraceData();
@@ -415,6 +462,56 @@
             isLoading = false;
         }
     });
+
+    // 파일 경로에서 실제 폴더 경로 추출
+    function getActualFolderPath(logname: string): string {
+        if (!logname) return '';
+        
+        const paths = logname.split(',');
+        if (paths.length === 0 || !paths[0]) return '';
+        
+        const normalizedPath = paths[0].replace(/\\/g, '/');
+        const lastSlashIndex = normalizedPath.lastIndexOf('/');
+        
+        if (lastSlashIndex > 0) {
+            return paths[0].substring(0, lastSlashIndex);
+        }
+        
+        return '';
+    }
+    
+    // 탐색기에서 폴더 열기
+    async function openInExplorer(event: Event, path: string) {
+        event.stopPropagation(); // 이벤트 버블링 방지 (행 클릭 방지)
+        
+        if (!path || path.trim() === '') {
+            await message('열 수 있는 경로가 없습니다.');
+            return;
+        }
+        
+        try {
+            // 폴더 경로가 존재하는지 확인 (선택사항)
+            // 존재하면 열기
+            await open(path);
+        } catch (error) {
+            console.error('Failed to open explorer:', error);
+            await message(`파일 탐색기를 열 수 없습니다: ${error.message || '경로가 유효하지 않습니다'}`);
+        }
+    }
+    
+    // 파일 경로에서 파일명만 추출
+    function getFileName(path: string): string {
+        if (!path) return '';
+        
+        const normalizedPath = path.replace(/\\/g, '/');
+        const lastSlashIndex = normalizedPath.lastIndexOf('/');
+        
+        if (lastSlashIndex >= 0 && lastSlashIndex < normalizedPath.length - 1) {
+            return path.substring(lastSlashIndex + 1);
+        }
+        
+        return path;
+    }
 </script>
 
 <div class="container font-sans">
@@ -434,11 +531,7 @@
                     disabled={selectedItems.size === 0}
                     onclick={handleDeleteSelected}
                 >
-                    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="mr-1">
-                        <path d="M3 6h18"></path>
-                        <path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"></path>
-                        <path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"></path>
-                    </svg>
+                    <Trash2 class="mr-1" size={14} />
                     선택 항목 삭제 ({selectedItems.size})
                 </Button>
             </div>
@@ -463,12 +556,27 @@
                         onchange={toggleSelectAll}
                         disabled={testData.length === 0}
                     />
+                    <div class="resize-handle" onmousedown={(e) => startResize(e, 'checkbox')}></div>
                 </div>
-                <div class="header-cell" style="width: {columnWidths.id}">ID</div>
-                <div class="header-cell" style="width: {columnWidths.title}">Title</div>
-                <div class="header-cell" style="width: {columnWidths.logfolder}">Log Folder</div>
-                <div class="header-cell" style="width: {columnWidths.logname}">Log File</div>
-                <div class="header-cell" style="width: {columnWidths.actions}">Actions</div>
+                <div class="header-cell" style="width: {columnWidths.id}">
+                    ID
+                    <div class="resize-handle" onmousedown={(e) => startResize(e, 'id')}></div>
+                </div>
+                <div class="header-cell" style="width: {columnWidths.title}">
+                    Title
+                    <div class="resize-handle" onmousedown={(e) => startResize(e, 'title')}></div>
+                </div>
+                <div class="header-cell" style="width: {columnWidths.logfolder}">
+                    Log Folder
+                    <div class="resize-handle" onmousedown={(e) => startResize(e, 'logfolder')}></div>
+                </div>
+                <div class="header-cell" style="width: {columnWidths.logname}">
+                    Log File
+                    <div class="resize-handle" onmousedown={(e) => startResize(e, 'logname')}></div>
+                </div>
+                <div class="header-cell" style="width: {columnWidths.actions}">
+                    Actions
+                </div>
             </div>
             
             <!-- 테이블 바디 (VirtualList 사용) -->
@@ -496,8 +604,22 @@
                                 {item.title}
                             </span>
                         </div>
-                        <div class="cell" style="width: {columnWidths.logfolder}">{item.logfolder}</div>
-                        <div class="cell" style="width: {columnWidths.logname}">{item.logname}</div>
+                        <div 
+                            class="cell clickable-cell" 
+                            style="width: {columnWidths.logfolder}"
+                            onclick={(e) => openInExplorer(e, getActualFolderPath(item.logname))}
+                            title="클릭하여 폴더 열기"
+                        >
+                            {getActualFolderPath(item.logname)}
+                        </div>
+                        <div 
+                            class="cell clickable-cell" 
+                            style="width: {columnWidths.logname}"
+                            onclick={(e) => item.logname && openInExplorer(e, getActualFolderPath(item.logname))}
+                            title="클릭하여 폴더 열기"
+                        >
+                            {item.logname ? item.logname.split(',').map(path => getFileName(path)).join(', ') : ''}
+                        </div>
                         <div class="cell" style="width: {columnWidths.actions}">
                             <div class="action-buttons">
                                 <button 
@@ -506,17 +628,10 @@
                                     onclick={(e) => handleReparse(e, item.id)}
                                 >
                                     {#if reparsingId === item.id}
-                                        <svg class="animate-spin" xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                                            <path d="M21 12a9 9 0 1 1-6.219-8.56"/>
-                                        </svg>
+                                        <Loader2 size={12} class="animate-spin" />
                                         <span>Processing...</span>
                                     {:else}
-                                        <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                                            <path d="M21 2v6h-6"/>
-                                            <path d="M3 12a9 9 0 0 1-15-6.7L21 8"/>
-                                            <path d="M3 22v-6h6"/>
-                                            <path d="M21 12a9 9 0 0 1-15 6.7L3 16"/>
-                                        </svg>
+                                        <RefreshCw size={12} />
                                         <span>Reparse</span>
                                     {/if}
                                 </button>
@@ -525,11 +640,7 @@
                                     class="delete-button" 
                                     onclick={(e) => handleDeleteItem(e, item.id)}
                                 >
-                                    <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                                        <path d="M3 6h18"></path>
-                                        <path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"></path>
-                                        <path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"></path>
-                                    </svg>
+                                    <Trash2 size={12} />
                                     <span>Delete</span>
                                 </button>
                             </div>
@@ -571,18 +682,50 @@
         border-bottom: 1px solid #e5e7eb;
         font-weight: 600;
         font-size: 0.875rem;
+        user-select: none; /* 드래그 중 텍스트 선택 방지 */
     }
     
     .header-cell {
         padding: 0.75rem 1rem;
         text-align: left;
+        position: relative; /* 리사이징 핸들 포지셔닝을 위해 */
+        overflow: hidden;
+        white-space: nowrap;
+        text-overflow: ellipsis;
     }
     
-    .table-body {
-        flex: 1;
-        overflow-y: auto;
+    /* 리사이징 핸들 스타일 */
+    .resize-handle {
+        position: absolute;
+        right: 0;
+        top: 0;
+        bottom: 0;
+        width: 5px;
+        cursor: col-resize;
+        background-color: transparent;
     }
     
+    .resize-handle:hover, .resize-handle:active {
+        background-color: rgba(0, 0, 0, 0.1);
+    }
+    
+    /* 리사이징 중 커서 스타일 */
+    :global(body.resizing) {
+        cursor: col-resize !important;
+        user-select: none;
+    }
+    
+    /* 드래그 중 커서 스타일 적용을 위한 전역 클래스 */
+    :global(.resizing *) {
+        cursor: col-resize !important;
+    }
+    
+    /* 현재 리사이징 중인 컬럼 강조 */
+    .header-cell.resizing .resize-handle {
+        background-color: rgba(0, 0, 0, 0.2);
+    }
+    
+    /* 테이블 행 스타일 조정 */
     .table-row {
         display: flex;
         align-items: center;
@@ -590,6 +733,7 @@
         cursor: pointer;
     }
     
+    /* 셀 스타일 - 리사이즈 반영을 위해 overflow 처리 */
     .cell {
         padding: 0.5rem 1rem;
         white-space: nowrap;
@@ -669,5 +813,17 @@
         width: 16px;
         height: 16px;
         cursor: pointer;
+    }
+
+    /* 클릭 가능한 셀 스타일 */
+    .clickable-cell {
+        cursor: pointer;
+        color: #2563eb; /* 파란색으로 강조 */
+        text-decoration: underline;
+    }
+    
+    .clickable-cell:hover {
+        color: #1d4ed8; /* 호버 시 더 진한 파란색 */
+        background-color: #f0f9ff; /* 밝은 파란색 배경 */
     }
 </style>
