@@ -7,6 +7,7 @@
     import { message, confirm } from "@tauri-apps/plugin-dialog";
     import { open } from "@tauri-apps/plugin-shell";
     import { revealItemInDir } from '@tauri-apps/plugin-opener';
+    import { platform } from '@tauri-apps/plugin-os';
 
     import { Badge } from "$lib/components/ui/badge";
     import { Circle2 } from 'svelte-loading-spinners';
@@ -50,6 +51,9 @@
     let currentResizingColumn = $state<string | null>(null);
     let startX = $state(0);
     let startWidth = $state(0);
+    
+    // 운영체제 구분 변수 추가
+    let currentPlatform = $state<string>('');
     
     // 컬럼 리사이징 시작 핸들러
     function startResize(event: MouseEvent, columnKey: string) {
@@ -457,6 +461,9 @@
         isLoading = true;
         try {
             testData = await getAllTestInfo();
+            // 운영체제 정보 가져오기
+            currentPlatform = await platform();
+            console.log('현재 운영체제:', currentPlatform);
         } catch (error) {
             console.error('Error loading test data:', error);
         } finally {
@@ -482,7 +489,7 @@
         return '';
     }
     
-    // 파일 탐색기에서 경로 열기
+    // 파일 탐색기에서 경로 열기 - OS별 로직 추가
     async function openInExplorer(event: Event, path: string) {
         event.stopPropagation(); // 이벤트 버블링 방지
         
@@ -493,10 +500,32 @@
         
         try {
             console.log('파일 탐색기에서 열기:', path);
-            await revealItemInDir(path);
+            
+            // 운영체제별 처리
+            if (currentPlatform === 'win32') {
+                // Windows - explorer 명령어 사용
+                // 백슬래시로 변환
+                const winPath = path.replace(/\//g, '\\');
+                console.log('Windows 경로:', winPath);
+                
+                // explorer 명령어로 폴더 열기
+                await open(`explorer "${winPath}"`);
+            } else {
+                // macOS, Linux 등의 경우 기존 함수 사용
+                await revealItemInDir(path);
+            }
         } catch (error) {
             console.error('파일 탐색기 열기 실패:', error);
             await message(`파일 탐색기를 열 수 없습니다: ${error.message || '경로가 유효하지 않습니다'}`);
+            
+            // 대체 방법 시도
+            try {
+                console.log('대체 방법으로 파일 탐색기 열기 시도');
+                await open(getFolderPath(path));
+            } catch (fallbackError) {
+                console.error('대체 방법도 실패:', fallbackError);
+                await message(`대체 방법도 실패: ${fallbackError.message || '알 수 없는 오류'}`);
+            }
         }
     }
     
