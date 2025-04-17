@@ -1,9 +1,10 @@
 <script lang='ts'>
     import { getAllTestInfo, updateReparseResult, deleteTestInfo, deleteMultipleTestInfo } from '$api/db';
     import { testinfoid, initialTraceData } from '$stores/trace';
-    import { onMount } from 'svelte';
+    import { onMount, onDestroy } from 'svelte';
     import { goto } from '$app/navigation';
     import { invoke } from "@tauri-apps/api/core";
+    import { listen } from "@tauri-apps/api/event";
     import { message, confirm } from "@tauri-apps/plugin-dialog";
     import { open } from "@tauri-apps/plugin-shell";
     import { revealItemInDir } from '@tauri-apps/plugin-opener';
@@ -32,13 +33,22 @@
     let reparsingId = $state<number | null>(null);
     let selectedItems = $state<Set<number>>(new Set());
     let selectAll = $state(false);
+    
+    // 재파싱 진행 상태 추적 변수
+    let reParseProgressValue = $state(0);
+    let reParseProgressStage = $state('');
+    let reParseProgressMessage = $state('');
+    let reParseIsCancelled = $state(false);
+    
+    // 이벤트 리스너 정리 함수
+    let unlisten = null;
 
     let start = $state(0);
     let end = $state(0);
     
     // 열 너비 정의 - 반응형 상태로 변경
     let columnWidths = $state({
-        checkbox: '40px',
+        checkbox: '50px',
         id: '70px',
         title: '330px',
         logfolder: '200px',
@@ -377,6 +387,32 @@
         }
     }
     
+    // 재파싱 취소 함수
+    async function cancelReparse() {
+        try {
+            reParseIsCancelled = true;
+            await invoke('cancel_trace_process');
+            console.log('재파싱 취소 요청 전송됨');
+        } catch (error) {
+            console.error('재파싱 취소 실패:', error);
+        }
+    }
+    
+    // 재파싱 재시작 함수
+    async function restartReparse(id: number) {
+        try {
+            // 취소 신호 초기화
+            await invoke('reset_cancel_signal');
+            reParseIsCancelled = false;
+            
+            // 재파싱 시작
+            handleReparse(new Event('click'), id);
+        } catch (error) {
+            console.error('재파싱 재시작 실패:', error);
+            await message('재파싱 재시작에 실패했습니다.');
+        }
+    }
+    
     // 재파싱 버튼 클릭 핸들러
     async function handleReparse(event: Event, id: number) {
         // 이벤트 버블링 방지
@@ -387,6 +423,11 @@
         
         try {
             reparsingId = id;
+            reParseIsCancelled = false;
+            reParseProgressValue = 0;
+            reParseProgressStage = 'init';
+            reParseProgressMessage = '재파싱 준비 중...';
+            
             const testInfo = testData.find(item => item.id === id);
             
             if (!testInfo) {
@@ -415,7 +456,14 @@
                 id,
                 logfilePath: testInfo.sourcelog_path,
                 logfolder: testInfo.logfolder,
+                window: null // Tauri가 window 객체를 자동으로 처리
             });
+            
+            // 사용자가 취소한 경우 메시지 표시하고 종료
+            if (reParseIsCancelled) {
+                console.log('User cancelled the reparse operation');
+                return;
+            }
             
             // 파싱 결과 확인 및 DB 업데이트
             const parsedResult = JSON.parse(result);
@@ -435,8 +483,13 @@
             testData = await getAllTestInfo();
         } catch (error) {
             console.error('Reparse failed:', error);
-            await message(`재파싱 실패: ${error.message || error}`);
+            
+            // 사용자가 취소한 경우가 아니면 오류 메시지 표시
+            if (!reParseIsCancelled) {
+                await message(`재파싱 실패: ${error.message || error}`);
+            }
         } finally {
+            // 취소 여부에 관계없이 재파싱 ID 초기화
             reparsingId = null;
         }
     }
@@ -464,10 +517,34 @@
             // 운영체제 정보 가져오기
             currentPlatform = await platform();
             console.log('현재 운영체제:', currentPlatform);
+            
+            // 진행 상태 이벤트 리스너 설정
+            unlisten = await listen('trace-progress', (event) => {
+                const progress = event.payload;
+                
+                reParseProgressStage = progress.stage;
+                reParseProgressValue = progress.progress;
+                reParseProgressMessage = progress.message;
+                
+                // 진행 상태가 완료되면 타이머 중지
+                if (reParseProgressStage === 'complete') {
+                    console.log('재파싱 완료됨');
+                }
+                
+                // 상태 업데이트 로깅
+                console.log(`진행 상태 업데이트: ${reParseProgressStage} - ${reParseProgressValue}% - ${reParseProgressMessage}`);
+            });
         } catch (error) {
             console.error('Error loading test data:', error);
         } finally {
             isLoading = false;
+        }
+    });
+    
+    // 컴포넌트 소멸 시 이벤트 리스너 정리
+    onDestroy(() => {
+        if (unlisten) {
+            unlisten();
         }
     });
 
@@ -541,6 +618,16 @@
         }
         
         return path;
+    }
+
+    // 진행 상태 단계 설명 반환 함수
+    function getStageDescription(stage: string): string {
+        const stageDescriptions: Record<string, string> = {
+            init: '초기화 중',
+            processing: '처리 중',
+            complete: '완료됨',
+        };
+        return stageDescriptions[stage] || stage;
     }
 </script>
 
@@ -656,31 +743,58 @@
                                 <FolderOpen size={14} class="folder-icon" />
                             </div>
                         </div>
-                        <div class="cell" style="width: {columnWidths.actions}">
-                            <div class="action-buttons">
-                                <button 
-                                    class="reparse-button{reparsingId === item.id ? ' reparsing' : ''}" 
-                                    disabled={reparsingId === item.id}
-                                    onclick={(e) => handleReparse(e, item.id)}
-                                >
-                                    {#if reparsingId === item.id}
-                                        <Loader2 size={12} class="animate-spin" />
-                                        <span>Processing...</span>
+                        {#if reparsingId === item.id}
+                            <!-- 재파싱 진행 상태 표시 UI -->
+                            <div class="cell reparse-progress-cell" style="width: {columnWidths.actions}">
+                                <div class="reparse-progress">
+                                    <div class="progress-header">
+                                        <span class="progress-stage">{reParseProgressStage ? getStageDescription(reParseProgressStage) : '준비 중'}</span>
+                                        <span class="progress-percent">{reParseProgressValue.toFixed(1)}%</span>
+                                    </div>
+                                    
+                                    <div class="progress-bar-container">
+                                        <div class="progress-bar" style="width: {reParseProgressValue}%"></div>
+                                    </div>
+                                    
+                                    <div class="progress-message">{reParseProgressMessage}</div>
+                                    
+                                    {#if reParseIsCancelled}
+                                        <div class="reparse-controls">
+                                            <button class="restart-button" onclick={(e) => { e.stopPropagation(); restartReparse(item.id); }}>
+                                                <RefreshCw size={12} />
+                                                재시작
+                                            </button>
+                                        </div>
                                     {:else}
+                                        <div class="reparse-controls">
+                                            <button class="cancel-button" onclick={(e) => { e.stopPropagation(); cancelReparse(); }}>
+                                                <span>취소</span>
+                                            </button>
+                                        </div>
+                                    {/if}
+                                </div>
+                            </div>
+                        {:else}
+                            <div class="cell" style="width: {columnWidths.actions}">
+                                <div class="action-buttons">
+                                    <button 
+                                        class="reparse-button" 
+                                        onclick={(e) => handleReparse(e, item.id)}
+                                    >
                                         <RefreshCw size={12} />
                                         <span>Reparse</span>
-                                    {/if}
-                                </button>
-                                
-                                <button 
-                                    class="delete-button" 
-                                    onclick={(e) => handleDeleteItem(e, item.id)}
-                                >
-                                    <Trash2 size={12} />
-                                    <span>Delete</span>
-                                </button>
+                                    </button>
+                                    
+                                    <button 
+                                        class="delete-button" 
+                                        onclick={(e) => handleDeleteItem(e, item.id)}
+                                    >
+                                        <Trash2 size={12} />
+                                        <span>Delete</span>
+                                    </button>
+                                </div>
                             </div>
-                        </div>
+                        {/if}
                     </div>
                 </VirtualList>
             </div>
@@ -884,5 +998,76 @@
     
     .clickable-cell:hover .folder-icon {
         opacity: 1;
+    }
+
+    /* 재파싱 진행 상태 UI 스타일 */
+    .reparse-progress-cell {
+        display: flex;
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 4px;
+    }
+
+    .reparse-progress {
+        width: 100%;
+    }
+
+    .progress-header {
+        display: flex;
+        justify-content: space-between;
+        font-size: 12px;
+        font-weight: 500;
+    }
+
+    .progress-bar-container {
+        width: 100%;
+        height: 8px;
+        background-color: #e5e7eb;
+        border-radius: 4px;
+        overflow: hidden;
+        position: relative;
+    }
+
+    .progress-bar {
+        height: 100%;
+        background-color: #2563eb;
+        transition: width 0.2s ease-in-out;
+    }
+
+    .progress-message {
+        font-size: 12px;
+        color: #6b7280;
+    }
+
+    .reparse-controls {
+        display: flex;
+        gap: 8px;
+    }
+
+    .restart-button, .cancel-button {
+        padding: 4px 8px;
+        font-size: 12px;
+        border: none;
+        border-radius: 4px;
+        cursor: pointer;
+        transition: background-color 0.2s ease-in-out;
+    }
+
+    .restart-button {
+        background-color: #dbeafe;
+        color: #2563eb;
+    }
+
+    .restart-button:hover {
+        background-color: #bfdbfe;
+    }
+
+    .cancel-button {
+        background-color: #fee2e2;
+        color: #b91c1c;
+    }
+
+    .cancel-button:hover {
+        background-color: #fecaca;
     }
 </style>

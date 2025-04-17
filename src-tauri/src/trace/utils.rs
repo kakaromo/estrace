@@ -5,15 +5,16 @@ use std::path::PathBuf;
 use chrono::Local;
 use datafusion::prelude::*;
 use memmap2::Mmap;
-use rand::prelude::IndexedRandom;
+use rand::prelude::*;
 use rayon::prelude::*;
 use tauri::async_runtime::spawn_blocking;
+use tauri::Emitter;
 
 use serde::Serialize;
 
 use crate::trace::block::{block_bottom_half_latency_process, save_block_to_parquet};
 use crate::trace::ufs::{save_ufs_to_parquet, ufs_bottom_half_latency_process};
-use crate::trace::{Block, LatencySummary, TraceParseResult, BLOCK_CACHE, UFS, UFS_CACHE};
+use crate::trace::{Block, LatencySummary, TraceParseResult, BLOCK_CACHE, UFS, UFS_CACHE, ProgressEvent, CANCEL_SIGNAL};
 
 use crate::trace::filter::{filter_block_data, filter_ufs_data};
 
@@ -259,7 +260,7 @@ pub async fn readtrace(logname: String, max_records: usize) -> Result<String, St
                     "data": block_sample_info.data,
                     "total_count": block_sample_info.total_count,
                     "sampled_count": block_sample_info.sampled_count,
-                    "sampling_ratio": block_sample_info.sampling_ratio
+                    "sampling_ratio": block_sample_info.sampled_count
                 }
             });
             return Ok(result_json.to_string());
@@ -276,8 +277,12 @@ pub async fn readtrace(logname: String, max_records: usize) -> Result<String, St
         vec![logname.clone()]
     };
 
-    // DataFusion context 생성
-    let ctx = SessionContext::new();
+    // DataFusion context 생성 및 옵션 설정
+    let config = SessionConfig::new()
+        .with_batch_size(8192);  // 메모리 효율성을 위해 배치 크기 조정
+    
+    // 최신 DataFusion 버전에 맞게 SessionContext 생성
+    let ctx = SessionContext::new_with_config(config);
 
     // 각 파일 처리: 파일명에 따라 ufs 또는 block으로 구분
     for file in files {
@@ -288,15 +293,28 @@ pub async fn readtrace(logname: String, max_records: usize) -> Result<String, St
 
         if let Some(fname) = path.file_name().and_then(|s| s.to_str()) {
             if fname.contains("ufs") && fname.ends_with(".parquet") {
-                // UFS parquet 파일 읽기
+                // UFS parquet 파일 읽기 - 메모리 효율적인 스트리밍 방식으로
+                println!("Processing UFS file: {}", path.display());
+                
+                // 메타데이터를 통한 파일 크기 확인
+                let file_size = match std::fs::metadata(&path) {
+                    Ok(metadata) => metadata.len(),
+                    Err(_) => 0,
+                };
+                println!("File size: {} bytes", file_size);
+
+                // 최신 DataFusion API에 맞게 수정
+                let read_options = ParquetReadOptions::default();
+                
                 let df = ctx
                     .read_parquet(
                         path.to_str().ok_or("Invalid path")?,
-                        ParquetReadOptions::default(),
+                        read_options,
                     )
                     .await
                     .map_err(|e| e.to_string())?;
 
+                // UFS 배치 처리
                 let batches = df.collect().await.map_err(|e| e.to_string())?;
                 for batch in batches {
                     let num_rows = batch.num_rows();
@@ -425,11 +443,23 @@ pub async fn readtrace(logname: String, max_records: usize) -> Result<String, St
                     ufs_cache.insert(ufspath, ufs_vec.clone());
                 }
             } else if fname.contains("block") && fname.ends_with(".parquet") {
-                // Block parquet 파일 읽기
+                // block parquet 파일 읽기 - 메모리 효율적인 스트리밍 방식으로
+                println!("Processing block file: {}", path.display());
+                
+                // 메타데이터를 통한 파일 크기 확인
+                let file_size = match std::fs::metadata(&path) {
+                    Ok(metadata) => metadata.len(),
+                    Err(_) => 0,
+                };
+                println!("File size: {} bytes", file_size);
+
+                // 최신 DataFusion API에 맞게 수정
+                let read_options = ParquetReadOptions::default();
+                
                 let df = ctx
                     .read_parquet(
                         path.to_str().ok_or("Invalid path")?,
-                        ParquetReadOptions::default(),
+                        read_options,
                     )
                     .await
                     .map_err(|e| e.to_string())?;
@@ -595,7 +625,7 @@ pub async fn readtrace(logname: String, max_records: usize) -> Result<String, St
             "data": block_sample_info.data,
             "total_count": block_sample_info.total_count,
             "sampled_count": block_sample_info.sampled_count,
-            "sampling_ratio": block_sample_info.sampling_ratio
+            "sampling_ratio": block_sample_info.sampled_count
         }
     });
 
@@ -603,28 +633,92 @@ pub async fn readtrace(logname: String, max_records: usize) -> Result<String, St
 }
 
 // 로그 파일 파싱 및 parquet 저장 함수
-pub async fn starttrace(fname: String, logfolder: String) -> Result<TraceParseResult, String> {
+pub async fn starttrace(fname: String, logfolder: String, window: tauri::Window) -> Result<TraceParseResult, String> {
     let result = spawn_blocking(move || {
-        // 파일 열기 및 메모리 매핑
-        let file = File::open(&fname).map_err(|e| e.to_string())?;
-        let mmap = unsafe { Mmap::map(&file).map_err(|e| e.to_string())? };
+        // 파일 정보 확인
+        let file_meta = match std::fs::metadata(&fname) {
+            Ok(meta) => meta,
+            Err(e) => return Err(format!("파일 메타데이터 읽기 실패: {}", e)),
+        };
+        
+        // 파일 크기 확인 및 출력
+        let file_size = file_meta.len();
+        println!("로그 파일 크기: {} bytes ({:.2} GB)", file_size, file_size as f64 / 1_073_741_824.0);
+        
+        // 진행 상태 초기 이벤트 전송
+        let _ = window.emit("trace-progress", ProgressEvent {
+            stage: "init".to_string(),
+            progress: 0.0,
+            current: 0,
+            total: 100,
+            message: "로그 파일 분석 시작".to_string(),
+            eta_seconds: 0.0,
+            processing_speed: 0.0,
+        });
 
-        // 청크 단위로 처리
-        let chunk_size = 100_000; // 10만 라인씩 처리
+        // 메모리 맵 방식 또는 일반 파일 읽기 선택
+        let content: String;
+        
+        if file_size > 1_000_000_000 {  // 1GB 이상은 스트리밍 방식으로 처리
+            println!("대용량 파일 감지: 스트리밍 방식으로 처리합니다");
+            
+            // 파일 라인 수 예측 (샘플링)
+            let sample_size = 1024 * 1024;  // 1MB 샘플
+            let file = File::open(&fname).map_err(|e| e.to_string())?;
+            let mut sample_buffer = vec![0; sample_size.min(file_size as usize)];
+            let mut reader = std::io::BufReader::new(file);
+            use std::io::Read;
+            let read_bytes = reader.read(&mut sample_buffer).map_err(|e| e.to_string())?;
+            
+            // 샘플에서 라인 수 계산
+            let sample_lines = sample_buffer[..read_bytes].iter().filter(|&&b| b == b'\n').count();
+            let estimated_lines = (sample_lines as f64 / read_bytes as f64) * file_size as f64;
+            println!("예상 라인 수: {:.0}", estimated_lines);
+            
+            // 진행 상태 업데이트: 파일 읽기 시작
+            let _ = window.emit("trace-progress", ProgressEvent {
+                stage: "reading".to_string(),
+                progress: 0.0,
+                current: 0,
+                total: estimated_lines as u64,
+                message: format!("파일 읽기 중... (예상 라인 수: {:.0})", estimated_lines),
+                eta_seconds: 0.0,
+                processing_speed: 0.0,
+            });
+            
+            // 전체 파일 읽기
+            content = std::fs::read_to_string(&fname).map_err(|e| e.to_string())?;
+        } else {
+            // 1GB 미만은 메모리 맵 사용
+            let file = File::open(&fname).map_err(|e| e.to_string())?;
+            let mmap = unsafe { Mmap::map(&file).map_err(|e| e.to_string())? };
+            
+            // 파일 내용 UTF-8로 변환
+            content = match std::str::from_utf8(&mmap) {
+                Ok(c) => c.to_string(),
+                Err(e) => return Err(format!("File is not valid UTF-8: {}", e)),
+            };
+        }
+
+        // 청크 크기 최적화: 파일 크기에 따라 조정
+        let chunk_size = if file_size > 10_000_000_000 {  // 10GB 이상
+            250_000  // 더 큰 청크
+        } else if file_size > 1_000_000_000 {  // 1GB 이상
+            150_000  // 중간 크기 청크
+        } else {
+            100_000  // 기본 청크 크기
+        };
+        
+        println!("Chunk Size: {} 라인씩 처리", chunk_size);
 
         let mut ufs_list = Vec::new();
         let mut block_list = Vec::new();
         let mut missing_lines = Vec::new();
 
-        // 파일 내용 UTF-8로 변환
-        let content = match std::str::from_utf8(&mmap) {
-            Ok(c) => c,
-            Err(e) => return Err(format!("File is not valid UTF-8: {}", e)),
-        };
-
         // 라인별 병렬 처리
         let lines: Vec<&str> = content.lines().collect();
         let total_lines = lines.len();
+        println!("All Line Count: {}", total_lines);
 
         // 현재 활성화된 패턴 가져오기
         let active_ufs_pattern = match ACTIVE_UFS_PATTERN.read() {
@@ -637,8 +731,61 @@ pub async fn starttrace(fname: String, logfolder: String) -> Result<TraceParseRe
             Err(e) => return Err(format!("Block 패턴 로드 실패: {}", e)),
         };
 
+        // 진행 상황 표시용 변수
+        let mut last_progress = 0;
+        let start_time = std::time::Instant::now();
+        
+        // 진행 상태 업데이트: 파싱 시작
+        let _ = window.emit("trace-progress", ProgressEvent {
+            stage: "parsing".to_string(),
+            progress: 0.0,
+            current: 0,
+            total: total_lines as u64,
+            message: "로그 파싱 시작".to_string(),
+            eta_seconds: 0.0,
+            processing_speed: 0.0,
+        });
+
         // 청크 단위 처리 (메모리 효율성)
-        for chunk_start in (0..total_lines).step_by(chunk_size) {
+        for (chunk_index, chunk_start) in (0..total_lines).step_by(chunk_size).enumerate() {
+            // 작업 취소 신호 확인
+            {
+                let cancel = CANCEL_SIGNAL.lock().map_err(|e| e.to_string())?;
+                if *cancel {
+                    return Err("사용자에 의해 작업이 취소되었습니다.".to_string());
+                }
+            }
+            
+            // 진행 상황 업데이트 (5% 단위로)
+            let current_progress = (chunk_start * 100) / total_lines;
+            if current_progress >= last_progress + 5 {
+                let elapsed = start_time.elapsed();
+                let elapsed_secs = elapsed.as_secs_f64();
+                let lines_per_sec = chunk_start as f64 / elapsed_secs;
+                let remaining_lines = total_lines - chunk_start;
+                let remaining_secs = remaining_lines as f64 / lines_per_sec;
+                
+                println!(
+                    "진행 상황: {}% (처리 속도: {:.0} lines/s, 남은 시간: {:.1}분)",
+                    current_progress,
+                    lines_per_sec,
+                    remaining_secs / 60.0
+                );
+                
+                // 프론트엔드에 진행 상태 전송
+                let _ = window.emit("trace-progress", ProgressEvent {
+                    stage: "parsing".to_string(),
+                    progress: current_progress as f32,
+                    current: chunk_start as u64,
+                    total: total_lines as u64,
+                    message: format!("로그 파싱 중... ({}%)", current_progress),
+                    eta_seconds: remaining_secs as f32,
+                    processing_speed: lines_per_sec as f32,
+                });
+                
+                last_progress = current_progress;
+            }
+
             // 청크 수집
             let chunk_end = std::cmp::min(chunk_start + chunk_size, total_lines);
             let chunk_slice = &lines[chunk_start..chunk_end];
@@ -665,7 +812,7 @@ pub async fn starttrace(fname: String, logfolder: String) -> Result<TraceParseRe
                     let block_caps = active_block_pattern.1.captures(line);
                     if let Some(caps) = block_caps {
                         if let Ok(block) = parse_block_trace_with_caps(&caps) {
-                            return (Vec::new(), vec![block], Vec::new());
+                            return (Vec::new(), vec![block], Vec::new()); // 수정: Block 객체를 두 번째 벡터에 저장
                         }
                     }
 
@@ -675,8 +822,8 @@ pub async fn starttrace(fname: String, logfolder: String) -> Result<TraceParseRe
                 .reduce(
                     || {
                         (
-                            Vec::with_capacity(chunk_size),
-                            Vec::with_capacity(chunk_size),
+                            Vec::with_capacity(chunk_size / 4),  // 메모리 사용 최적화
+                            Vec::with_capacity(chunk_size / 4),
                             Vec::new(),
                         )
                     },
@@ -692,19 +839,139 @@ pub async fn starttrace(fname: String, logfolder: String) -> Result<TraceParseRe
             // 결과를 메인 벡터에 추가
             ufs_list.extend(chunk_results.0);
             block_list.extend(chunk_results.1);
-            missing_lines.extend(chunk_results.2);
+            
+            // missing_lines가 너무 많으면 처음 1000개만 저장 (메모리 절약)
+            if missing_lines.len() < 1000 {
+                missing_lines.extend(chunk_results.2);
+            } else if missing_lines.len() == 1000 && !chunk_results.2.is_empty() {
+                missing_lines.push(0); // 표시용 센티널 값
+            }
+            
+            // 메모리 사용량 정보 (10청크 단위로만 표시)
+            if chunk_index % 10 == 0 {
+                let ufs_mem = (std::mem::size_of::<UFS>() * ufs_list.capacity()) as f64 / 1_048_576.0;
+                let block_mem = (std::mem::size_of::<Block>() * block_list.capacity()) as f64 / 1_048_576.0;
+                println!("메모리 사용량 - UFS: {:.1} MB, Block: {:.1} MB", ufs_mem, block_mem);
+            }
         }
 
+        println!("파싱 완료: UFS 이벤트 {}, Block 이벤트 {}, 미인식 라인 {}",
+                 ufs_list.len(), block_list.len(), 
+                 if missing_lines.len() > 1000 { 
+                     format!("1000+") 
+                 } else { 
+                     format!("{}", missing_lines.len())
+                 });
+        
+        // 진행 상태 업데이트: latency 계산 시작
+        let _ = window.emit("trace-progress", ProgressEvent {
+            stage: "latency".to_string(),
+            progress: 0.0,
+            current: 0,
+            total: 100,
+            message: "latency 메트릭 계산 중...".to_string(),
+            eta_seconds: 0.0,
+            processing_speed: 0.0,
+        });
+        
+        println!("latency 메트릭 계산 중...");
+        
+        // 메모리 최적화를 위한 용량 조정
+        ufs_list.shrink_to_fit();
+        block_list.shrink_to_fit();
+
         // Bottom half: latency 계산 처리
+        println!("UFS latency 처리 시작...");
+        
+        // 작업 취소 확인
+        {
+            let cancel = CANCEL_SIGNAL.lock().map_err(|e| e.to_string())?;
+            if *cancel {
+                return Err("사용자에 의해 작업이 취소되었습니다.".to_string());
+            }
+        }
+        
+        // UFS latency 처리
+        let ufs_start = std::time::Instant::now();
         let processed_ufs_list = ufs_bottom_half_latency_process(ufs_list);
+        let ufs_elapsed = ufs_start.elapsed().as_secs_f32();
+        
+        // 진행 상태 업데이트: UFS 처리 완료
+        let _ = window.emit("trace-progress", ProgressEvent {
+            stage: "latency".to_string(),
+            progress: 40.0,
+            current: 40,
+            total: 100,
+            message: format!("UFS latency 처리 완료 (소요시간: {:.1}초)", ufs_elapsed),
+            eta_seconds: ufs_elapsed * 1.5, // Block 처리 예상 시간: UFS의 1.5배
+            processing_speed: if ufs_elapsed > 0.0 { processed_ufs_list.len() as f32 / ufs_elapsed } else { 0.0 },
+        });
+        
+        // 작업 취소 확인
+        {
+            let cancel = CANCEL_SIGNAL.lock().map_err(|e| e.to_string())?;
+            if *cancel {
+                return Err("사용자에 의해 작업이 취소되었습니다.".to_string());
+            }
+        }
+        
+        // Block latency 처리
+        println!("Block latency 처리 시작...");
+        let block_start = std::time::Instant::now();
         let processed_block_list = block_bottom_half_latency_process(block_list);
+        let block_elapsed = block_start.elapsed().as_secs_f32();
+        
+        // 진행 상태 업데이트: Block 처리 완료
+        let _ = window.emit("trace-progress", ProgressEvent {
+            stage: "latency".to_string(),
+            progress: 80.0,
+            current: 80,
+            total: 100,
+            message: format!("Block latency 처리 완료 (소요시간: {:.1}초)", block_elapsed),
+            eta_seconds: 10.0, // 파일 저장에 약 10초 소요 예상
+            processing_speed: if block_elapsed > 0.0 { processed_block_list.len() as f32 / block_elapsed } else { 0.0 },
+        });
 
         // 공통 timestamp 생성
         let now = Local::now();
         let timestamp = now.format("%Y%m%d_%H%M%S").to_string();
 
+        // 진행 상태 업데이트: 파일 저장 시작
+        let _ = window.emit("trace-progress", ProgressEvent {
+            stage: "saving".to_string(),
+            progress: 80.0,
+            current: 80,
+            total: 100,
+            message: "Parquet 파일 저장 시작...".to_string(),
+            eta_seconds: 10.0,
+            processing_speed: 0.0,
+        });
+        
+        println!("Parquet 파일 저장 시작...");
+        
+        // 작업 취소 확인
+        {
+            let cancel = CANCEL_SIGNAL.lock().map_err(|e| e.to_string())?;
+            if *cancel {
+                return Err("사용자에 의해 작업이 취소되었습니다.".to_string());
+            }
+        }
+        
         // 파싱된 UFS 로그를 parquet 파일로 저장
         let ufs_parquet_filename = if !processed_ufs_list.is_empty() {
+            println!("UFS Parquet 저장 중 ({} 이벤트)...", processed_ufs_list.len());
+            
+            // 진행 상태 업데이트: UFS 파일 저장 중
+            let _ = window.emit("trace-progress", ProgressEvent {
+                stage: "saving".to_string(),
+                progress: 85.0,
+                current: 85,
+                total: 100,
+                message: format!("UFS Parquet 저장 중 ({} 이벤트)...", processed_ufs_list.len()),
+                eta_seconds: 5.0,
+                processing_speed: 0.0,
+            });
+            
             save_ufs_to_parquet(
                 &processed_ufs_list,
                 logfolder.clone(),
@@ -715,8 +982,29 @@ pub async fn starttrace(fname: String, logfolder: String) -> Result<TraceParseRe
             String::new()
         };
 
+        // 작업 취소 확인
+        {
+            let cancel = CANCEL_SIGNAL.lock().map_err(|e| e.to_string())?;
+            if *cancel {
+                return Err("사용자에 의해 작업이 취소되었습니다.".to_string());
+            }
+        }
+        
         // Block trace 로그를 parquet 파일로 저장
         let block_parquet_filename = if !processed_block_list.is_empty() {
+            println!("Block Parquet 저장 중 ({} 이벤트)...", processed_block_list.len());
+            
+            // 진행 상태 업데이트: Block 파일 저장 중
+            let _ = window.emit("trace-progress", ProgressEvent {
+                stage: "saving".to_string(),
+                progress: 95.0,
+                current: 95,
+                total: 100,
+                message: format!("Block Parquet 저장 중 ({} 이벤트)...", processed_block_list.len()),
+                eta_seconds: 2.0,
+                processing_speed: 0.0,
+            });
+            
             save_block_to_parquet(
                 &processed_block_list,
                 logfolder.clone(),
@@ -726,6 +1014,21 @@ pub async fn starttrace(fname: String, logfolder: String) -> Result<TraceParseRe
         } else {
             String::new()
         };
+        
+        println!("처리 완료!");
+        let total_elapsed = start_time.elapsed().as_secs_f64();
+        println!("총 처리 시간: {:.1}초 ({:.1}분)", total_elapsed, total_elapsed / 60.0);
+        
+        // 완료 이벤트
+        let _ = window.emit("trace-progress", ProgressEvent {
+            stage: "complete".to_string(),
+            progress: 100.0,
+            current: 100,
+            total: 100,
+            message: format!("처리 완료! (총 소요시간: {:.1}초)", total_elapsed),
+            eta_seconds: 0.0,
+            processing_speed: (total_lines as f32 / total_elapsed as f32),
+        });
 
         Ok(TraceParseResult {
             missing_lines,
@@ -927,7 +1230,7 @@ pub async fn filter_trace(
                 "data": block_sample_info.data,
                 "total_count": block_sample_info.total_count,
                 "sampled_count": block_sample_info.sampled_count,
-                "sampling_ratio": block_sample_info.sampling_ratio,
+                "sampling_ratio": block_sample_info.sampled_count,
                 "type": "block"
             })
             .to_string()

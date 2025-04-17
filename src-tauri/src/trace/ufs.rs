@@ -20,10 +20,23 @@ use crate::trace::{
 
 // UFS 레이턴시 후처리 함수
 pub fn ufs_bottom_half_latency_process(mut ufs_list: Vec<UFS>) -> Vec<UFS> {
-    // time 기준으로 오름차순 정렬
-    ufs_list.sort_by(|a, b| a.time.partial_cmp(&b.time).unwrap());
+    // 이벤트가 없으면 빈 벡터 반환
+    if ufs_list.is_empty() {
+        return ufs_list;
+    }
 
-    let mut req_times: HashMap<(u32, String), f64> = HashMap::new();
+    // 시작 시간 기록
+    let start_time = std::time::Instant::now();
+    println!("UFS 지연 시간 처리 시작 (이벤트 수: {})", ufs_list.len());
+    
+    // time 기준으로 오름차순 정렬
+    println!("  UFS 데이터 시간순 정렬 중...");
+    ufs_list.sort_by(|a, b| a.time.partial_cmp(&b.time).unwrap_or(std::cmp::Ordering::Equal));
+
+    // 메모리 효율성을 위한 용량 최적화
+    let estimated_capacity = ufs_list.len() / 10;
+    let mut req_times: HashMap<(u32, String), f64> = HashMap::with_capacity(estimated_capacity);
+    
     let mut current_qd: u32 = 0;
     let mut last_complete_time: Option<f64> = None;
     let mut last_complete_qd0_time: Option<f64> = None;
@@ -33,7 +46,21 @@ pub fn ufs_bottom_half_latency_process(mut ufs_list: Vec<UFS>) -> Vec<UFS> {
     // 이전 send_req의 정보를 저장할 변수들
     let mut prev_send_req: Option<(u64, u32, String)> = None; // (lba, size, opcode)
 
-    for ufs in ufs_list.iter_mut() {
+    // 프로그레스 카운터
+    let total_events = ufs_list.len();
+    let report_interval = (total_events / 10).max(1); // 10% 간격으로 진행 상황 보고
+    let mut last_reported = 0;
+    
+    println!("  UFS 지연 시간 및 연속성 계산 중...");
+
+    for (idx, ufs) in ufs_list.iter_mut().enumerate() {
+        // 진행 상황 보고 (10% 간격)
+        if idx >= last_reported + report_interval {
+            let progress = (idx * 100) / total_events;
+            println!("  UFS 처리 진행률: {}% ({}/{})", progress, idx, total_events);
+            last_reported = idx;
+        }
+
         match ufs.action.as_str() {
             "send_req" => {
                 // 연속성 체크: 이전 send_req가 있는 경우
@@ -88,6 +115,13 @@ pub fn ufs_bottom_half_latency_process(mut ufs_list: Vec<UFS>) -> Vec<UFS> {
         }
         ufs.qd = current_qd;
     }
+
+    // 메모리 최적화를 위해 벡터 크기 조정
+    ufs_list.shrink_to_fit();
+
+    let elapsed = start_time.elapsed();
+    println!("UFS 지연 시간 처리 완료: {:.2}초", elapsed.as_secs_f64());
+    
     ufs_list
 }
 

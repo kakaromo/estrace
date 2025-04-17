@@ -12,6 +12,10 @@ use once_cell::sync::Lazy;
 use regex::Regex;
 use std::collections::HashMap;
 use std::sync::{Mutex, RwLock};
+use serde::Serialize;
+use tauri::Window;
+use lazy_static::lazy_static;
+use tauri::Emitter;
 
 // 타입들을 재내보냅니다
 pub use types::*;
@@ -54,6 +58,23 @@ pub const DEFAULT_PREVIEW_RECORDS: usize = 500_000;
 // initialize_patterns 함수를 직접 재내보내기
 pub use patterns::initialize_patterns;
 
+// 진행 상태 이벤트를 위한 구조체 추가
+#[derive(Clone, Debug, Serialize)]
+pub struct ProgressEvent {
+    pub stage: String,
+    pub progress: f32,          // 0.0 ~ 100.0
+    pub current: u64,
+    pub total: u64,
+    pub message: String,
+    pub eta_seconds: f32,      // 예상 남은 시간(초)
+    pub processing_speed: f32, // 처리 속도(항목/초)
+}
+
+// 작업 취소를 위한 글로벌 상태
+lazy_static! {
+    pub static ref CANCEL_SIGNAL: Mutex<bool> = Mutex::new(false);
+}
+
 // Tauri 명령 함수들
 #[tauri::command]
 pub async fn readtrace(logname: String, maxrecords: Option<usize>) -> Result<String, String> {
@@ -61,8 +82,13 @@ pub async fn readtrace(logname: String, maxrecords: Option<usize>) -> Result<Str
 }
 
 #[tauri::command]
-pub async fn starttrace(fname: String, logfolder: String) -> Result<TraceParseResult, String> {
-    utils::starttrace(fname, logfolder).await
+pub async fn starttrace(fname: String, logfolder: String, window: Window) -> Result<TraceParseResult, String> {
+    // 작업 시작 시 취소 신호 초기화
+    {
+        let mut cancel = CANCEL_SIGNAL.lock().map_err(|e| e.to_string())?;
+        *cancel = false;
+    }
+    utils::starttrace(fname, logfolder, window).await
 }
 
 #[tauri::command]
@@ -252,12 +278,30 @@ pub async fn reparse_trace(
     id: i64,
     logfile_path: String,
     logfolder: String,
+    window: tauri::Window,
 ) -> Result<String, String> {
     // 로그 파일 존재 여부 확인
     let path = std::path::Path::new(&logfile_path);
     if !path.exists() {
         return Err(format!("로그 파일이 존재하지 않습니다: {}", logfile_path));
     }
+
+    // 작업 시작 시 취소 신호 초기화
+    {
+        let mut cancel = CANCEL_SIGNAL.lock().map_err(|e| e.to_string())?;
+        *cancel = false;
+    }
+    
+    // 진행 상태 초기 이벤트 전송
+    let _ = window.emit("trace-progress", ProgressEvent {
+        stage: "init".to_string(),
+        progress: 0.0,
+        current: 0,
+        total: 100,
+        message: "재파싱 준비 중...".to_string(),
+        eta_seconds: 0.0,
+        processing_speed: 0.0,
+    });
 
     // 캐시 초기화 - 해당 ID에 대한 캐시 삭제
     {
@@ -270,7 +314,7 @@ pub async fn reparse_trace(
     }
 
     // 로그 파일 다시 파싱
-    let result = utils::starttrace(logfile_path, logfolder).await?;
+    let result = utils::starttrace(logfile_path, logfolder, window).await?;
 
     // 파싱 결과를 JSON으로 반환
     serde_json::to_string(&result).map_err(|e| e.to_string())
@@ -366,4 +410,27 @@ pub fn delete_folder(folder_path: String) -> Result<(), String> {
 #[tauri::command]
 pub fn test_regex_pattern(text: String, pattern: String) -> Result<String, String> {
     patterns::test_regex_pattern(text, pattern)
+}
+
+// Tauri 명령 - 진행 중인 작업 취소
+#[tauri::command]
+pub fn cancel_trace_process() -> Result<bool, String> {
+    let mut cancel = CANCEL_SIGNAL.lock().map_err(|e| e.to_string())?;
+    *cancel = true;
+    Ok(true)
+}
+
+// Tauri 명령 - 취소 신호 초기화
+#[tauri::command]
+pub fn reset_cancel_signal() -> Result<bool, String> {
+    let mut cancel = CANCEL_SIGNAL.lock().map_err(|e| e.to_string())?;
+    *cancel = false;
+    Ok(true)
+}
+
+// Tauri 명령 - 작업 상태 확인
+#[tauri::command]
+pub fn check_cancel_status() -> Result<bool, String> {
+    let cancel = CANCEL_SIGNAL.lock().map_err(|e| e.to_string())?;
+    Ok(*cancel)
 }

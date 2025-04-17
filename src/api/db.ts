@@ -1,17 +1,27 @@
 import Database from '@tauri-apps/plugin-sql';
 import { setting } from "$stores/setting";
 import type { TestInfo } from "$stores/trace";
-import { platform } from '@tauri-apps/plugin-os';
+import { platform, type } from '@tauri-apps/plugin-os';
 import { join, homeDir, appLocalDataDir } from '@tauri-apps/api/path';
 
 let db: Database = null;
 
 async function getDbPath() {
-    // 모든 OS에서 앱 실행 파일 위치에 DB 파일을 생성하기 위해
-    // appLocalDataDir 사용 (이 위치는 앱 실행 파일과 가까운 위치)
-    const appDir = await appLocalDataDir();
-    console.log(`Using DB path in app directory: ${appDir}`);
-    return `sqlite://${await join(appDir, 'test.db')}`;
+    // OS에 따라 다른 DB 저장 위치 설정
+    // Windows는 C:\, Linux와 macOS는 $HOME 디렉토리 사용
+    const osType = await type();
+    const osName = await platform();
+    console.log(`Operating system: ${osType}, Platform: ${osName}`);
+    
+    let basePath;
+    if (osType === 'windows') {
+        // Windows: C:\ 디렉토리 사용
+        return 'sqlite:\\test.db';
+        
+    } else {
+        // Linux와 macOS: $HOME 디렉토리 사용
+        return "sqlite://test.db";
+    }    
 }
 
 async function open() {
