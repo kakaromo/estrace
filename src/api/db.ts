@@ -14,9 +14,9 @@ async function getDbPath() {
     console.log(`Operating system: ${osType}, Platform: ${osName}`);
     
     let basePath;
-    if (osType === 'windows') {
+    if (osName === 'windows') {
         // Windows: C:\ 디렉토리 사용
-        return 'sqlite:\\test.db';
+        return 'sqlite:\\\\test.db';
         
     } else {
         // Linux와 macOS: $HOME 디렉토리 사용
