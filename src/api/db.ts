@@ -7,21 +7,14 @@ import { join, homeDir, appLocalDataDir } from '@tauri-apps/api/path';
 let db: Database = null;
 
 async function getDbPath() {
-    // OS에 따라 다른 DB 저장 위치 설정
-    // Windows는 C:\, Linux와 macOS는 $HOME 디렉토리 사용
-    const osType = await type();
-    const osName = await platform();
-    console.log(`Operating system: ${osType}, Platform: ${osName}`);
-    
-    let basePath;
-    if (osName === 'windows') {
-        // Windows: C:\ 디렉토리 사용
-        return 'sqlite:\\\\test.db';
-        
+    const currentPlatform = platform();
+    if (currentPlatform === 'windows') {
+        return 'sqlite://C:\\test.db';
     } else {
-        // Linux와 macOS: $HOME 디렉토리 사용
-        return "sqlite://test.db";
-    }    
+        // Linux 또는 macOS
+        const home = await homeDir();
+        return `sqlite://${await join(home, 'test.db')}`;
+    }
 }
 
 async function open() {
