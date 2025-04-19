@@ -52,6 +52,7 @@ pub fn run() {
             trace::block_continuity_stats,
             trace::export_to_csv,
             trace::filter_trace,
+            trace::load_tile_data,
             // Pattern management commands
             trace::add_pattern,
             trace::set_active_pattern,

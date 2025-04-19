@@ -3,6 +3,11 @@ name: 'build'
 on:
   workflow_dispatch: # This is for manual triggers.
     inputs:
+      branch:
+        description: '빌드할 브랜치'
+        required: true
+        default: 'main'
+        type: string
       platform:
         description: '빌드 플랫폼'
         required: true
@@ -37,6 +42,8 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.branch }}
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -100,6 +107,8 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.branch }}
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -179,6 +188,8 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.branch }}
 
       - name: Setup Node.js
         uses: actions/setup-node@v4

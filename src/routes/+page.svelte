@@ -50,7 +50,7 @@
     </div>
   </div>
 {:else}
-  <div class="hedden md:block">
+  <div class="hidden md:block">
     <AppMenu />
     <TestInfo />
   </div>

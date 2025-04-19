@@ -10,7 +10,15 @@ use rayon::prelude::*;
 use tauri::async_runtime::spawn_blocking;
 use tauri::Emitter;
 
+use datafusion::functions_aggregate::expr_fn::count;
+
 use serde::Serialize;
+
+// 수정된 imports - 올바른 경로 사용
+use arrow::datatypes::DataType;
+use datafusion::arrow::array::{Float64Array, Float32Array, Int64Array, UInt64Array, UInt32Array, StringViewArray};
+use datafusion::logical_expr::{col, lit};
+use serde_json::json;
 
 use crate::trace::block::{block_bottom_half_latency_process, save_block_to_parquet};
 use crate::trace::ufs::{save_ufs_to_parquet, ufs_bottom_half_latency_process};
@@ -43,7 +51,7 @@ pub fn sample_ufs(ufs_list: &[UFS], max_records: usize) -> SamplingInfo<UFS> {
         }
     } else {
         // 샘플링이 필요한 경우
-        let mut rng = rand::rng();
+        let mut rng = rand::thread_rng();
         let sampled_data = ufs_list
             .choose_multiple(&mut rng, max_records)
             .cloned()
@@ -73,7 +81,7 @@ pub fn sample_block(block_list: &[Block], max_records: usize) -> SamplingInfo<Bl
         }
     } else {
         // 샘플링이 필요한 경우
-        let mut rng = rand::rng();
+        let mut rng = rand::thread_rng();
         let sampled_data = block_list
             .choose_multiple(&mut rng, max_records)
             .cloned()
@@ -812,7 +820,7 @@ pub async fn starttrace(fname: String, logfolder: String, window: tauri::Window)
                     let block_caps = active_block_pattern.1.captures(line);
                     if let Some(caps) = block_caps {
                         if let Ok(block) = parse_block_trace_with_caps(&caps) {
-                            return (Vec::new(), vec![block], Vec::new()); // 수정: Block 객체를 두 번째 벡터에 저장
+                            return (Vec::new(), Vec::new(), vec![line_number]);
                         }
                     }
 
@@ -1239,4 +1247,244 @@ pub async fn filter_trace(
     };
 
     Ok(result)
+}
+
+// Parquet 파일에서 타일 기반으로 데이터를 로드하는 함수
+// 타일링 기법으로 대용량 데이터를 효율적으로 처리
+pub async fn load_tile_data(
+    parquet_file: String,
+    tile_key: String,
+    x_axis_key: String,
+    y_axis_key: String,
+    legend_key: String,
+    x_range: Vec<f64>,
+    y_range: Vec<f64>,
+    zoom: u32,
+) -> Result<String, String> {
+    println!("타일 데이터 요청: {}, 줌 레벨: {}", tile_key, zoom);
+    
+    // 타일 좌표 파싱
+    let parts: Vec<&str> = tile_key.split('/').collect();
+    if parts.len() != 3 {
+        return Err("잘못된 타일 키 형식".to_string());
+    }
+    
+    let tile_x = parts[1].parse::<u32>().map_err(|e| e.to_string())?;
+    let tile_y = parts[2].parse::<u32>().map_err(|e| e.to_string())?;
+    
+    // 타일의 실제 범위 계산 (WebMercator 좌표계 기준)
+    let max_tile = 2u32.pow(zoom);
+    let tile_size = 1.0 / max_tile as f64; // 정규화된 타일 크기
+    
+    let tile_min_x = tile_x as f64 * tile_size;
+    let tile_max_x = (tile_x + 1) as f64 * tile_size;
+    let tile_min_y = tile_y as f64 * tile_size;
+    let tile_max_y = (tile_y + 1) as f64 * tile_size;
+    
+    // x_range, y_range로 전달된 실제 데이터 범위
+    let data_min_x = x_range[0];
+    let data_max_x = x_range[1];
+    let data_min_y = y_range[0];
+    let data_max_y = y_range[1];
+    
+    // 타일 범위를 데이터 범위로 변환
+    let min_x = data_min_x + (data_max_x - data_min_x) * tile_min_x;
+    let max_x = data_min_x + (data_max_x - data_min_x) * tile_max_x;
+    let min_y = data_min_y + (data_max_y - data_min_y) * tile_min_y;
+    let max_y = data_min_y + (data_max_y - data_min_y) * tile_max_y;
+    
+    println!("타일 범위: X({} ~ {}), Y({} ~ {})", min_x, max_x, min_y, max_y);
+    
+    // 타일 크기에 따른 추출 데이터 포인트 수 계산
+    // 줌 레벨이 높을수록 타일 하나에 적은 데이터를 로드
+    let max_points_per_tile = if zoom < 10 {
+        10000 // 낮은 줌 레벨에서는 더 많은 포인트
+    } else if zoom < 15 {
+        5000
+    } else {
+        2000 // 높은 줌 레벨에서는 더 적은 포인트
+    };
+    
+    // DataFusion 컨텍스트 초기화
+    let config = SessionConfig::new()
+        .with_batch_size(8192);
+    let ctx = SessionContext::new_with_config(config);
+    
+    // Parquet 파일 읽기 준비
+    let path = PathBuf::from(&parquet_file);
+    if !path.is_file() {
+        return Err(format!("파일을 찾을 수 없음: {}", parquet_file));
+    }
+    
+    // 파일 유형 확인 (UFS 또는 Block)
+    let file_type = if path.to_string_lossy().contains("ufs") {
+        "ufs"
+    } else if path.to_string_lossy().contains("block") {
+        "block"
+    } else {
+        return Err("지원되지 않는 파일 형식".to_string());
+    };
+    
+    // 예상 로드 시간 로깅
+    let load_start = std::time::Instant::now();
+    
+    // 쿼리 생성 - 해당 타일 영역의 데이터만 필터링
+    let read_options = ParquetReadOptions::default();
+    let df = ctx
+        .read_parquet(
+            path.to_str().ok_or("Invalid path")?,
+            read_options,
+        ).await.map_err(|e| e.to_string())?;
+    
+    // 필터 조건 적용
+    let filtered_df = df
+        .filter(
+            col(&x_axis_key).gt_eq(lit(min_x))
+                .and(col(&x_axis_key).lt(lit(max_x)))
+                .and(col(&y_axis_key).gt_eq(lit(min_y)))
+                .and(col(&y_axis_key).lt(lit(max_y)))
+        ).map_err(|e| e.to_string())?;
+    
+    // 결과 개수 확인
+    let count_df = filtered_df.clone().aggregate(
+        vec![],
+        vec![count(lit(1)).alias("count")],
+    ).map_err(|e| e.to_string())?;
+    
+    // 집계된 카운트 가져오기
+    let batches = count_df.collect().await.map_err(|e| e.to_string())?;
+    
+    let total_count = if !batches.is_empty() && batches[0].num_rows() > 0 {
+        let array = batches[0]
+            .column(0)
+            .as_any()
+            .downcast_ref::<arrow::array::Int64Array>()
+            .ok_or("다운캐스트 실패")?;
+        array.value(0) as usize
+    } else {
+        0
+    };
+    
+    println!("타일 내 총 데이터 포인트: {}", total_count);
+    
+    // 만약 데이터가 너무 많다면, 다운샘플링 수행
+    let final_df = if total_count > max_points_per_tile {
+        // 샘플링 비율 계산
+        let sampling_ratio = max_points_per_tile as f64 / total_count as f64;
+        println!("다운샘플링 적용: {:.2}% ({}/{})", sampling_ratio * 100.0, max_points_per_tile, total_count);
+        
+        // DataFrame에서 sample 메서드 대신 TABLESAMPLE 쿼리 사용
+        let sql = format!(
+            "SELECT {} FROM filtered_table TABLESAMPLE ({:.6}%)",
+            format!("{}, {}, {}", x_axis_key, y_axis_key, legend_key),
+            sampling_ratio * 100.0
+        );
+        
+        // 임시 테이블로 등록
+        ctx.register_table("filtered_table", filtered_df.into_view())
+            .map_err(|e| e.to_string())?;
+        
+        // SQL 실행
+        ctx.sql(&sql).await.map_err(|e| e.to_string())?
+    } else {
+        // 필요한 컬럼만 선택
+        filtered_df
+            .select(vec![
+                col(&x_axis_key),
+                col(&y_axis_key),
+                col(&legend_key),
+                // 추가 필드는 필요에 따라 확장
+            ])
+            .map_err(|e| e.to_string())?
+    };
+    
+    // 결과 실행 및 배치 가져오기
+    let batches = final_df.collect().await.map_err(|e| e.to_string())?;
+    let loaded_count = batches.iter().map(|batch| batch.num_rows()).sum::<usize>();
+    println!("로드된 데이터 포인트: {}", loaded_count);
+    // 배치를 JSON으로 변환
+    let mut result = Vec::with_capacity(loaded_count);
+    
+    for batch in batches {
+        let x_idx = batch.schema().index_of(&x_axis_key).map_err(|e| e.to_string())?;
+        let y_idx = batch.schema().index_of(&y_axis_key).map_err(|e| e.to_string())?;
+        let legend_idx = batch.schema().index_of(&legend_key).map_err(|e| e.to_string())?;
+        
+        // 각 컬럼의 배열 타입에 따라 다운캐스팅
+        let x_array = batch.column(x_idx);
+        let y_array = batch.column(y_idx);
+        let legend_array = batch.column(legend_idx);
+        
+        for row in 0..batch.num_rows() {
+            let mut point = serde_json::Map::new();
+            
+            // X 값 추출 (타입에 따라 다운캐스팅)
+            match x_array.data_type() {
+                DataType::Float64 => {
+                    let arr = x_array.as_any().downcast_ref::<Float64Array>().ok_or("다운캐스트 실패")?;
+                    point.insert(x_axis_key.clone(), json!(arr.value(row)));
+                },
+                DataType::Float32 => {
+                    let arr = x_array.as_any().downcast_ref::<Float32Array>().ok_or("다운캐스트 실패")?;
+                    point.insert(x_axis_key.clone(), json!(arr.value(row)));
+                },
+                DataType::Int64 => {
+                    let arr = x_array.as_any().downcast_ref::<Int64Array>().ok_or("다운캐스트 실패")?;
+                    point.insert(x_axis_key.clone(), json!(arr.value(row)));
+                },
+                DataType::UInt64 => {
+                    let arr = x_array.as_any().downcast_ref::<UInt64Array>().ok_or("다운캐스트 실패")?;
+                    point.insert(x_axis_key.clone(), json!(arr.value(row)));
+                },
+                _ => return Err(format!("지원되지 않는 X 데이터 타입: {:?}", x_array.data_type())),
+            }
+            
+            // Y 값 추출
+            match y_array.data_type() {
+                DataType::Float64 => {
+                    let arr = y_array.as_any().downcast_ref::<Float64Array>().ok_or("다운캐스트 실패")?;
+                    point.insert(y_axis_key.clone(), json!(arr.value(row)));
+                },
+                DataType::Float32 => {
+                    let arr = y_array.as_any().downcast_ref::<Float32Array>().ok_or("다운캐스트 실패")?;
+                    point.insert(y_axis_key.clone(), json!(arr.value(row)));
+                },
+                DataType::Int64 => {
+                    let arr = y_array.as_any().downcast_ref::<Int64Array>().ok_or("다운캐스트 실패")?;
+                    point.insert(y_axis_key.clone(), json!(arr.value(row)));
+                },
+                DataType::UInt64 => {
+                    let arr = y_array.as_any().downcast_ref::<UInt64Array>().ok_or("다운캐스트 실패")?;
+                    point.insert(y_axis_key.clone(), json!(arr.value(row)));
+                },
+                _ => return Err(format!("지원되지 않는 Y 데이터 타입: {:?}", y_array.data_type())),
+            }
+            
+            // 범례 값 추출
+            match legend_array.data_type() {
+                DataType::Utf8 => {
+                    let arr = legend_array.as_any().downcast_ref::<StringViewArray>().ok_or("다운캐스트 실패")?;
+                    point.insert(legend_key.clone(), json!(arr.value(row).to_string()));
+                },
+                DataType::UInt32 => {
+                    let arr = legend_array.as_any().downcast_ref::<UInt32Array>().ok_or("다운캐스트 실패")?;
+                    point.insert(legend_key.clone(), json!(arr.value(row).to_string()));
+                },
+                _ => return Err(format!("지원되지 않는 범례 데이터 타입: {:?}", legend_array.data_type())),
+            }
+            
+            result.push(serde_json::Value::Object(point));
+        }
+    }
+    
+    // 로드 시간 측정 및 로깅
+    let load_time = load_start.elapsed();
+    println!(
+        "타일 로드 완료 - {} 포인트, 소요시간: {:.2}초",
+        result.len(),
+        load_time.as_secs_f64()
+    );
+    
+// JSON으로 직렬화하여 반환
+serde_json::to_string(&result).map_err(|e| e.to_string())
 }

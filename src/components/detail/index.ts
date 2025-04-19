@@ -10,3 +10,15 @@ export { default as RWDStats } from './rwdstats.svelte';
 export { default as TabContent } from './TabContent.svelte';
 export { default as LatencyTabs } from './LatencyTabs.svelte';
 export { default as CPUTabs} from './CPUTabs.svelte';
+
+export * from './CPUTabs.svelte';
+export * from './LatencyTabs.svelte';
+export * from './TabContent.svelte';
+export * from './latencystats.svelte';
+export * from './rwdstats.svelte';
+export * from './scattercharts.svelte';
+export * from './scatterchartsplotly.svelte';
+export * from './scatterplotdeckgl.svelte';
+export * from './selectType.svelte';
+export * from './sizestats.svelte';
+export * from './visualitem.svelte';

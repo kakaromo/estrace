@@ -434,3 +434,26 @@ pub fn check_cancel_status() -> Result<bool, String> {
     let cancel = CANCEL_SIGNAL.lock().map_err(|e| e.to_string())?;
     Ok(*cancel)
 }
+
+#[tauri::command]
+pub async fn load_tile_data(
+    parquet_file: String,
+    tile_key: String,
+    x_axis_key: String,
+    y_axis_key: String,
+    legend_key: String,
+    x_range: Vec<f64>,
+    y_range: Vec<f64>,
+    zoom: u32,
+) -> Result<String, String> {
+    utils::load_tile_data(
+        parquet_file,
+        tile_key,
+        x_axis_key,
+        y_axis_key,
+        legend_key,
+        x_range,
+        y_range,
+        zoom
+    ).await
+}
