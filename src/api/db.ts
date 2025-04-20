@@ -8,11 +8,11 @@ let db: Database = null;
 
 async function getDbPath() {
     const currentPlatform = platform();
+    const home = await homeDir();
     if (currentPlatform === 'windows') {
-        return 'sqlite://C:\\test.db';
+        return `sqlite:\\\\${await join(home, 'test.db')}`;
     } else {
-        // Linux 또는 macOS
-        const home = await homeDir();
+        // Linux 또는 macOS        
         return `sqlite://${await join(home, 'test.db')}`;
     }
 }
