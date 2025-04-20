@@ -32,6 +32,7 @@ pub fn run() {
     trace::initialize_patterns();
 
     tauri::Builder::default()
+        .enable_macos_default_menu(false)
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_clipboard_manager::init())
@@ -63,7 +64,10 @@ pub fn run() {
             trace::delete_parquet_files,
             // Pattern testing
             trace::test_regex_pattern,
-            trace::delete_folder
+            trace::delete_folder,
+            trace::cancel_trace_process,
+            trace::reset_cancel_signal,
+            trace::check_cancel_status,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -27,7 +27,7 @@ pub fn block_bottom_half_latency_process(block_list: Vec<Block>) -> Vec<Block> {
     
     // 시작 시간 기록
     let start_time = std::time::Instant::now();
-    println!("Block 지연 시간 처리 시작 (이벤트 수: {})", block_list.len());
+    println!("Block Latency 처리 시작 (이벤트 수: {})", block_list.len());
     
     // 1. 시간순 정렬
     println!("  Block 데이터 시간순 정렬 중...");
@@ -103,8 +103,8 @@ pub fn block_bottom_half_latency_process(block_list: Vec<Block>) -> Vec<Block> {
     processed_issues.shrink_to_fit();
     
     // 3. 중복이 제거된 데이터에 대해 후처리 진행
-    // (연속성, 지연 시간 등 처리)
-    println!("  Block 지연 시간 및 연속성 계산 중...");
+    // (연속성, Latency 등 처리)
+    println!("  Block Latency 및 연속성 계산 중...");
     let mut filtered_blocks = Vec::with_capacity(deduplicated_blocks.len());
     let mut req_times: HashMap<(u64, String), f64> = HashMap::with_capacity(deduplicated_blocks.len() / 5);
     let mut current_qd: u32 = 0;
@@ -115,7 +115,7 @@ pub fn block_bottom_half_latency_process(block_list: Vec<Block>) -> Vec<Block> {
     let mut first_c: bool = false;
     let mut first_complete_time: f64 = 0.0;
 
-    // 프로그레스 카운터 - 지연 시간 계산 단계
+    // 프로그레스 카운터 - Latency 계산 단계
     let total_dedup = deduplicated_blocks.len();
     let report_interval_2 = (total_dedup / 10).max(1); 
     let mut last_reported_2 = 0;
@@ -124,7 +124,7 @@ pub fn block_bottom_half_latency_process(block_list: Vec<Block>) -> Vec<Block> {
         // 진행 상황 보고 (10% 간격)
         if idx >= last_reported_2 + report_interval_2 {
             let progress = (idx * 100) / total_dedup;
-            println!("  지연 시간 계산 진행률: {}% ({}/{})", progress, idx, total_dedup);
+            println!("  Latency 계산 진행률: {}% ({}/{})", progress, idx, total_dedup);
             last_reported_2 = idx;
         }
         
@@ -207,7 +207,7 @@ pub fn block_bottom_half_latency_process(block_list: Vec<Block>) -> Vec<Block> {
     filtered_blocks.shrink_to_fit();
     
     let elapsed = start_time.elapsed();
-    println!("Block 지연 시간 처리 완료: {:.2}초", elapsed.as_secs_f64());
+    println!("Block Latency 처리 완료: {:.2}초", elapsed.as_secs_f64());
     
     filtered_blocks
 }

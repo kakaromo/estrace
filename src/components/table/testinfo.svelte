@@ -758,7 +758,7 @@
                                     
                                     <div class="progress-message">{reParseProgressMessage}</div>
                                     
-                                    {#if reParseIsCancelled}
+                                    <!-- {#if reParseIsCancelled}
                                         <div class="reparse-controls">
                                             <button class="restart-button" onclick={(e) => { e.stopPropagation(); restartReparse(item.id); }}>
                                                 <RefreshCw size={12} />
@@ -771,7 +771,7 @@
                                                 <span>취소</span>
                                             </button>
                                         </div>
-                                    {/if}
+                                    {/if} -->
                                 </div>
                             </div>
                         {:else}

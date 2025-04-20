@@ -145,7 +145,7 @@
             case 'init': return '초기화';
             case 'reading': return '파일 읽기';
             case 'parsing': return '로그 파싱';
-            case 'latency': return '지연 시간 계산';
+            case 'latency': return '후처리 시간 계산';
             case 'saving': return '파일 저장';
             case 'complete': return '완료';
             default: return stage;
@@ -450,7 +450,7 @@
         
         <Dialog.Footer>
             <div class="flex justify-between items-center w-full">
-                {#if $traceStatusStore === Status.Loading && !isCancelled}
+                <!-- {#if $traceStatusStore === Status.Loading && !isCancelled}
                     <Button 
                         variant="destructive" 
                         class="mr-auto" 
@@ -467,7 +467,7 @@
                     >
                         닫기
                     </Button>
-                {/if}
+                {/if} -->
                 
                 <Button 
                     type="submit" 

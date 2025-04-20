@@ -27,7 +27,7 @@ pub fn ufs_bottom_half_latency_process(mut ufs_list: Vec<UFS>) -> Vec<UFS> {
 
     // 시작 시간 기록
     let start_time = std::time::Instant::now();
-    println!("UFS 지연 시간 처리 시작 (이벤트 수: {})", ufs_list.len());
+    println!("UFS Latency 처리 시작 (이벤트 수: {})", ufs_list.len());
     
     // time 기준으로 오름차순 정렬
     println!("  UFS 데이터 시간순 정렬 중...");
@@ -51,7 +51,7 @@ pub fn ufs_bottom_half_latency_process(mut ufs_list: Vec<UFS>) -> Vec<UFS> {
     let report_interval = (total_events / 10).max(1); // 10% 간격으로 진행 상황 보고
     let mut last_reported = 0;
     
-    println!("  UFS 지연 시간 및 연속성 계산 중...");
+    println!("  UFS Latency 및 연속성 계산 중...");
 
     for (idx, ufs) in ufs_list.iter_mut().enumerate() {
         // 진행 상황 보고 (10% 간격)
@@ -120,7 +120,7 @@ pub fn ufs_bottom_half_latency_process(mut ufs_list: Vec<UFS>) -> Vec<UFS> {
     ufs_list.shrink_to_fit();
 
     let elapsed = start_time.elapsed();
-    println!("UFS 지연 시간 처리 완료: {:.2}초", elapsed.as_secs_f64());
+    println!("UFS Latency 처리 완료: {:.2}초", elapsed.as_secs_f64());
     
     ufs_list
 }
