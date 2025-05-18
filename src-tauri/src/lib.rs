@@ -49,6 +49,8 @@ pub fn run() {
             trace::block_latencystats,
             trace::ufs_sizestats,
             trace::block_sizestats,
+            trace::ufs_allstats,
+            trace::block_allstats,
             trace::ufs_continuity_stats,
             trace::block_continuity_stats,
             trace::export_to_csv,
