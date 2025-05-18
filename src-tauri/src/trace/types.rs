@@ -123,3 +123,12 @@ pub struct TotalContinuity {
     pub continuous_bytes: u64,      // 연속 바이트 수
     pub bytes_ratio: f64,           // 연속 바이트 비율
 }
+
+#[derive(Serialize, Debug, Clone)]
+pub struct TraceStats {
+    pub dtoc_stat: LatencyStats,
+    pub ctod_stat: LatencyStats,
+    pub ctoc_stat: LatencyStats,
+    pub size_counts: SizeStats,
+    pub continuity: ContinuityStats,
+}

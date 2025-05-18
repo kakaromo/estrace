@@ -15,7 +15,7 @@ use crate::trace::utils::{
 };
 use crate::trace::{
     ContinuityCount, ContinuityStats, LatencyStat, LatencyStats, LatencyValue, SizeStats,
-    TotalContinuity, UFS,
+    TotalContinuity, TraceStats, UFS,
 };
 
 // UFS 레이턴시 후처리 함수
@@ -492,6 +492,203 @@ pub async fn continuity_stats(
             continuous_bytes,
             bytes_ratio,
         },
+    };
+
+    serde_json::to_vec(&result).map_err(|e| e.to_string())
+}
+
+// UFS 전체 통계 계산 함수 - 단일 필터링으로 모든 통계 계산
+pub async fn allstats(
+    logname: String,
+    zoom_column: String,
+    time_from: Option<f64>,
+    time_to: Option<f64>,
+    col_from: Option<f64>,
+    col_to: Option<f64>,
+    thresholds: Vec<String>,
+) -> Result<Vec<u8>, String> {
+    // threshold 문자열을 밀리초 값으로 변환
+    let mut threshold_values: Vec<f64> = Vec::new();
+    for t in &thresholds {
+        let ms = parse_time_to_ms(t)?;
+        threshold_values.push(ms);
+    }
+
+    // 한 번만 필터링 수행
+    let filtered_ufs =
+        filter_ufs_data(&logname, time_from, time_to, &zoom_column, col_from, col_to)?;
+
+    // opcode 수집 및 초기화
+    let unique_opcodes: std::collections::HashSet<String> =
+        filtered_ufs.iter().map(|u| u.opcode.clone()).collect();
+
+    let mut dtoc_counts = std::collections::BTreeMap::new();
+    let mut ctod_counts = std::collections::BTreeMap::new();
+    let mut ctoc_counts = std::collections::BTreeMap::new();
+    let mut dtoc_groups = std::collections::BTreeMap::new();
+    let mut ctod_groups = std::collections::BTreeMap::new();
+    let mut ctoc_groups = std::collections::BTreeMap::new();
+
+    for op in &unique_opcodes {
+        dtoc_counts.insert(op.clone(), initialize_ranges(&thresholds));
+        ctod_counts.insert(op.clone(), initialize_ranges(&thresholds));
+        ctoc_counts.insert(op.clone(), initialize_ranges(&thresholds));
+        dtoc_groups.insert(op.clone(), Vec::new());
+        ctod_groups.insert(op.clone(), Vec::new());
+        ctoc_groups.insert(op.clone(), Vec::new());
+    }
+
+    // size 통계 초기화
+    let target_opcodes = ["0x2a", "0x28", "0x42"];
+    let mut opcode_stats = std::collections::BTreeMap::new();
+    let mut total_counts = std::collections::BTreeMap::new();
+    for op in target_opcodes.iter() {
+        opcode_stats.insert(op.to_string(), std::collections::BTreeMap::new());
+        total_counts.insert(op.to_string(), 0usize);
+    }
+
+    // continuity 통계 초기화
+    let mut op_stats: std::collections::BTreeMap<String, ContinuityCount> =
+        std::collections::BTreeMap::new();
+    let mut total_requests = 0usize;
+    let mut total_continuous = 0usize;
+    let mut total_bytes: u64 = 0;
+    let mut continuous_bytes: u64 = 0;
+
+    // 단일 루프로 모든 통계 계산
+    for ufs in &filtered_ufs {
+        if ufs.action == "complete_rsp" {
+            let range_key = create_range_key(ufs.dtoc, &threshold_values, &thresholds);
+            if let Some(map) = dtoc_counts.get_mut(&ufs.opcode) {
+                if let Some(v) = map.get_mut(&range_key) {
+                    *v += 1;
+                }
+            }
+            dtoc_groups.entry(ufs.opcode.clone()).or_default().push(ufs.dtoc);
+
+            let range_key = create_range_key(ufs.ctoc, &threshold_values, &thresholds);
+            if let Some(map) = ctoc_counts.get_mut(&ufs.opcode) {
+                if let Some(v) = map.get_mut(&range_key) {
+                    *v += 1;
+                }
+            }
+            ctoc_groups.entry(ufs.opcode.clone()).or_default().push(ufs.ctoc);
+
+            if target_opcodes.contains(&ufs.opcode.as_str()) {
+                if let Some(size_map) = opcode_stats.get_mut(&ufs.opcode) {
+                    *size_map.entry(ufs.size).or_insert(0) += 1;
+                    *total_counts.get_mut(&ufs.opcode).unwrap() += 1;
+                }
+            }
+        }
+
+        if ufs.action == "send_req" {
+            let range_key = create_range_key(ufs.ctod, &threshold_values, &thresholds);
+            if let Some(map) = ctod_counts.get_mut(&ufs.opcode) {
+                if let Some(v) = map.get_mut(&range_key) {
+                    *v += 1;
+                }
+            }
+            ctod_groups.entry(ufs.opcode.clone()).or_default().push(ufs.ctod);
+
+            if ufs.opcode == "0x28" || ufs.opcode == "0x2a" || ufs.opcode == "0x42" {
+                let stats = op_stats.entry(ufs.opcode.clone()).or_insert(ContinuityCount {
+                    continuous: 0,
+                    non_continuous: 0,
+                    ratio: 0.0,
+                    total_bytes: 0,
+                    continuous_bytes: 0,
+                    bytes_ratio: 0.0,
+                });
+
+                let bytes = ufs.size as u64 * 4096;
+                stats.total_bytes += bytes;
+                total_bytes += bytes;
+
+                if ufs.continuous {
+                    stats.continuous += 1;
+                    stats.continuous_bytes += bytes;
+                    total_continuous += 1;
+                    continuous_bytes += bytes;
+                } else {
+                    stats.non_continuous += 1;
+                }
+                total_requests += 1;
+            }
+        }
+    }
+
+    // 요약 통계 계산
+    let mut dtoc_summary = std::collections::BTreeMap::new();
+    for (op, mut values) in dtoc_groups {
+        let summary = calculate_statistics(&mut values);
+        dtoc_summary.insert(op, summary);
+    }
+    let mut ctod_summary = std::collections::BTreeMap::new();
+    for (op, mut values) in ctod_groups {
+        let summary = calculate_statistics(&mut values);
+        ctod_summary.insert(op, summary);
+    }
+    let mut ctoc_summary = std::collections::BTreeMap::new();
+    for (op, mut values) in ctoc_groups {
+        let summary = calculate_statistics(&mut values);
+        ctoc_summary.insert(op, summary);
+    }
+
+    let dtoc_stat = LatencyStats {
+        latency_counts: dtoc_counts,
+        summary: Some(dtoc_summary),
+    };
+    let ctod_stat = LatencyStats {
+        latency_counts: ctod_counts,
+        summary: Some(ctod_summary),
+    };
+    let ctoc_stat = LatencyStats {
+        latency_counts: ctoc_counts,
+        summary: Some(ctoc_summary),
+    };
+
+    let size_counts = SizeStats {
+        opcode_stats,
+        total_counts,
+    };
+
+    for (_, stats) in op_stats.iter_mut() {
+        let total = stats.continuous + stats.non_continuous;
+        if total > 0 {
+            stats.ratio = (stats.continuous as f64) / (total as f64) * 100.0;
+            stats.bytes_ratio = (stats.continuous_bytes as f64) / (stats.total_bytes as f64) * 100.0;
+        }
+    }
+
+    let overall_ratio = if total_requests > 0 {
+        (total_continuous as f64) / (total_requests as f64) * 100.0
+    } else {
+        0.0
+    };
+    let bytes_ratio = if total_bytes > 0 {
+        (continuous_bytes as f64) / (total_bytes as f64) * 100.0
+    } else {
+        0.0
+    };
+    let continuity = ContinuityStats {
+        op_stats,
+        total: TotalContinuity {
+            total_requests,
+            continuous_requests: total_continuous,
+            overall_ratio,
+            total_bytes,
+            continuous_bytes,
+            bytes_ratio,
+        },
+    };
+
+    let result = TraceStats {
+        dtoc_stat,
+        ctod_stat,
+        ctoc_stat,
+        size_counts,
+        continuity,
     };
 
     serde_json::to_vec(&result).map_err(|e| e.to_string())

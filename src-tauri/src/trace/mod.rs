@@ -139,6 +139,19 @@ pub async fn ufs_sizestats(
 }
 
 #[tauri::command]
+pub async fn ufs_allstats(
+    logname: String,
+    zoom_column: String,
+    time_from: Option<f64>,
+    time_to: Option<f64>,
+    col_from: Option<f64>,
+    col_to: Option<f64>,
+    thresholds: Vec<String>,
+) -> Result<Vec<u8>, String> {
+    ufs::allstats(logname, zoom_column, time_from, time_to, col_from, col_to, thresholds).await
+}
+
+#[tauri::command]
 pub async fn block_latencystats(
     logname: String,
     column: String,
@@ -186,6 +199,20 @@ pub async fn block_sizestats(
         group,
     )
     .await
+}
+
+#[tauri::command]
+pub async fn block_allstats(
+    logname: String,
+    zoom_column: String,
+    time_from: Option<f64>,
+    time_to: Option<f64>,
+    col_from: Option<f64>,
+    col_to: Option<f64>,
+    thresholds: Vec<String>,
+    group: bool,
+) -> Result<Vec<u8>, String> {
+    block::allstats(logname, zoom_column, time_from, time_to, col_from, col_to, thresholds, group).await
 }
 
 #[tauri::command]
