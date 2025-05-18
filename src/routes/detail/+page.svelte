@@ -331,15 +331,22 @@
             if (cached) {
                 tracedata = deserializeBigInt(cached);
             } else {
+                const startreadtrace = performance.now();
                 // 캐시된 데이터가 없으면 서버에서 가져오기
                 let result: number[] = await invoke('readtrace', {
                     logfolder: data.logfolder, 
                     logname: data.logname,
                     maxrecords: buffersize
                 });
+                const endreadtrace = performance.now();
+                console.log(`readtrace time: ${endreadtrace - startreadtrace} ms`);
                 
+                // UFS 및 Block 테이블을 Apache Arrow로 변환
+                const startConvert = performance.now();
                 const ufsTable = tableFromIPC(new Uint8Array(result.ufs.bytes));
                 const blockTable = tableFromIPC(new Uint8Array(result.block.bytes));
+                const endConvert = performance.now();
+                console.log(`Convert time: ${endConvert - startConvert} ms`);
                 tracedata = {
                     ufs: {
                         data: ufsTable.toArray(),
@@ -371,10 +378,15 @@
             // 초기 필터링된 데이터 설정
             // await updateFilteredData();
             
+            const startStats = performance.now();
             // 초기 통계 데이터 로드
             await loadStatsData();
+            const endStats = performance.now();
+            console.log(`Initial stats loading time: ${endStats - startStats} ms`);
 
             isLoading = false;
+            const endTotal = performance.now();
+            console.log(`Total loading time: ${endTotal - startTotal} ms`);
         } catch (error) {
             if (error instanceof Error) {
                 console.error('Error during onMount:', error.message);
@@ -400,53 +412,62 @@
             Back
         </Button>
         {#if tracetype.length > 0}
-        <div class="fixed top-4 left-4 flex items-center gap-2">
-            <SelectType tracetype={tracetype} tracedata={filteredData} class="h-12"/>
-            
-            <!-- Retry 버튼 추가 -->
-            <Tooltip.Root>
-                <Tooltip.Trigger asChild>
-                    <Button 
-                        variant="outline" 
-                        size="icon"
-                        class="h-12 w-12"
-                        onclick={retryLoading}
-                    >
-                        <RefreshCw size="20"></RefreshCw>
-                    </Button>
-                </Tooltip.Trigger>
-                <Tooltip.Content>
-                    <p>데이터 다시 불러오기</p>
-                </Tooltip.Content>
-            </Tooltip.Root>
+        <div class="fixed top-4 left-4">
+            <div class="flex items-center gap-2">
+                <SelectType tracetype={tracetype} tracedata={filteredData} class="h-12"/>
+                
+                <!-- Retry 버튼 추가 -->
+                <Tooltip.Root>
+                    <Tooltip.Trigger asChild>
+                        <Button 
+                            variant="outline" 
+                            size="icon"
+                            class="h-12 w-12"
+                            onclick={retryLoading}
+                        >
+                            <RefreshCw size="20"></RefreshCw>
+                        </Button>
+                    </Tooltip.Trigger>
+                    <Tooltip.Content>
+                        <p>데이터 다시 불러오기</p>
+                    </Tooltip.Content>
+                </Tooltip.Root>
 
-            <Tooltip.Root>
-                <Tooltip.Trigger asChild>
-                    <Button 
-                        variant="outline" 
-                        size="icon"
-                        class="h-12 w-12"
-                        onclick={exportToCSV}
-                        disabled={isExporting || !$selectedTrace || !parquetFiles[$selectedTrace]}
-                    >
-                        {#if isExporting}
-                            <div class="animate-spin h-5 w-5 border-2 border-current border-t-transparent rounded-full"></div>
-                        {:else}
-                            <FileDown size="20"></FileDown>
-                        {/if}
-                    </Button>
-                </Tooltip.Trigger>
-                <Tooltip.Content>
-                    <p>현재 데이터를 CSV로 내보내기</p>
-                </Tooltip.Content>
-            </Tooltip.Root>
-            {#if $selectedTrace !== '' && tracedata[$selectedTrace].total_count !== tracedata[$selectedTrace].sampled_count}
-            <div class="text-sm font-medium mb-2">total : {tracedata[$selectedTrace].total_count}</div>
-            <div class="text-sm font-medium mb-2">sampling : {tracedata[$selectedTrace].sampled_count}</div>
-            <div class="text-sm font-medium mb-2">sample ratio : {Number(tracedata[$selectedTrace].sampling_ratio.toFixed(2))} %</div>
-            {/if}
-            <div class="text-sm font-medium mb-2">{data.title}</div>
+                <Tooltip.Root>
+                    <Tooltip.Trigger asChild>
+                        <Button 
+                            variant="outline" 
+                            size="icon"
+                            class="h-12 w-12"
+                            onclick={exportToCSV}
+                            disabled={isExporting || !$selectedTrace || !parquetFiles[$selectedTrace]}
+                        >
+                            {#if isExporting}
+                                <div class="animate-spin h-5 w-5 border-2 border-current border-t-transparent rounded-full"></div>
+                            {:else}
+                                <FileDown size="20"></FileDown>
+                            {/if}
+                        </Button>
+                    </Tooltip.Trigger>
+                    <Tooltip.Content>
+                        <p>현재 데이터를 CSV로 내보내기</p>
+                    </Tooltip.Content>
+                </Tooltip.Root>
+                
+                <div class="text-sm font-medium">{data.title}</div>
+                
+                {#if $selectedTrace !== '' && tracedata[$selectedTrace].total_count !== tracedata[$selectedTrace].sampled_count}
+                <div class="flex gap-2 text-xs text-gray-400 items-center ml-auto">
+                    <span>total: {tracedata[$selectedTrace].total_count}</span>
+                    <span>sampling: {tracedata[$selectedTrace].sampled_count}</span>
+                    <span>sample ratio: {Number(tracedata[$selectedTrace].sampling_ratio.toFixed(2))}%</span>
+                </div>
+                {/if}
+            </div>
         </div>
+        {:else}
+        {/if}
+        {#if loadError}
         {/if}        
     </header>    
     <main class="mx-auto p-6">
