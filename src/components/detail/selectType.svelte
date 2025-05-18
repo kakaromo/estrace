@@ -9,9 +9,9 @@
 
     let { tracedata, tracetype } : SelectTypeProps = $props();       
 
-    function initfiltertrace() {
-       
-    }
+    console.log("tracedata", tracedata);
+    console.log("tracetype", tracetype);
+
     
 </script>
 <Select.Root onSelectedChange={(v) => {

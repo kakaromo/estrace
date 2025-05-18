@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { tableFromIPC } from 'apache-arrow';
 import { compareTraceCount, traceSizeCount, traceSaimpleCount } from '$stores/trace';
 import { getBufferSize } from "$api/db";
 
@@ -230,18 +231,23 @@ export async function filterTraceData(logname: string, traceData: any, selectedT
     //   toLba: to_lba,
     //   maxrecords: buffersize
     // });
-    const traceStr: string = await invoke('filter_trace', {
+    const result: { bytes: number[]; total_count: number; sampled_count: number; sampling_ratio: number } = await invoke('filter_trace', {
       logname: logname,
       tracetype: selectedTrace,
       zoomColumn: zoom_column,
-      timeFrom: from_time, 
-      timeTo: to_time, 
-      colFrom: from_lba, 
+      timeFrom: from_time,
+      timeTo: to_time,
+      colFrom: from_lba,
       colTo: to_lba,
       maxrecords: buffersize
     });
-    const filteredData : any = JSON.parse(traceStr);
-    return filteredData;
+    const table = tableFromIPC(new Uint8Array(result.bytes));
+    return {
+      data: table.toArray(),
+      total_count: result.total_count,
+      sampled_count: result.sampled_count,
+      sampling_ratio: result.sampling_ratio
+    };
 }
 
 /**

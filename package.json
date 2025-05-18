@@ -31,7 +31,8 @@
     "svelte-loading-spinners": "^0.3.6",
     "svelte-lucide": "^2.0.1",
     "svelte-radix": "^2.0.1",
-    "wx-svelte-grid": "^2.0.1"
+    "wx-svelte-grid": "^2.0.1",
+    "apache-arrow": "^14.0.0"
   },
   "devDependencies": {
     "@internationalized/date": "^3.7.0",

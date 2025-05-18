@@ -3,6 +3,7 @@
     import { onMount } from 'svelte';
     import { goto } from '$app/navigation';
     import { invoke } from "@tauri-apps/api/core";
+    import { tableFromIPC } from 'apache-arrow';
     
     import { getTestInfo, getBufferSize } from '$api/db';
     import { trace, 
@@ -138,6 +139,23 @@
         })();
     })
 
+    // BigInt 직렬화 처리를 위한 함수
+    function serializeBigInt(data) {
+        return JSON.stringify(data, (key, value) => 
+            typeof value === 'bigint' ? value.toString() + 'n' : value
+        );
+    }
+
+    // BigInt 역직렬화 처리를 위한 함수
+    function deserializeBigInt(jsonString) {
+        return JSON.parse(jsonString, (key, value) => {
+            if (typeof value === 'string' && /^\d+n$/.test(value)) {
+                return BigInt(value.slice(0, -1));
+            }
+            return value;
+        });
+    }
+
     // 필터링된 데이터 설정
     async function updateFilteredData() {
         if ($selectedTrace) {
@@ -220,19 +238,28 @@
             // IndexedDB에서 캐시된 데이터 불러오기
             let cached = await get(cacheKey);
             if (cached) {
-                tracedata = JSON.parse(cached);
+                tracedata = deserializeBigInt(cached);
             } else {
                 // 캐시된 데이터가 없으면 서버에서 가져오기
-                let traceStr = await invoke<string>('readtrace', { 
-                    logfolder: data.logfolder, 
-                    logname: data.logname,
-                    maxrecords: buffersize 
-                });
-                
-                tracedata = JSON.parse(traceStr);
+                const ufsTable = tableFromIPC(new Uint8Array(result.ufs.bytes));
+                const blockTable = tableFromIPC(new Uint8Array(result.block.bytes));
+                tracedata = {
+                    ufs: {
+                        data: ufsTable.toArray(),
+                        total_count: result.ufs.total_count,
+                        sampled_count: result.ufs.sampled_count,
+                        sampling_ratio: result.ufs.sampling_ratio
+                    },
+                    block: {
+                        data: blockTable.toArray(),
+                        total_count: result.block.total_count,
+                        sampled_count: result.block.sampled_count,
+                        sampling_ratio: result.block.sampling_ratio
+                    }
+                };
                 
                 // IndexedDB에 데이터 저장
-                await set(cacheKey, traceStr);
+                await set(cacheKey, serializeBigInt(tracedata));
             }
             
             // 데이터 저장 및 초기화
@@ -303,19 +330,33 @@
             // IndexedDB에서 캐시된 데이터 불러오기
             let cached = await get(cacheKey);
             if (cached) {
-                tracedata = JSON.parse(cached);
+                tracedata = deserializeBigInt(cached);
             } else {
                 // 캐시된 데이터가 없으면 서버에서 가져오기
-                let traceStr = await invoke<string>('readtrace', { 
+                let result: number[] = await invoke('readtrace', {
                     logfolder: data.logfolder, 
                     logname: data.logname,
-                    maxrecords: buffersize 
+                    maxrecords: buffersize
                 });
                 
-                tracedata = JSON.parse(traceStr);
-                
+                const ufsTable = tableFromIPC(new Uint8Array(result.ufs.bytes));
+                const blockTable = tableFromIPC(new Uint8Array(result.block.bytes));
+                tracedata = {
+                    ufs: {
+                        data: ufsTable.toArray(),
+                        total_count: result.ufs.total_count,
+                        sampled_count: result.ufs.sampled_count,
+                        sampling_ratio: result.ufs.sampling_ratio
+                    },
+                    block: {
+                        data: blockTable.toArray(),
+                        total_count: result.block.total_count,
+                        sampled_count: result.block.sampled_count,
+                        sampling_ratio: result.block.sampling_ratio
+                    }
+                };
                 // IndexedDB에 데이터 저장
-                await set(cacheKey, traceStr);
+                await set(cacheKey, serializeBigInt(tracedata));
             }
             
             // 데이터 저장 및 초기화
@@ -426,6 +467,7 @@
                         {/if}
                     </Card.Content>
                 </Card.Root>
+                {#if isqd}
                 <Separator class="my-4 {isqd ? 'block' : 'hidden'}" />
                 <Card.Root class={isqd ? 'block' : 'hidden'} >
                     <Card.Header>
@@ -439,6 +481,8 @@
                         {/if}
                     </Card.Content>
                 </Card.Root>
+                {/if}
+                {#if isrwd}
                 <Separator class="my-4 {iscpu ? 'block' : 'hidden'}" />
                 <Card.Root class={iscpu ? 'block' : 'hidden'} >
                     <Card.Header>
@@ -452,6 +496,8 @@
                         {/if}                        
                     </Card.Content>
                 </Card.Root>
+                {/if}
+                {#if isrwd}
                 <Separator class="my-4 {isrwd ? 'block' : 'hidden'}" />
                 <Card.Root class={isrwd ? 'block' : 'hidden'} >
                     <Card.Header>
@@ -465,6 +511,8 @@
                         {/if}
                     </Card.Content>
                 </Card.Root>                
+                {/if}
+                {#if islatency}
                 <Separator class="my-4 {islatency ? 'block' : 'hidden'}" />
                 <Card.Root class={islatency ? 'block' : 'hidden'}>
                     <Card.Header>
@@ -494,7 +542,9 @@
                         {/if}
                     </Card.Content>
                 </Card.Root>                                
+                {/if}
             </div>
+            {#if issizestats}
             <div class="col-span-2 {issizestats ? 'block' : 'hidden'}">
                 <Separator class="my-4" />          
                 <Card.Root>
@@ -511,6 +561,7 @@
                     </Card.Content>
                 </Card.Root> 
             </div>
+            {/if}
         </div> 
         {/if} 
     </main>

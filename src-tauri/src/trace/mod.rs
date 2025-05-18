@@ -13,6 +13,7 @@ use regex::Regex;
 use std::collections::HashMap;
 use std::sync::{Mutex, RwLock};
 use serde::Serialize;
+use crate::trace::utils::TraceDataBytes;
 use tauri::Window;
 use lazy_static::lazy_static;
 use tauri::Emitter;
@@ -77,7 +78,7 @@ lazy_static! {
 
 // Tauri 명령 함수들
 #[tauri::command]
-pub async fn readtrace(logname: String, maxrecords: Option<usize>) -> Result<String, String> {
+pub async fn readtrace(logname: String, maxrecords: Option<usize>) -> Result<TraceDataBytes, String> {
     utils::readtrace(logname, maxrecords.unwrap_or(DEFAULT_PREVIEW_RECORDS)).await
 }
 
@@ -101,7 +102,7 @@ pub async fn ufs_latencystats(
     col_from: Option<f64>,
     col_to: Option<f64>,
     thresholds: Vec<String>,
-) -> Result<String, String> {
+) -> Result<Vec<u8>, String> {
     ufs::latencystats(
         logname,
         column,
@@ -124,7 +125,7 @@ pub async fn ufs_sizestats(
     time_to: Option<f64>,
     col_from: Option<f64>,
     col_to: Option<f64>,
-) -> Result<String, String> {
+) -> Result<Vec<u8>, String> {
     ufs::sizestats(
         logname,
         column,
@@ -148,7 +149,7 @@ pub async fn block_latencystats(
     col_to: Option<f64>,
     thresholds: Vec<String>,
     group: bool,
-) -> Result<String, String> {
+) -> Result<Vec<u8>, String> {
     block::latencystats(
         logname,
         column,
@@ -173,7 +174,7 @@ pub async fn block_sizestats(
     col_from: Option<f64>,
     col_to: Option<f64>,
     group: bool,
-) -> Result<String, String> {
+) -> Result<Vec<u8>, String> {
     block::sizestats(
         logname,
         column,
@@ -195,7 +196,7 @@ pub async fn ufs_continuity_stats(
     time_to: Option<f64>,
     col_from: Option<f64>,
     col_to: Option<f64>,
-) -> Result<String, String> {
+) -> Result<Vec<u8>, String> {
     ufs::continuity_stats(logname, zoom_column, time_from, time_to, col_from, col_to).await
 }
 
@@ -207,7 +208,7 @@ pub async fn block_continuity_stats(
     time_to: Option<f64>,
     col_from: Option<f64>,
     col_to: Option<f64>,
-) -> Result<String, String> {
+) -> Result<Vec<u8>, String> {
     block::continuity_stats(logname, zoom_column, time_from, time_to, col_from, col_to).await
 }
 
@@ -229,7 +230,7 @@ pub async fn filter_trace(
     col_from: Option<f64>,
     col_to: Option<f64>,
     maxrecords: Option<usize>,
-) -> Result<String, String> {
+) -> Result<TraceDataBytes, String> {
     utils::filter_trace(
         logname,
         tracetype,

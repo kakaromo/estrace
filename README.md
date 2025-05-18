@@ -56,6 +56,12 @@ npm run tauri build
 - **상태 관리**: Svelte 전역 상태 변수 관리
 
 
+## Arrow IPC 데이터
+
+일부 Tauri 명령은 이제 [Apache Arrow](https://arrow.apache.org/) IPC 형식의 바이트 스트림을 반환합니다.
+프론트엔드에서는 `apache-arrow` 패키지의 `tableFromIPC` 함수를 사용해 데이터를 디코딩할 수 있습니다.
+
+
 ## 권장 개발 환경
 
 [VS Code](https://code.visualstudio.com/)에 다음 확장 프로그램을 설치하는 것을 권장합니다:

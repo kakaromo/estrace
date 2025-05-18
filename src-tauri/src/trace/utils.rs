@@ -9,6 +9,7 @@ use rand::prelude::*;
 use rayon::prelude::*;
 use tauri::async_runtime::spawn_blocking;
 use tauri::Emitter;
+use arrow::ipc::writer::StreamWriter;
 
 use serde::Serialize;
 
@@ -89,6 +90,22 @@ pub fn sample_block(block_list: &[Block], max_records: usize) -> SamplingInfo<Bl
         }
     }
 }
+
+// Arrow IPC 바이트와 샘플링 메타데이터를 함께 보낼 구조체들
+#[derive(Serialize, Debug, Clone)]
+pub struct ArrowBytes {
+    pub bytes: Vec<u8>,
+    pub total_count: usize,
+    pub sampled_count: usize,
+    pub sampling_ratio: f64,
+}
+
+#[derive(Serialize, Debug, Clone)]
+pub struct TraceDataBytes {
+    pub ufs: ArrowBytes,
+    pub block: ArrowBytes,
+}
+
 
 // 백분위수 계산을 위한 헬퍼 함수
 pub fn calculate_percentile(sorted_values: &[f64], percentile: f64) -> f64 {
@@ -190,6 +207,16 @@ pub fn normalize_io_type(io: &str) -> String {
     io.chars().next().unwrap_or_default().to_string()
 }
 
+// RecordBatch를 Arrow IPC 바이트로 변환하는 헬퍼
+fn batch_to_ipc_bytes(batch: &arrow::record_batch::RecordBatch) -> Result<Vec<u8>, String> {
+    let mut buf = Vec::new();
+    let mut writer = StreamWriter::try_new(&mut buf, batch.schema().as_ref()).map_err(|e| e.to_string())?;
+    writer.write(batch).map_err(|e| e.to_string())?;
+    writer.finish().map_err(|e| e.to_string())?;
+    Ok(buf)
+}
+
+
 // 구간 키 생성 함수 - latencystats에서 중복 사용
 pub fn create_range_key(latency: f64, threshold_values: &[f64], thresholds: &[String]) -> String {
     if threshold_values.is_empty() {
@@ -231,39 +258,42 @@ pub fn initialize_ranges(thresholds: &[String]) -> BTreeMap<String, usize> {
 }
 
 // readtrace 함수 - max_records 매개변수 추가
-pub async fn readtrace(logname: String, max_records: usize) -> Result<String, String> {
+pub async fn readtrace(logname: String, max_records: usize) -> Result<TraceDataBytes, String> {
     // 캐시 확인: 두 캐시 모두 있는지 확인
     {
         let ufs_cache = UFS_CACHE.lock().map_err(|e| e.to_string())?;
         let block_cache = BLOCK_CACHE.lock().map_err(|e| e.to_string())?;
 
         if ufs_cache.contains_key(&logname) || block_cache.contains_key(&logname) {
-            // Create longer-lived empty vectors to use as default values
             let empty_ufs_vec: Vec<UFS> = Vec::new();
             let empty_block_vec: Vec<Block> = Vec::new();
 
             let ufs_data = ufs_cache.get(&logname).unwrap_or(&empty_ufs_vec);
             let block_data = block_cache.get(&logname).unwrap_or(&empty_block_vec);
 
-            // 캐시된 데이터를 샘플링
             let ufs_sample_info = sample_ufs(ufs_data, max_records);
             let block_sample_info = sample_block(block_data, max_records);
 
-            let result_json = serde_json::json!({
-                "ufs": {
-                    "data": ufs_sample_info.data,
-                    "total_count": ufs_sample_info.total_count,
-                    "sampled_count": ufs_sample_info.sampled_count,
-                    "sampling_ratio": ufs_sample_info.sampling_ratio
+            let ufs_batch = crate::trace::ufs::ufs_to_record_batch(&ufs_sample_info.data)?;
+            let block_batch = crate::trace::block::block_to_record_batch(&block_sample_info.data)?;
+
+            let ufs_bytes = batch_to_ipc_bytes(&ufs_batch)?;
+            let block_bytes = batch_to_ipc_bytes(&block_batch)?;
+
+            return Ok(TraceDataBytes {
+                ufs: ArrowBytes {
+                    bytes: ufs_bytes,
+                    total_count: ufs_sample_info.total_count,
+                    sampled_count: ufs_sample_info.sampled_count,
+                    sampling_ratio: ufs_sample_info.sampling_ratio,
                 },
-                "block": {
-                    "data": block_sample_info.data,
-                    "total_count": block_sample_info.total_count,
-                    "sampled_count": block_sample_info.sampled_count,
-                    "sampling_ratio": block_sample_info.sampled_count
-                }
+                block: ArrowBytes {
+                    bytes: block_bytes,
+                    total_count: block_sample_info.total_count,
+                    sampled_count: block_sample_info.sampled_count,
+                    sampling_ratio: block_sample_info.sampling_ratio,
+                },
             });
-            return Ok(result_json.to_string());
         }
     }
 
@@ -614,22 +644,26 @@ pub async fn readtrace(logname: String, max_records: usize) -> Result<String, St
     let block_sample_info = sample_block(&block_vec, max_records);
 
     // JSON으로 직렬화하여 반환
-    let result_json = serde_json::json!({
-        "ufs": {
-            "data": ufs_sample_info.data,
-            "total_count": ufs_sample_info.total_count,
-            "sampled_count": ufs_sample_info.sampled_count,
-            "sampling_ratio": ufs_sample_info.sampling_ratio
-        },
-        "block": {
-            "data": block_sample_info.data,
-            "total_count": block_sample_info.total_count,
-            "sampled_count": block_sample_info.sampled_count,
-            "sampling_ratio": block_sample_info.sampled_count
-        }
-    });
+    let ufs_batch = crate::trace::ufs::ufs_to_record_batch(&ufs_sample_info.data)?;
+    let block_batch = crate::trace::block::block_to_record_batch(&block_sample_info.data)?;
 
-    Ok(result_json.to_string())
+    let ufs_bytes = batch_to_ipc_bytes(&ufs_batch)?;
+    let block_bytes = batch_to_ipc_bytes(&block_batch)?;
+
+    Ok(TraceDataBytes {
+        ufs: ArrowBytes {
+            bytes: ufs_bytes,
+            total_count: ufs_sample_info.total_count,
+            sampled_count: ufs_sample_info.sampled_count,
+            sampling_ratio: ufs_sample_info.sampling_ratio,
+        },
+        block: ArrowBytes {
+            bytes: block_bytes,
+            total_count: block_sample_info.total_count,
+            sampled_count: block_sample_info.sampled_count,
+            sampling_ratio: block_sample_info.sampling_ratio,
+        },
+    })
 }
 
 // 로그 파일 파싱 및 parquet 저장 함수
@@ -1196,47 +1230,50 @@ pub async fn filter_trace(
     col_from: Option<f64>,
     col_to: Option<f64>,
     max_records: usize,
-) -> Result<String, String> {
-    // 필터링 및 샘플링 결과를 저장할 변수
-    let result = match tracetype.as_str() {
+) -> Result<TraceDataBytes, String> {
+    // 필터링 및 샘플링 결과 직접 반환
+    match tracetype.as_str() {
         "ufs" => {
-            // UFS 데이터 필터링
-            let ufs_vec =
-                filter_ufs_data(&logname, time_from, time_to, &zoom_column, col_from, col_to)?;
-
-            // UFS 데이터 샘플링
+            let ufs_vec = filter_ufs_data(&logname, time_from, time_to, &zoom_column, col_from, col_to)?;
             let ufs_sample_info = sample_ufs(&ufs_vec, max_records);
 
-            // 샘플링 정보를 JSON으로 직렬화하여 반환
-            serde_json::json!({
-                "data": ufs_sample_info.data,
-                "total_count": ufs_sample_info.total_count,
-                "sampled_count": ufs_sample_info.sampled_count,
-                "sampling_ratio": ufs_sample_info.sampling_ratio,
-                "type": "ufs"
-            })
-            .to_string()
+            let batch = crate::trace::ufs::ufs_to_record_batch(&ufs_sample_info.data)?;
+            return Ok(TraceDataBytes {
+                ufs: ArrowBytes {
+                    bytes: batch_to_ipc_bytes(&batch)?,
+                    total_count: ufs_sample_info.total_count,
+                    sampled_count: ufs_sample_info.sampled_count,
+                    sampling_ratio: ufs_sample_info.sampling_ratio,
+                },
+                block: ArrowBytes {
+                    bytes: Vec::new(),
+                    total_count: 0,
+                    sampled_count: 0,
+                    sampling_ratio: 0.0,
+                },
+            });
         }
         "block" => {
-            // Block 데이터 필터링
-            let block_vec =
-                filter_block_data(&logname, time_from, time_to, &zoom_column, col_from, col_to)?;
-
-            // Block 데이터 샘플링
+            let block_vec = filter_block_data(&logname, time_from, time_to, &zoom_column, col_from, col_to)?;
             let block_sample_info = sample_block(&block_vec, max_records);
 
-            // 샘플링 정보를 JSON으로 직렬화하여 반환
-            serde_json::json!({
-                "data": block_sample_info.data,
-                "total_count": block_sample_info.total_count,
-                "sampled_count": block_sample_info.sampled_count,
-                "sampling_ratio": block_sample_info.sampled_count,
-                "type": "block"
-            })
-            .to_string()
+            let batch = crate::trace::block::block_to_record_batch(&block_sample_info.data)?;
+            return Ok(TraceDataBytes {
+                ufs: ArrowBytes {
+                    bytes: Vec::new(),
+                    total_count: 0,
+                    sampled_count: 0,
+                    sampling_ratio: 0.0,
+                },
+                block: ArrowBytes {
+                    bytes: batch_to_ipc_bytes(&batch)?,
+                    total_count: block_sample_info.total_count,
+                    sampled_count: block_sample_info.sampled_count,
+                    sampling_ratio: block_sample_info.sampling_ratio,
+                },
+            });
         }
         _ => return Err("Unsupported trace type".to_string()),
     };
 
-    Ok(result)
 }

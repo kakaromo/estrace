@@ -245,7 +245,7 @@ pub async fn latencystats(
     col_from: Option<f64>,
     col_to: Option<f64>,
     thresholds: Vec<String>,
-) -> Result<String, String> {
+) -> Result<Vec<u8>, String> {
     // 문자열 thresholds를 밀리초 값으로 변환
     let mut threshold_values: Vec<f64> = Vec::new();
     for t in &thresholds {
@@ -343,7 +343,7 @@ pub async fn latencystats(
         summary: Some(summary_map),
     };
 
-    serde_json::to_string(&result).map_err(|e| e.to_string())
+    serde_json::to_vec(&result).map_err(|e| e.to_string())
 }
 
 // UFS 크기 통계 함수
@@ -355,7 +355,7 @@ pub async fn sizestats(
     time_to: Option<f64>,
     col_from: Option<f64>,
     col_to: Option<f64>,
-) -> Result<String, String> {
+) -> Result<Vec<u8>, String> {
     // 필터링 적용
     let filtered_ufs =
         filter_ufs_data(&logname, time_from, time_to, &zoom_column, col_from, col_to)?;
@@ -397,7 +397,7 @@ pub async fn sizestats(
         total_counts,
     };
 
-    serde_json::to_string(&result).map_err(|e| e.to_string())
+    serde_json::to_vec(&result).map_err(|e| e.to_string())
 }
 
 // UFS 연속성 통계 함수
@@ -408,7 +408,7 @@ pub async fn continuity_stats(
     time_to: Option<f64>,
     col_from: Option<f64>,
     col_to: Option<f64>,
-) -> Result<String, String> {
+) -> Result<Vec<u8>, String> {
     // 필터링 적용
     let filtered_ufs =
         filter_ufs_data(&logname, time_from, time_to, &zoom_column, col_from, col_to)?;
@@ -494,5 +494,5 @@ pub async fn continuity_stats(
         },
     };
 
-    serde_json::to_string(&result).map_err(|e| e.to_string())
+    serde_json::to_vec(&result).map_err(|e| e.to_string())
 }
