@@ -674,7 +674,6 @@ function prepareChartData() {
 
   $effect(() => {
     const currentDataHash = hashData(data);
-    // console.log('prevDataHash:', prevDataHash, 'currentDataHash:', currentDataHash, "filtertrace", $filtertrace);
        
     if (prevDataHash !== currentDataHash) {
       prevDataHash = currentDataHash;

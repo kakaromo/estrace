@@ -231,7 +231,7 @@ export async function filterTraceData(logname: string, traceData: any, selectedT
     //   toLba: to_lba,
     //   maxrecords: buffersize
     // });
-    const result: { bytes: number[]; total_count: number; sampled_count: number; sampling_ratio: number } = await invoke('filter_trace', {
+    const result: number[] = await invoke('filter_trace', {
       logname: logname,
       tracetype: selectedTrace,
       zoomColumn: zoom_column,
@@ -241,13 +241,43 @@ export async function filterTraceData(logname: string, traceData: any, selectedT
       colTo: to_lba,
       maxrecords: buffersize
     });
-    const table = tableFromIPC(new Uint8Array(result.bytes));
-    return {
-      data: table.toArray(),
-      total_count: result.total_count,
-      sampled_count: result.sampled_count,
-      sampling_ratio: result.sampling_ratio
+
+    const ufsTable = tableFromIPC(new Uint8Array(result.ufs.bytes));
+    const blockTable = tableFromIPC(new Uint8Array(result.block.bytes));
+    const tracedata = {
+        ufs: {
+            data: ufsTable.toArray(),
+            total_count: result.ufs.total_count,
+            sampled_count: result.ufs.sampled_count,
+            sampling_ratio: result.ufs.sampling_ratio
+        },
+        block: {
+            data: blockTable.toArray(),
+            total_count: result.block.total_count,
+            sampled_count: result.block.sampled_count,
+            sampling_ratio: result.block.sampling_ratio
+        }
     };
+
+    return tracedata;
+}
+
+function parseJsonResult(result: any) {
+  try {
+    if (typeof result === 'string') {
+      return JSON.parse(result);
+    }
+    if (result instanceof Uint8Array) {
+      return JSON.parse(new TextDecoder().decode(result));
+    }
+    if (Array.isArray(result)) {
+      return JSON.parse(new TextDecoder().decode(new Uint8Array(result)));
+    }
+    return result;
+  } catch (e) {
+    console.error('Error parsing JSON result:', e);
+    return {};
+  }
 }
 
 /**
@@ -255,7 +285,7 @@ export async function filterTraceData(logname: string, traceData: any, selectedT
  */
 function validateLatencyStats(result: any) {
   try {
-    const parsedResult = typeof result === 'string' ? JSON.parse(result) : result;
+    const parsedResult = parseJsonResult(result);
     
     // 필요한 속성이 없으면 기본값 제공
     if (!parsedResult.latency_counts) {
@@ -278,7 +308,7 @@ function validateLatencyStats(result: any) {
 
 function validateSizeStats(result: any) {
   try {
-    const parsedResult = typeof result === 'string' ? JSON.parse(result) : result;
+    const parsedResult = parseJsonResult(result);
     return parsedResult;
   } catch (e) {
     console.error('Error parsing size stats:', e);
@@ -290,7 +320,7 @@ function validateSizeStats(result: any) {
 
 function validateContinuityStats(result: any) {
   try {
-    const parsedResult = typeof result === 'string' ? JSON.parse(result) : result;
+    const parsedResult = parseJsonResult(result);
     return parsedResult;
   } catch (e) {
     console.error('Error parsing continuity stats:', e);

@@ -1238,42 +1238,44 @@ pub async fn filter_trace(
             let ufs_sample_info = sample_ufs(&ufs_vec, max_records);
 
             let batch = crate::trace::ufs::ufs_to_record_batch(&ufs_sample_info.data)?;
-            return Ok(TraceDataBytes {
+            let ufs_bytes = batch_to_ipc_bytes(&batch)?;
+            
+            Ok(TraceDataBytes {
                 ufs: ArrowBytes {
-                    bytes: batch_to_ipc_bytes(&batch)?,
+                    bytes: ufs_bytes,
                     total_count: ufs_sample_info.total_count,
                     sampled_count: ufs_sample_info.sampled_count,
                     sampling_ratio: ufs_sample_info.sampling_ratio,
                 },
                 block: ArrowBytes {
-                    bytes: Vec::new(),
+                    bytes: vec![],
                     total_count: 0,
                     sampled_count: 0,
                     sampling_ratio: 0.0,
                 },
-            });
+            })
         }
         "block" => {
             let block_vec = filter_block_data(&logname, time_from, time_to, &zoom_column, col_from, col_to)?;
             let block_sample_info = sample_block(&block_vec, max_records);
 
             let batch = crate::trace::block::block_to_record_batch(&block_sample_info.data)?;
-            return Ok(TraceDataBytes {
+            let block_bytes = batch_to_ipc_bytes(&batch)?;
+            Ok(TraceDataBytes {
                 ufs: ArrowBytes {
-                    bytes: Vec::new(),
+                    bytes: vec![],
                     total_count: 0,
                     sampled_count: 0,
                     sampling_ratio: 0.0,
                 },
                 block: ArrowBytes {
-                    bytes: batch_to_ipc_bytes(&batch)?,
+                    bytes: block_bytes,
                     total_count: block_sample_info.total_count,
                     sampled_count: block_sample_info.sampled_count,
                     sampling_ratio: block_sample_info.sampling_ratio,
                 },
-            });
+            })
         }
-        _ => return Err("Unsupported trace type".to_string()),
-    };
-
+        _ => Err("Unsupported trace type".to_string()),
+    } // 세미콜론 제거
 }

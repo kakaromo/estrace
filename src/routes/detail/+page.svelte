@@ -161,7 +161,7 @@
         if ($selectedTrace) {
             const result = await filterTraceData(fileNames[$selectedTrace], tracedata, $selectedTrace, $filtertrace);
             if (result !== null) {
-                filteredData[$selectedTrace] = result;  
+                filteredData[$selectedTrace] = result[$selectedTrace];  
             }
         }
     }
@@ -230,7 +230,6 @@
             // 테스트 정보 가져오기
             data = await getTestInfo(id);
             buffersize = await getBufferSize();
-            console.log('buffersize:', buffersize);
             
             // 캐시 키 구성
             const cacheKey = `traceData_${id}_${data.logfolder}_${data.logname}`;
@@ -451,10 +450,11 @@
         {/if}        
     </header>    
     <main class="mx-auto p-6">
-        {#if $selectedTrace != ''}
+        {#if $selectedTrace != '' && filteredData}
         <VisualItem bind:ispattern bind:isrwd bind:isqd bind:iscpu bind:islatency bind:issizestats />                 
         <div class="grid grid-cols-2 gap-4">
             <div class="col-span-2">
+                {#if ispattern}
                 <Card.Root class={ispattern ? 'block' : 'hidden'} >
                     <Card.Header>
                         <Card.Title>{$selectedTrace.toUpperCase()} Pattern</Card.Title>
@@ -467,6 +467,7 @@
                         {/if}
                     </Card.Content>
                 </Card.Root>
+                {/if}                
                 {#if isqd}
                 <Separator class="my-4 {isqd ? 'block' : 'hidden'}" />
                 <Card.Root class={isqd ? 'block' : 'hidden'} >
@@ -482,7 +483,7 @@
                     </Card.Content>
                 </Card.Root>
                 {/if}
-                {#if isrwd}
+                {#if iscpu}
                 <Separator class="my-4 {iscpu ? 'block' : 'hidden'}" />
                 <Card.Root class={iscpu ? 'block' : 'hidden'} >
                     <Card.Header>
