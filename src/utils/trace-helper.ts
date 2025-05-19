@@ -1,8 +1,11 @@
 import { invoke } from "@tauri-apps/api/core";
 import { tableFromIPC } from 'apache-arrow';
-import { decompress } from './zstd';
 import { compareTraceCount, traceSizeCount, traceSaimpleCount } from '$stores/trace';
 import { getBufferSize } from "$api/db";
+
+export async function fetchTraceLengths(logname: string) {
+  return await invoke('trace_lengths', { logname });
+}
 
 // 공통으로 사용되는 지연시간 임계값 상수
 export const THRESHOLDS = [
@@ -110,6 +113,7 @@ export async function filterTraceData(logname: string, traceData: any, selectedT
     //   toLba: to_lba,
     //   maxrecords: buffersize
     // });
+
     const result: number[] = await invoke('filter_trace', {
       logname: logname,
       tracetype: selectedTrace,
@@ -121,10 +125,10 @@ export async function filterTraceData(logname: string, traceData: any, selectedT
       maxrecords: buffersize
     });
 
-    const ufsBytes = decompress(new Uint8Array(result.ufs.bytes));
-    const blockBytes = decompress(new Uint8Array(result.block.bytes));
-    const ufsTable = tableFromIPC(ufsBytes);
-    const blockTable = tableFromIPC(blockBytes);
+    const ufsData = new Uint8Array(result.ufs.bytes);
+    const blockData = new Uint8Array(result.block.bytes);
+    const ufsTable = tableFromIPC(ufsData);
+    const blockTable = tableFromIPC(blockData);
     const tracedata = {
         ufs: {
             data: ufsTable.toArray(),

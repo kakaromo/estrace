@@ -10,7 +10,7 @@ use rayon::prelude::*;
 use tauri::async_runtime::spawn_blocking;
 use tauri::Emitter;
 use arrow::ipc::writer::StreamWriter;
-use zstd::stream::encode_all;
+use parquet::file::reader::{FileReader, SerializedFileReader};
 
 use serde::Serialize;
 
@@ -105,6 +105,12 @@ pub struct ArrowBytes {
 pub struct TraceDataBytes {
     pub ufs: ArrowBytes,
     pub block: ArrowBytes,
+}
+
+#[derive(Serialize, Debug, Clone)]
+pub struct TraceLengths {
+    pub ufs: usize,
+    pub block: usize,
 }
 
 
@@ -217,11 +223,6 @@ fn batch_to_ipc_bytes(batch: &arrow::record_batch::RecordBatch) -> Result<Vec<u8
     Ok(buf)
 }
 
-// 압축
-fn compress_bytes(data: &[u8]) -> Result<Vec<u8>, String> {
-    encode_all(data, 0).map_err(|e| e.to_string())
-}
-
 // 구간 키 생성 함수 - latencystats에서 중복 사용
 pub fn create_range_key(latency: f64, threshold_values: &[f64], thresholds: &[String]) -> String {
     if threshold_values.is_empty() {
@@ -280,21 +281,21 @@ pub async fn readtrace(logname: String, max_records: usize) -> Result<TraceDataB
             let ufs_sample_info = sample_ufs(ufs_data, max_records);
             let block_sample_info = sample_block(block_data, max_records);
 
-            let ufs_batch = crate::trace::ufs::ufs_to_record_batch(&ufs_sample_info.data)?;
-            let block_batch = crate::trace::block::block_to_record_batch(&block_sample_info.data)?;
+            // let ufs_batch = crate::trace::ufs::ufs_to_record_batch(&ufs_sample_info.data)?;
+            // let block_batch = crate::trace::block::block_to_record_batch(&block_sample_info.data)?;
 
-            let ufs_bytes = compress_bytes(&batch_to_ipc_bytes(&ufs_batch)?)?;
-            let block_bytes = compress_bytes(&batch_to_ipc_bytes(&block_batch)?)?;
+            // let ufs_bytes = batch_to_ipc_bytes(&ufs_batch)?;
+            // let block_bytes = batch_to_ipc_bytes(&block_batch)?;
 
             return Ok(TraceDataBytes {
                 ufs: ArrowBytes {
-                    bytes: ufs_bytes,
+                    bytes: vec![],
                     total_count: ufs_sample_info.total_count,
                     sampled_count: ufs_sample_info.sampled_count,
                     sampling_ratio: ufs_sample_info.sampling_ratio,
                 },
                 block: ArrowBytes {
-                    bytes: block_bytes,
+                    bytes: vec![],
                     total_count: block_sample_info.total_count,
                     sampled_count: block_sample_info.sampled_count,
                     sampling_ratio: block_sample_info.sampling_ratio,
@@ -645,35 +646,60 @@ pub async fn readtrace(logname: String, max_records: usize) -> Result<TraceDataB
         }
     }
 
-    // 데이터가 많은 경우 샘플링하여 반환
+    // // 데이터가 많은 경우 샘플링하여 반환
     let ufs_sample_info = sample_ufs(&ufs_vec, max_records);
     let block_sample_info = sample_block(&block_vec, max_records);
 
-    // JSON으로 직렬화하여 반환
-    let ufs_batch = crate::trace::ufs::ufs_to_record_batch(&ufs_sample_info.data)?;
-    let block_batch = crate::trace::block::block_to_record_batch(&block_sample_info.data)?;
+    // // JSON으로 직렬화하여 반환
+    // let ufs_batch = crate::trace::ufs::ufs_to_record_batch(&ufs_sample_info.data)?;
+    // let block_batch = crate::trace::block::block_to_record_batch(&block_sample_info.data)?;
 
-    let startbytes = std::time::Instant::now();
-    let ufs_bytes = compress_bytes(&batch_to_ipc_bytes(&ufs_batch)?)?;
-    let block_bytes = compress_bytes(&batch_to_ipc_bytes(&block_batch)?)?;
-    println!("compress elapsed time: {:?}", startbytes.elapsed());
+    // let startbytes = std::time::Instant::now();
+    // let ufs_bytes = compress_zstd(&batch_to_ipc_bytes(&ufs_batch)?)?;
+    // let block_bytes = compress_zstd(&batch_to_ipc_bytes(&block_batch)?)?;
+    // println!("compress elapsed time: {:?}", startbytes.elapsed());
 
     println!("readtrace elapsed time: {:?}", starttime.elapsed());
-
     Ok(TraceDataBytes {
         ufs: ArrowBytes {
-            bytes: ufs_bytes,
+            bytes: vec![],
             total_count: ufs_sample_info.total_count,
             sampled_count: ufs_sample_info.sampled_count,
             sampling_ratio: ufs_sample_info.sampling_ratio,
         },
         block: ArrowBytes {
-            bytes: block_bytes,
+            bytes: vec![],
             total_count: block_sample_info.total_count,
             sampled_count: block_sample_info.sampled_count,
             sampling_ratio: block_sample_info.sampling_ratio,
         },
     })
+}
+
+fn parquet_num_rows(path: &str) -> Result<usize, String> {
+    let file = File::open(path).map_err(|e| e.to_string())?;
+    let reader = SerializedFileReader::new(file).map_err(|e| e.to_string())?;
+    let metadata = reader.metadata().file_metadata();
+    Ok(metadata.num_rows() as usize)
+}
+
+pub async fn trace_lengths(logname: String) -> Result<TraceLengths, String> {
+    let files: Vec<String> = if logname.contains(',') {
+        logname.split(',').map(|s| s.trim().to_string()).collect()
+    } else {
+        vec![logname.clone()]
+    };
+
+    let ufs_len = files.get(0)
+        .map(|p| parquet_num_rows(p))
+        .transpose()?
+        .unwrap_or(0);
+    let block_len = files.get(1)
+        .map(|p| parquet_num_rows(p))
+        .transpose()?
+        .unwrap_or(0);
+
+    Ok(TraceLengths { ufs: ufs_len, block: block_len })
 }
 
 // 로그 파일 파싱 및 parquet 저장 함수
@@ -1244,12 +1270,13 @@ pub async fn filter_trace(
     // 필터링 및 샘플링 결과 직접 반환
     match tracetype.as_str() {
         "ufs" => {
+            let starttime = std::time::Instant::now();
             let ufs_vec = filter_ufs_data(&logname, time_from, time_to, &zoom_column, col_from, col_to)?;
             let ufs_sample_info = sample_ufs(&ufs_vec, max_records);
 
             let batch = crate::trace::ufs::ufs_to_record_batch(&ufs_sample_info.data)?;
-            let ufs_bytes = compress_bytes(&batch_to_ipc_bytes(&batch)?)?;
-            
+            let ufs_bytes = batch_to_ipc_bytes(&batch)?;
+            println!("filter_trace elapsed time: {:?}", starttime.elapsed());
             Ok(TraceDataBytes {
                 ufs: ArrowBytes {
                     bytes: ufs_bytes,
@@ -1270,7 +1297,7 @@ pub async fn filter_trace(
             let block_sample_info = sample_block(&block_vec, max_records);
 
             let batch = crate::trace::block::block_to_record_batch(&block_sample_info.data)?;
-            let block_bytes = compress_bytes(&batch_to_ipc_bytes(&batch)?)?;
+            let block_bytes = batch_to_ipc_bytes(&batch)?;
             Ok(TraceDataBytes {
                 ufs: ArrowBytes {
                     bytes: vec![],

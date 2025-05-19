@@ -1,10 +1,9 @@
 <script lang="ts">
     // import { page } from '$app/state';
-    import { onMount } from 'svelte';
+    import { onMount, tick } from 'svelte';
     import { goto } from '$app/navigation';
     import { invoke } from "@tauri-apps/api/core";
     import { tableFromIPC } from 'apache-arrow';
-    import { decompress } from '$utils/zstd';
     
     import { getTestInfo, getBufferSize } from '$api/db';
     import { trace, 
@@ -40,7 +39,8 @@
         fetchUfsStats, 
         fetchBlockStats, 
         filterTraceData, 
-        THRESHOLDS as thresholds 
+        THRESHOLDS as thresholds,
+        fetchTraceLengths
     } from '$utils/trace-helper';
     
     // 페이지 ID 및 기본 상태
@@ -50,6 +50,15 @@
     let tracedata:any[] = $state([]);
     let filteredData = $state({});
     let tracetype:string[] = $state([]);
+    let traceLengths:any = $state({});
+
+    // 선택된 타입의 필터된 데이터를 접근하기 위한 반응형 변수
+    let currentFiltered:Array = $derived(filteredData[$selectedTrace]?.data ?? []);
+    let legendKey:string = $derived($selectedTrace === 'ufs' ? 'opcode' : 'io_type');
+    let patternAxis:Object = $derived($selectedTrace === 'ufs'
+        ? { key: 'lba', label: '4KB', column: 'lba' }
+        : { key: 'sector', label: 'sector', column: 'sector' });
+    let currentStats:Object = $derived($selectedTrace === 'ufs' ? ufsStats : blockStats);
     let isLoading:boolean = $state(false);
 
     // Retry 관련 상태 추가
@@ -99,45 +108,54 @@
     });
 
     let buffersize = $state(0);
-
+    
     // 필터가 변경될 때 데이터 업데이트
     $effect(() => {
         (async () => {
-            if ($filtertraceChanged) {
-                isLoading = true;
-                
-                // 이전 필터 값 업데이트
-                $prevFilterTrace = {...$filtertrace};
-                
-                // 필터링된 데이터 설정
-                await updateFilteredData();
-                
-                // 선택된 유형에 따라 통계 데이터 다시 로드
-                await loadStatsData();
-                
-                isLoading = false;
+        if ($filtertraceChanged) {
+            isLoading = true;
+            console.log('[Trace] 필터 변경 감지');
+            // 이전 필터 값 업데이트
+            $prevFilterTrace = {...$filtertrace};
+            
+            try {
+            if (!tracedata[$selectedTrace]) {
+                await loadTraceData();
             }
+
+            
+            
+            // 필터링된 데이터 설정
+            await updateFilteredData();
+            
+            // 선택된 유형에 따라 통계 데이터 다시 로드
+            await loadStatsData();
+            
+            // 추가 지연으로 모든 차트 렌더링 완료 보장
+            await delay(300);
+            } catch (error) {
+            console.error('[Trace] 데이터 처리 오류:', error);
+            } finally {
+            console.log('[Trace] 모든 처리 완료, 로딩 상태 해제');
+            isLoading = false;
+            }
+        }
         })();
-    })
+    });
 
     
     // selectedTrace가 변경될 때 통계 데이터 업데이트
     $effect(() => {
-        (async () => {
-            if ($selectedTrace && $filterselectedTraceChanged) {
-                isLoading = true;
-                
-                $prevselectedTrace = $selectedTrace;
-
-                // 선택된 trace에 대한 필터링된 데이터 업데이트
-                await updateFilteredData();
-                
-                // 통계 데이터 로드
-                await loadStatsData();
-                
-                isLoading = false;
-            }
-        })();
+        // selectedTrace가 변경될 때만 filtertrace 초기화
+        if ($selectedTrace) {
+            $filtertrace = {
+                zoom_column: $selectedTrace === 'ufs' ? 'lba' : 'sector',
+                from_time: 0.0,
+                to_time: 0.0,
+                from_lba: 0.0,
+                to_lba: 0.0,
+            };
+        }
     })
 
     // BigInt 직렬화 처리를 위한 함수
@@ -156,15 +174,36 @@
             return value;
         });
     }
-
+    function delay(ms) {
+        return new Promise(resolve => setTimeout(resolve, ms));
+    }
     // 필터링된 데이터 설정
     async function updateFilteredData() {
         if ($selectedTrace) {
+        isLoading = true;
+        console.log('[Trace] 필터링된 데이터 요청 중...');
+        
+        try {
             const result = await filterTraceData(fileNames[$selectedTrace], tracedata, $selectedTrace, $filtertrace);
             if (result !== null) {
-                filteredData[$selectedTrace] = result[$selectedTrace];  
+            console.log('[Trace] 필터링된 데이터 수신 완료');
+            filteredData[$selectedTrace] = result[$selectedTrace];
+            
+            // 데이터 변경 후 UI 업데이트를 위한 tick 대기
+            await tick();
+            
+            // 차트 렌더링을 위한 추가 지연
+            console.log('[Trace] 차트 렌더링 대기 중...');
+            await delay(500);
+            console.log('[Trace] 차트 렌더링 대기 완료');
             }
+            return true;
+        } catch (error) {
+            console.error('[Trace] 데이터 필터링 오류:', error);
+            return false;
         }
+        }
+        return false;
     }
 
     // 선택된 유형에 따라 통계 데이터 로드
@@ -227,11 +266,7 @@
         try {
             isLoading = true;
             loadError = '';
-            
-            // 테스트 정보 가져오기
-            data = await getTestInfo(id);
-            buffersize = await getBufferSize();
-            
+                        
             // 캐시 키 구성
             const cacheKey = `traceData_${id}_${data.logfolder}_${data.logname}`;
             
@@ -240,18 +275,24 @@
             if (cached) {
                 tracedata = deserializeBigInt(cached);
             } else {
-                // 캐시된 데이터가 없으면 서버에서 가져오기
-                const ufsTable = tableFromIPC(decompress(new Uint8Array(result.ufs.bytes)));
-                const blockTable = tableFromIPC(decompress(new Uint8Array(result.block.bytes)));
+                const result: number[] = await invoke('readtrace', {
+                    logfolder: data.logfolder,
+                    logname: data.logname,
+                    maxrecords: buffersize
+                });
+                // const ufsData = await decompress(new Uint8Array(result.ufs.bytes));
+                // const blockData = await decompress(new Uint8Array(result.block.bytes));
+                // const ufsTable = tableFromIPC(ufsData);
+                // const blockTable = tableFromIPC(blockData);
                 tracedata = {
                     ufs: {
-                        data: ufsTable.toArray(),
+                        data: '',
                         total_count: result.ufs.total_count,
                         sampled_count: result.ufs.sampled_count,
                         sampling_ratio: result.ufs.sampling_ratio
                     },
                     block: {
-                        data: blockTable.toArray(),
+                        data: '',
                         total_count: result.block.total_count,
                         sampled_count: result.block.sampled_count,
                         sampling_ratio: result.block.sampling_ratio
@@ -265,7 +306,6 @@
             // 데이터 저장 및 초기화
             $trace = tracedata;
             filteredData = tracedata;
-            tracetype = Object.keys(tracedata);
 
             // 파일 경로 설정
             setParquetFilePaths();
@@ -318,78 +358,19 @@
     onMount(async () => {
         try {
             isLoading = true;
-            const startTotal = performance.now();
-            
             // 테스트 정보 가져오기
             data = await getTestInfo(id);
             buffersize = await getBufferSize();
-            console.log('buffersize:', buffersize);
-            // 캐시 키 구성
-            const cacheKey = `traceData_${id}_${data.logfolder}_${data.logname}`;
             
-            // IndexedDB에서 캐시된 데이터 불러오기
-            let cached = await get(cacheKey);
-            if (cached) {
-                tracedata = deserializeBigInt(cached);
-            } else {
-                const startreadtrace = performance.now();
-                // 캐시된 데이터가 없으면 서버에서 가져오기
-                let result: number[] = await invoke('readtrace', {
-                    logfolder: data.logfolder, 
-                    logname: data.logname,
-                    maxrecords: buffersize
-                });
-                const endreadtrace = performance.now();
-                console.log(`readtrace time: ${endreadtrace - startreadtrace} ms`);
-                
-                // UFS 및 Block 테이블을 Apache Arrow로 변환
-                const startConvert = performance.now();
-                const ufsData = await decompress(new Uint8Array(result.ufs.bytes));
-                const blockData = await decompress(new Uint8Array(result.block.bytes));
-                const ufsTable = tableFromIPC(ufsData);
-                const blockTable = tableFromIPC(blockData);
-                const endConvert = performance.now();
-                console.log(`Convert time: ${endConvert - startConvert} ms`);
-                tracedata = {
-                    ufs: {
-                        data: ufsTable.toArray(),
-                        total_count: result.ufs.total_count,
-                        sampled_count: result.ufs.sampled_count,
-                        sampling_ratio: result.ufs.sampling_ratio
-                    },
-                    block: {
-                        data: blockTable.toArray(),
-                        total_count: result.block.total_count,
-                        sampled_count: result.block.sampled_count,
-                        sampling_ratio: result.block.sampling_ratio
-                    }
-                };
-                // IndexedDB에 데이터 저장
-                await set(cacheKey, serializeBigInt(tracedata));
-            }
-            
-            // 데이터 저장 및 초기화
-            $trace = tracedata;
-            filteredData = tracedata;
-            // filteredData['ufs'] = tracedata['ufs']['data'];
-            // filteredData['block'] = tracedata['block']['data'];
-            tracetype = Object.keys(tracedata);
-
             // 파일 경로 설정
             setParquetFilePaths();
 
-            // 초기 필터링된 데이터 설정
-            // await updateFilteredData();
-            
-            // const startStats = performance.now();
-            // // 초기 통계 데이터 로드
-            // await loadStatsData();
-            // const endStats = performance.now();
-            // console.log(`Initial stats loading time: ${endStats - startStats} ms`);
+            traceLengths = await fetchTraceLengths(data.logname);
+            tracetype = Object.keys(traceLengths).filter((key) => traceLengths[key] > 0);
 
-            isLoading = false;
-            const endTotal = performance.now();
-            console.log(`Total loading time: ${endTotal - startTotal} ms`);
+            // if (tracetype.length > 0) {
+            //     selectedTrace.set(tracetype[0]);
+            // }
         } catch (error) {
             if (error instanceof Error) {
                 console.error('Error during onMount:', error.message);
@@ -398,6 +379,8 @@
                 console.error('Unknown error:', error);
             }
             goto('/');
+        } finally {
+            isLoading = false;
         }
     });
 </script>
@@ -417,7 +400,7 @@
         {#if tracetype.length > 0}
         <div class="fixed top-4 left-4">
             <div class="flex items-center gap-2">
-                <SelectType tracetype={tracetype} tracedata={filteredData} class="h-12"/>
+                <SelectType tracetype={tracetype} class="h-12"/>
                 
                 <!-- Retry 버튼 추가 -->
                 <Tooltip.Root>
@@ -459,11 +442,11 @@
                 
                 <div class="text-sm font-medium">{data.title}</div>
                 
-                {#if $selectedTrace !== '' && tracedata[$selectedTrace].total_count !== tracedata[$selectedTrace].sampled_count}
+                {#if $selectedTrace !== '' && filteredData[$selectedTrace]?.total_count && filteredData[$selectedTrace].total_count !== filteredData[$selectedTrace].sampled_count}
                 <div class="flex gap-2 text-xs text-gray-400 items-center ml-auto">
-                    <span>total: {tracedata[$selectedTrace].total_count}</span>
-                    <span>sampling: {tracedata[$selectedTrace].sampled_count}</span>
-                    <span>sample ratio: {Number(tracedata[$selectedTrace].sampling_ratio.toFixed(2))}%</span>
+                    <span>total: {filteredData[$selectedTrace].total_count}</span>
+                    <span>sampling: {filteredData[$selectedTrace].sampled_count}</span>
+                    <span>sample ratio: {Number(filteredData[$selectedTrace].sampling_ratio.toFixed(2))}%</span>
                 </div>
                 {/if}
             </div>
@@ -484,11 +467,14 @@
                         <Card.Title>{$selectedTrace.toUpperCase()} Pattern</Card.Title>
                     </Card.Header>
                     <Card.Content>
-                        {#if $selectedTrace === 'ufs'} 
-                        <ScatterCharts data={filteredData.ufs.data} xAxisKey='time' yAxisKey='lba' legendKey='opcode' yAxisLabel='4KB' ycolumn='lba'/>
-                        {:else if $selectedTrace === 'block'}
-                        <ScatterCharts data={filteredData.block.data} xAxisKey='time' yAxisKey='sector' legendKey='io_type' yAxisLabel='sector' ycolumn='sector'/>
-                        {/if}
+                        <ScatterCharts
+                            data={currentFiltered}
+                            xAxisKey='time'
+                            yAxisKey={patternAxis.key}
+                            legendKey={legendKey}
+                            yAxisLabel={patternAxis.label}
+                            ycolumn={patternAxis.column}
+                        />
                     </Card.Content>
                 </Card.Root>
                 {/if}                
@@ -499,11 +485,14 @@
                         <Card.Title>{$selectedTrace.toUpperCase()} QueueDepth</Card.Title>
                     </Card.Header>
                     <Card.Content>
-                        {#if $selectedTrace === 'ufs'} 
-                        <ScatterCharts data={filteredData.ufs.data} xAxisKey='time' yAxisKey='qd' legendKey='opcode' yAxisLabel='count' ycolumn='qd'/>
-                        {:else if $selectedTrace === 'block'}
-                        <ScatterCharts data={filteredData.block.data} xAxisKey='time' yAxisKey='qd' legendKey='io_type' yAxisLabel='count' ycolumn='qd'/>
-                        {/if}
+                        <ScatterCharts
+                            data={currentFiltered}
+                            xAxisKey='time'
+                            yAxisKey={patternAxis.key}
+                            legendKey={legendKey}
+                            yAxisLabel={patternAxis.label}
+                            ycolumn={patternAxis.column}
+                        />
                     </Card.Content>
                 </Card.Root>
                 {/if}
@@ -544,27 +533,15 @@
                         <Card.Title>{$selectedTrace.toUpperCase()} Latency</Card.Title>
                     </Card.Header>
                     <Card.Content>
-                        {#if $selectedTrace === 'ufs'} 
-                        <LatencyTabs 
-                            traceType={$selectedTrace} 
-                            filteredData={filteredData.ufs.data}
-                            legendKey="opcode"
+                        <LatencyTabs
+                            traceType={$selectedTrace}
+                            filteredData={currentFiltered}
+                            legendKey={legendKey}
                             thresholds={thresholds}
-                            dtocStat={ufsStats.dtocStat}
-                            ctodStat={ufsStats.ctodStat}
-                            ctocStat={ufsStats.ctocStat}
+                            dtocStat={currentStats.dtocStat}
+                            ctodStat={currentStats.ctodStat}
+                            ctocStat={currentStats.ctocStat}
                         />
-                        {:else if $selectedTrace === 'block'}         
-                        <LatencyTabs 
-                            traceType={$selectedTrace} 
-                            filteredData={filteredData.block.data}
-                            legendKey="io_type"
-                            thresholds={thresholds}
-                            dtocStat={blockStats.dtocStat}
-                            ctodStat={blockStats.ctodStat}
-                            ctocStat={blockStats.ctocStat}
-                        />
-                        {/if}
                     </Card.Content>
                 </Card.Root>                                
                 {/if}
@@ -578,10 +555,8 @@
                         <Card.Description>Size별 Count</Card.Description>
                     </Card.Header>
                     <Card.Content>
-                        {#if $selectedTrace === 'ufs' && ufsStats.sizeCounts?.opcode_stats} 
-                        <SizeStats opcode_size_counts={ufsStats.sizeCounts.opcode_stats} />
-                        {:else if $selectedTrace === 'block' && blockStats.sizeCounts?.opcode_stats}
-                        <SizeStats opcode_size_counts={blockStats.sizeCounts.opcode_stats} />
+                        {#if currentStats.sizeCounts?.opcode_stats}
+                        <SizeStats opcode_size_counts={currentStats.sizeCounts.opcode_stats} />
                         {/if}
                     </Card.Content>
                 </Card.Root> 

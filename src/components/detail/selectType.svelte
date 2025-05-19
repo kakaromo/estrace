@@ -3,27 +3,17 @@
     import { selectedTrace, filtertrace } from "$stores/trace.js";
 
     interface SelectTypeProps {
-        tracedata: any;
         tracetype: string[];
     }
 
-    let { tracedata, tracetype } : SelectTypeProps = $props();       
-
-    console.log("tracedata", tracedata);
-    console.log("tracetype", tracetype);
-
-    
+    let { tracetype } : SelectTypeProps = $props();  
 </script>
 <Select.Root onSelectedChange={(v) => {
-     $filtertrace = {
-            zoom_column: $selectedTrace === 'ufs'? 'lba': 'sector',
-            from_time: 0.0,
-            to_time: 0.0,
-            from_lba: 0.0,
-            to_lba: 0.0,
-        };
-    v && (selectedTrace.set(v.value));
-  }}>
+    if (v) {
+        selectedTrace.set(v.value);
+        // filtertrace 설정은 부모 컴포넌트로 이동
+    }
+}}>
 <Select.Trigger class="w-[240px]" h-12>
     <Select.Value placeholder="Select a type(UFS, Block)" />
 </Select.Trigger>
@@ -31,9 +21,7 @@
     <Select.Group>
     <Select.Label>Type</Select.Label>
     {#each tracetype as value}
-        {#if tracedata[value].total_count > 0}
-        <Select.Item value={value} label={value}>{value}</Select.Item>
-        {/if}
+    <Select.Item value={value} label={value}>{value}</Select.Item>
     {/each}             
     </Select.Group>
 </Select.Content>

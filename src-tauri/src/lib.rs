@@ -45,6 +45,7 @@ pub fn run() {
             greet,
             trace::starttrace,
             trace::readtrace,
+            trace::trace_lengths,
             trace::ufs_latencystats,
             trace::block_latencystats,
             trace::ufs_sizestats,
@@ -55,7 +56,6 @@ pub fn run() {
             trace::block_continuity_stats,
             trace::export_to_csv,
             trace::filter_trace,
-            trace::decompress_zstd,
             // Pattern management commands
             trace::add_pattern,
             trace::set_active_pattern,

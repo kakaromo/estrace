@@ -13,12 +13,10 @@ use regex::Regex;
 use std::collections::HashMap;
 use std::sync::{Mutex, RwLock};
 use serde::Serialize;
-use crate::trace::utils::TraceDataBytes;
+use crate::trace::utils::{TraceDataBytes, TraceLengths};
 use tauri::Window;
 use lazy_static::lazy_static;
 use tauri::Emitter;
-
-use zstd::stream::decode_all;
 
 // 타입들을 재내보냅니다
 pub use types::*;
@@ -82,6 +80,11 @@ lazy_static! {
 #[tauri::command]
 pub async fn readtrace(logname: String, maxrecords: Option<usize>) -> Result<TraceDataBytes, String> {
     utils::readtrace(logname, maxrecords.unwrap_or(DEFAULT_PREVIEW_RECORDS)).await
+}
+
+#[tauri::command]
+pub async fn trace_lengths(logname: String) -> Result<TraceLengths, String> {
+    utils::trace_lengths(logname).await
 }
 
 #[tauri::command]
@@ -463,9 +466,4 @@ pub fn reset_cancel_signal() -> Result<bool, String> {
 pub fn check_cancel_status() -> Result<bool, String> {
     let cancel = CANCEL_SIGNAL.lock().map_err(|e| e.to_string())?;
     Ok(*cancel)
-}
-
-#[tauri::command]
-pub fn decompress_zstd(data: Vec<u8>) -> Result<Vec<u8>, String> {
-    decode_all(&data[..]).map_err(|e| e.to_string())
 }
