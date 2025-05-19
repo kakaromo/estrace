@@ -13,3 +13,4 @@ package-lock.json
 src-tauri/test.db
 src-tauri/test.db-shm
 src-tauri/test.db-wal
+src-tauri/Cargo.lock

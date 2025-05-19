@@ -18,6 +18,8 @@ use tauri::Window;
 use lazy_static::lazy_static;
 use tauri::Emitter;
 
+use zstd::stream::decode_all;
+
 // 타입들을 재내보냅니다
 pub use types::*;
 // pub use patterns::*; 이 줄은 제거하거나 주석 처리 (사용되지 않는 import 경고)
@@ -461,4 +463,9 @@ pub fn reset_cancel_signal() -> Result<bool, String> {
 pub fn check_cancel_status() -> Result<bool, String> {
     let cancel = CANCEL_SIGNAL.lock().map_err(|e| e.to_string())?;
     Ok(*cancel)
+}
+
+#[tauri::command]
+pub fn decompress_zstd(data: Vec<u8>) -> Result<Vec<u8>, String> {
+    decode_all(&data[..]).map_err(|e| e.to_string())
 }

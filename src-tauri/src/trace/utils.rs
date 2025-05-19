@@ -10,6 +10,7 @@ use rayon::prelude::*;
 use tauri::async_runtime::spawn_blocking;
 use tauri::Emitter;
 use arrow::ipc::writer::StreamWriter;
+use zstd::stream::encode_all;
 
 use serde::Serialize;
 
@@ -216,6 +217,10 @@ fn batch_to_ipc_bytes(batch: &arrow::record_batch::RecordBatch) -> Result<Vec<u8
     Ok(buf)
 }
 
+// 압축
+fn compress_bytes(data: &[u8]) -> Result<Vec<u8>, String> {
+    encode_all(data, 0).map_err(|e| e.to_string())
+}
 
 // 구간 키 생성 함수 - latencystats에서 중복 사용
 pub fn create_range_key(latency: f64, threshold_values: &[f64], thresholds: &[String]) -> String {
@@ -259,6 +264,7 @@ pub fn initialize_ranges(thresholds: &[String]) -> BTreeMap<String, usize> {
 
 // readtrace 함수 - max_records 매개변수 추가
 pub async fn readtrace(logname: String, max_records: usize) -> Result<TraceDataBytes, String> {
+    let starttime = std::time::Instant::now();
     // 캐시 확인: 두 캐시 모두 있는지 확인
     {
         let ufs_cache = UFS_CACHE.lock().map_err(|e| e.to_string())?;
@@ -277,8 +283,8 @@ pub async fn readtrace(logname: String, max_records: usize) -> Result<TraceDataB
             let ufs_batch = crate::trace::ufs::ufs_to_record_batch(&ufs_sample_info.data)?;
             let block_batch = crate::trace::block::block_to_record_batch(&block_sample_info.data)?;
 
-            let ufs_bytes = batch_to_ipc_bytes(&ufs_batch)?;
-            let block_bytes = batch_to_ipc_bytes(&block_batch)?;
+            let ufs_bytes = compress_bytes(&batch_to_ipc_bytes(&ufs_batch)?)?;
+            let block_bytes = compress_bytes(&batch_to_ipc_bytes(&block_batch)?)?;
 
             return Ok(TraceDataBytes {
                 ufs: ArrowBytes {
@@ -647,8 +653,12 @@ pub async fn readtrace(logname: String, max_records: usize) -> Result<TraceDataB
     let ufs_batch = crate::trace::ufs::ufs_to_record_batch(&ufs_sample_info.data)?;
     let block_batch = crate::trace::block::block_to_record_batch(&block_sample_info.data)?;
 
-    let ufs_bytes = batch_to_ipc_bytes(&ufs_batch)?;
-    let block_bytes = batch_to_ipc_bytes(&block_batch)?;
+    let startbytes = std::time::Instant::now();
+    let ufs_bytes = compress_bytes(&batch_to_ipc_bytes(&ufs_batch)?)?;
+    let block_bytes = compress_bytes(&batch_to_ipc_bytes(&block_batch)?)?;
+    println!("compress elapsed time: {:?}", startbytes.elapsed());
+
+    println!("readtrace elapsed time: {:?}", starttime.elapsed());
 
     Ok(TraceDataBytes {
         ufs: ArrowBytes {
@@ -1238,7 +1248,7 @@ pub async fn filter_trace(
             let ufs_sample_info = sample_ufs(&ufs_vec, max_records);
 
             let batch = crate::trace::ufs::ufs_to_record_batch(&ufs_sample_info.data)?;
-            let ufs_bytes = batch_to_ipc_bytes(&batch)?;
+            let ufs_bytes = compress_bytes(&batch_to_ipc_bytes(&batch)?)?;
             
             Ok(TraceDataBytes {
                 ufs: ArrowBytes {
@@ -1260,7 +1270,7 @@ pub async fn filter_trace(
             let block_sample_info = sample_block(&block_vec, max_records);
 
             let batch = crate::trace::block::block_to_record_batch(&block_sample_info.data)?;
-            let block_bytes = batch_to_ipc_bytes(&batch)?;
+            let block_bytes = compress_bytes(&batch_to_ipc_bytes(&batch)?)?;
             Ok(TraceDataBytes {
                 ufs: ArrowBytes {
                     bytes: vec![],

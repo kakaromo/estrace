@@ -4,6 +4,7 @@
     import { goto } from '$app/navigation';
     import { invoke } from "@tauri-apps/api/core";
     import { tableFromIPC } from 'apache-arrow';
+    import { decompress } from '$utils/zstd';
     
     import { getTestInfo, getBufferSize } from '$api/db';
     import { trace, 
@@ -41,7 +42,7 @@
         filterTraceData, 
         THRESHOLDS as thresholds 
     } from '$utils/trace-helper';
-
+    
     // 페이지 ID 및 기본 상태
     // const id = page.params.id;
     const id = $testinfoid;
@@ -240,8 +241,8 @@
                 tracedata = deserializeBigInt(cached);
             } else {
                 // 캐시된 데이터가 없으면 서버에서 가져오기
-                const ufsTable = tableFromIPC(new Uint8Array(result.ufs.bytes));
-                const blockTable = tableFromIPC(new Uint8Array(result.block.bytes));
+                const ufsTable = tableFromIPC(decompress(new Uint8Array(result.ufs.bytes)));
+                const blockTable = tableFromIPC(decompress(new Uint8Array(result.block.bytes)));
                 tracedata = {
                     ufs: {
                         data: ufsTable.toArray(),
@@ -269,8 +270,8 @@
             // 파일 경로 설정
             setParquetFilePaths();
 
-            // 초기 통계 데이터 로드
-            await loadStatsData();
+            // // 초기 통계 데이터 로드
+            // await loadStatsData();
             
             retryCount = 0; // 성공했으므로, 재시도 카운트 초기화
             return true;
@@ -343,8 +344,10 @@
                 
                 // UFS 및 Block 테이블을 Apache Arrow로 변환
                 const startConvert = performance.now();
-                const ufsTable = tableFromIPC(new Uint8Array(result.ufs.bytes));
-                const blockTable = tableFromIPC(new Uint8Array(result.block.bytes));
+                const ufsData = await decompress(new Uint8Array(result.ufs.bytes));
+                const blockData = await decompress(new Uint8Array(result.block.bytes));
+                const ufsTable = tableFromIPC(ufsData);
+                const blockTable = tableFromIPC(blockData);
                 const endConvert = performance.now();
                 console.log(`Convert time: ${endConvert - startConvert} ms`);
                 tracedata = {
@@ -378,11 +381,11 @@
             // 초기 필터링된 데이터 설정
             // await updateFilteredData();
             
-            const startStats = performance.now();
-            // 초기 통계 데이터 로드
-            await loadStatsData();
-            const endStats = performance.now();
-            console.log(`Initial stats loading time: ${endStats - startStats} ms`);
+            // const startStats = performance.now();
+            // // 초기 통계 데이터 로드
+            // await loadStatsData();
+            // const endStats = performance.now();
+            // console.log(`Initial stats loading time: ${endStats - startStats} ms`);
 
             isLoading = false;
             const endTotal = performance.now();

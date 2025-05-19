@@ -55,6 +55,7 @@ pub fn run() {
             trace::block_continuity_stats,
             trace::export_to_csv,
             trace::filter_trace,
+            trace::decompress_zstd,
             // Pattern management commands
             trace::add_pattern,
             trace::set_active_pattern,

@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { tableFromIPC } from 'apache-arrow';
+import { decompress } from './zstd';
 import { compareTraceCount, traceSizeCount, traceSaimpleCount } from '$stores/trace';
 import { getBufferSize } from "$api/db";
 
@@ -120,8 +121,10 @@ export async function filterTraceData(logname: string, traceData: any, selectedT
       maxrecords: buffersize
     });
 
-    const ufsTable = tableFromIPC(new Uint8Array(result.ufs.bytes));
-    const blockTable = tableFromIPC(new Uint8Array(result.block.bytes));
+    const ufsBytes = decompress(new Uint8Array(result.ufs.bytes));
+    const blockBytes = decompress(new Uint8Array(result.block.bytes));
+    const ufsTable = tableFromIPC(ufsBytes);
+    const blockTable = tableFromIPC(blockBytes);
     const tracedata = {
         ufs: {
             data: ufsTable.toArray(),
