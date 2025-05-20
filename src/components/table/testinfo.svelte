@@ -580,13 +580,13 @@
             
             // 운영체제별 처리
             if (currentPlatform === 'win32') {
-                // Windows - explorer 명령어 사용
-                // 백슬래시로 변환
-                const winPath = path.replace(/\//g, '\\');
-                console.log('Windows 경로:', winPath);
-                
-                // explorer 명령어로 폴더 열기
-                await open(`explorer "${winPath}"`);
+                let winPath = path;
+                if (winPath.startsWith('//')) {
+                    winPath = `\\${winPath.slice(2)}`;
+                }
+                winPath = winPath.replace(/\//g, '\\');
+
+                await open('explorer', [winPath]);
             } else {
                 // macOS, Linux 등의 경우 기존 함수 사용
                 await revealItemInDir(path);

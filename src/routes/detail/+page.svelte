@@ -488,10 +488,10 @@
                         <ScatterCharts
                             data={currentFiltered}
                             xAxisKey='time'
-                            yAxisKey={patternAxis.key}
+                            yAxisKey='qd'
                             legendKey={legendKey}
-                            yAxisLabel={patternAxis.label}
-                            ycolumn={patternAxis.column}
+                            yAxisLabel='qd'
+                            ycolumn='qd'
                         />
                     </Card.Content>
                 </Card.Root>
