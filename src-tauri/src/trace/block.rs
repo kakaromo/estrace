@@ -18,6 +18,46 @@ use crate::trace::{
     TotalContinuity, TraceStats,
 };
 
+// 레이턴시 통계 분석을 위한 매개변수 구조체
+#[derive(Debug, Clone)]
+pub struct LatencyStatsParams {
+    pub logname: String,
+    pub column: String,
+    pub zoom_column: String,
+    pub time_from: Option<f64>,
+    pub time_to: Option<f64>,
+    pub col_from: Option<f64>,
+    pub col_to: Option<f64>,
+    pub thresholds: Vec<String>,
+    pub group: bool,
+}
+
+// 크기 통계 분석을 위한 매개변수 구조체
+#[derive(Debug, Clone)]
+pub struct SizeStatsParams {
+    pub logname: String,
+    pub column: String,
+    pub zoom_column: String,
+    pub time_from: Option<f64>,
+    pub time_to: Option<f64>,
+    pub col_from: Option<f64>,
+    pub col_to: Option<f64>,
+    pub group: bool,
+}
+
+// 종합 통계 분석을 위한 매개변수 구조체
+#[derive(Debug, Clone)]
+pub struct AllStatsParams {
+    pub logname: String,
+    pub zoom_column: String,
+    pub time_from: Option<f64>,
+    pub time_to: Option<f64>,
+    pub col_from: Option<f64>,
+    pub col_to: Option<f64>,
+    pub thresholds: Vec<String>,
+    pub group: bool,
+}
+
 // Block 레이턴시 후처리 함수
 pub fn block_bottom_half_latency_process(block_list: Vec<Block>) -> Vec<Block> {
     // 이벤트가 없으면 빈 벡터 반환
@@ -340,42 +380,32 @@ pub fn save_block_to_parquet(
 }
 
 // Block 레이턴시 통계 함수
-pub async fn latencystats(
-    logname: String,
-    column: String,
-    zoom_column: String,
-    time_from: Option<f64>,
-    time_to: Option<f64>,
-    col_from: Option<f64>,
-    col_to: Option<f64>,
-    thresholds: Vec<String>,
-    group: bool,
-) -> Result<Vec<u8>, String> {
+pub async fn latencystats(params: LatencyStatsParams) -> Result<Vec<u8>, String> {
     // threshold 문자열을 밀리초 값으로 변환
     let mut threshold_values: Vec<f64> = Vec::new();
-    for t in &thresholds {
+    for t in &params.thresholds {
         let ms = parse_time_to_ms(t)?;
         threshold_values.push(ms);
     }
 
     // 필터링 적용
     let filtered_blocks =
-        filter_block_data(&logname, time_from, time_to, &zoom_column, col_from, col_to)?;
+        filter_block_data(&params.logname, params.time_from, params.time_to, &params.zoom_column, params.col_from, params.col_to)?;
 
     // LatencyStat 생성 - column에 따라 데이터 매핑
-    let latency_stats: Vec<LatencyStat> = match column.as_str() {
+    let latency_stats: Vec<LatencyStat> = match params.column.as_str() {
         "dtoc" | "ctoc" => filtered_blocks
             .iter()
             .filter(|b| b.action == "block_rq_complete")
             .map(|b| LatencyStat {
                 time: b.time,
                 // grouping key로 io_type 사용
-                opcode: if group {
+                opcode: if params.group {
                     normalize_io_type(&b.io_type)
                 } else {
                     b.io_type.clone()
                 },
-                value: if column == "dtoc" {
+                value: if params.column == "dtoc" {
                     LatencyValue::F64(b.dtoc)
                 } else {
                     LatencyValue::F64(b.ctoc)
@@ -387,7 +417,7 @@ pub async fn latencystats(
             .filter(|b| b.action == "block_rq_issue")
             .map(|b| LatencyStat {
                 time: b.time,
-                opcode: if group {
+                opcode: if params.group {
                     normalize_io_type(&b.io_type)
                 } else {
                     b.io_type.clone()
@@ -400,7 +430,7 @@ pub async fn latencystats(
             .filter(|b| b.action == "block_rq_issue")
             .map(|b| LatencyStat {
                 time: b.time,
-                opcode: if group {
+                opcode: if params.group {
                     normalize_io_type(&b.io_type)
                 } else {
                     b.io_type.clone()
@@ -408,7 +438,7 @@ pub async fn latencystats(
                 value: LatencyValue::F64(b.sector as f64),
             })
             .collect(),
-        _ => return Err("Invalid column for block latencystats".to_string()),
+        _ => return Err(format!("유효하지 않은 컬럼: {}", params.column)),
     };
 
     // 시간순 정렬
@@ -425,13 +455,13 @@ pub async fn latencystats(
 
     let mut latency_counts: BTreeMap<String, BTreeMap<String, usize>> = BTreeMap::new();
     for io in &unique_io_types {
-        latency_counts.insert(io.clone(), initialize_ranges(&thresholds));
+        latency_counts.insert(io.clone(), initialize_ranges(&params.thresholds));
     }
 
     // 각 데이터에 대해 해당 io_type의 구간 카운트 증가
     for stat in &filtered_stats {
         let latency = stat.value.as_f64();
-        let range_key = create_range_key(latency, &threshold_values, &thresholds);
+        let range_key = create_range_key(latency, &threshold_values, &params.thresholds);
 
         if let Some(io_counts) = latency_counts.get_mut(&stat.opcode) {
             if let Some(count) = io_counts.get_mut(&range_key) {
@@ -464,24 +494,15 @@ pub async fn latencystats(
 }
 
 // Block 크기 통계 함수
-pub async fn sizestats(
-    logname: String,
-    column: String,
-    zoom_column: String,
-    time_from: Option<f64>,
-    time_to: Option<f64>,
-    col_from: Option<f64>,
-    col_to: Option<f64>,
-    group: bool,
-) -> Result<Vec<u8>, String> {
+pub async fn sizestats(params: SizeStatsParams) -> Result<Vec<u8>, String> {
     // 필터링 적용
     let filtered_blocks =
-        filter_block_data(&logname, time_from, time_to, &zoom_column, col_from, col_to)?;
+        filter_block_data(&params.logname, params.time_from, params.time_to, &params.zoom_column, params.col_from, params.col_to)?;
 
     // column 조건에 따라 유효한 데이터만 필터링
     let filtered_blocks: Vec<&Block> = filtered_blocks
         .iter()
-        .filter(|b| match column.as_str() {
+        .filter(|b| match params.column.as_str() {
             "dtoc" | "ctoc" => b.action == "block_rq_complete",
             "ctod" | "sector" => b.action == "block_rq_issue",
             _ => false,
@@ -492,7 +513,7 @@ pub async fn sizestats(
     let target_io_types: Vec<String> = filtered_blocks
         .iter()
         .map(|b| {
-            if group {
+            if params.group {
                 normalize_io_type(&b.io_type)
             } else {
                 b.io_type.clone()
@@ -513,7 +534,7 @@ pub async fn sizestats(
 
     // size 기준 count 계산
     for block in &filtered_blocks {
-        let io_key = if group {
+        let io_key = if params.group {
             normalize_io_type(&block.io_type)
         } else {
             block.io_type.clone()
@@ -633,28 +654,19 @@ pub async fn continuity_stats(
 }
 
 // Block 전체 통계 계산 함수 - 단일 필터링으로 모든 통계 계산
-pub async fn allstats(
-    logname: String,
-    zoom_column: String,
-    time_from: Option<f64>,
-    time_to: Option<f64>,
-    col_from: Option<f64>,
-    col_to: Option<f64>,
-    thresholds: Vec<String>,
-    group: bool,
-) -> Result<Vec<u8>, String> {
+pub async fn allstats(params: AllStatsParams) -> Result<Vec<u8>, String> {
     let mut threshold_values: Vec<f64> = Vec::new();
-    for t in &thresholds {
+    for t in &params.thresholds {
         let ms = parse_time_to_ms(t)?;
         threshold_values.push(ms);
     }
 
     let filtered_blocks =
-        filter_block_data(&logname, time_from, time_to, &zoom_column, col_from, col_to)?;
+        filter_block_data(&params.logname, params.time_from, params.time_to, &params.zoom_column, params.col_from, params.col_to)?;
 
     let unique_io_types: std::collections::HashSet<String> = filtered_blocks
         .iter()
-        .map(|b| if group { normalize_io_type(&b.io_type) } else { b.io_type.clone() })
+        .map(|b| if params.group { normalize_io_type(&b.io_type) } else { b.io_type.clone() })
         .collect();
 
     let mut dtoc_counts = std::collections::BTreeMap::new();
@@ -665,9 +677,9 @@ pub async fn allstats(
     let mut ctoc_groups = std::collections::BTreeMap::new();
 
     for io in &unique_io_types {
-        dtoc_counts.insert(io.clone(), initialize_ranges(&thresholds));
-        ctod_counts.insert(io.clone(), initialize_ranges(&thresholds));
-        ctoc_counts.insert(io.clone(), initialize_ranges(&thresholds));
+        dtoc_counts.insert(io.clone(), initialize_ranges(&params.thresholds));
+        ctod_counts.insert(io.clone(), initialize_ranges(&params.thresholds));
+        ctoc_counts.insert(io.clone(), initialize_ranges(&params.thresholds));
         dtoc_groups.insert(io.clone(), Vec::new());
         ctod_groups.insert(io.clone(), Vec::new());
         ctoc_groups.insert(io.clone(), Vec::new());
@@ -688,14 +700,14 @@ pub async fn allstats(
     let mut continuous_bytes: u64 = 0;
 
     for block in &filtered_blocks {
-        let io_key = if group {
+        let io_key = if params.group {
             normalize_io_type(&block.io_type)
         } else {
             block.io_type.clone()
         };
 
         if block.action == "block_rq_complete" {
-            let range_key = create_range_key(block.dtoc, &threshold_values, &thresholds);
+            let range_key = create_range_key(block.dtoc, &threshold_values, &params.thresholds);
             if let Some(map) = dtoc_counts.get_mut(&io_key) {
                 if let Some(v) = map.get_mut(&range_key) {
                     *v += 1;
@@ -703,7 +715,7 @@ pub async fn allstats(
             }
             dtoc_groups.entry(io_key.clone()).or_default().push(block.dtoc);
 
-            let range_key = create_range_key(block.ctoc, &threshold_values, &thresholds);
+            let range_key = create_range_key(block.ctoc, &threshold_values, &params.thresholds);
             if let Some(map) = ctoc_counts.get_mut(&io_key) {
                 if let Some(v) = map.get_mut(&range_key) {
                     *v += 1;
@@ -718,7 +730,7 @@ pub async fn allstats(
         }
 
         if block.action == "block_rq_issue" {
-            let range_key = create_range_key(block.ctod, &threshold_values, &thresholds);
+            let range_key = create_range_key(block.ctod, &threshold_values, &params.thresholds);
             if let Some(map) = ctod_counts.get_mut(&io_key) {
                 if let Some(v) = map.get_mut(&range_key) {
                     *v += 1;

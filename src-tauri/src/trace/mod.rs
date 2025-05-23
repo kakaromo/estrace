@@ -97,6 +97,7 @@ pub async fn starttrace(fname: String, logfolder: String, window: Window) -> Res
     utils::starttrace(fname, logfolder, window).await
 }
 
+#[allow(clippy::too_many_arguments)]
 #[tauri::command]
 pub async fn ufs_latencystats(
     logname: String,
@@ -108,7 +109,9 @@ pub async fn ufs_latencystats(
     col_to: Option<f64>,
     thresholds: Vec<String>,
 ) -> Result<Vec<u8>, String> {
-    ufs::latencystats(
+    use ufs::UfsLatencyStatsParams;
+    
+    ufs::latencystats(UfsLatencyStatsParams {
         logname,
         column,
         zoom_column,
@@ -117,7 +120,7 @@ pub async fn ufs_latencystats(
         col_from,
         col_to,
         thresholds,
-    )
+    })
     .await
 }
 
@@ -131,7 +134,9 @@ pub async fn ufs_sizestats(
     col_from: Option<f64>,
     col_to: Option<f64>,
 ) -> Result<Vec<u8>, String> {
-    ufs::sizestats(
+    use ufs::UfsSizeStatsParams;
+    
+    ufs::sizestats(UfsSizeStatsParams {
         logname,
         column,
         zoom_column,
@@ -139,7 +144,7 @@ pub async fn ufs_sizestats(
         time_to,
         col_from,
         col_to,
-    )
+    })
     .await
 }
 
@@ -153,9 +158,19 @@ pub async fn ufs_allstats(
     col_to: Option<f64>,
     thresholds: Vec<String>,
 ) -> Result<Vec<u8>, String> {
-    ufs::allstats(logname, zoom_column, time_from, time_to, col_from, col_to, thresholds).await
+    use ufs::UfsAllStatsParams;
+    
+    ufs::allstats(UfsAllStatsParams {
+        logname,
+        zoom_column,
+        time_from,
+        time_to,
+        col_from,
+        col_to,
+    }, thresholds).await
 }
 
+#[allow(clippy::too_many_arguments)]
 #[tauri::command]
 pub async fn block_latencystats(
     logname: String,
@@ -168,7 +183,9 @@ pub async fn block_latencystats(
     thresholds: Vec<String>,
     group: bool,
 ) -> Result<Vec<u8>, String> {
-    block::latencystats(
+    use block::LatencyStatsParams;
+    
+    block::latencystats(LatencyStatsParams {
         logname,
         column,
         zoom_column,
@@ -178,10 +195,11 @@ pub async fn block_latencystats(
         col_to,
         thresholds,
         group,
-    )
+    })
     .await
 }
 
+#[allow(clippy::too_many_arguments)]
 #[tauri::command]
 pub async fn block_sizestats(
     logname: String,
@@ -193,7 +211,9 @@ pub async fn block_sizestats(
     col_to: Option<f64>,
     group: bool,
 ) -> Result<Vec<u8>, String> {
-    block::sizestats(
+    use block::SizeStatsParams;
+    
+    block::sizestats(SizeStatsParams {
         logname,
         column,
         zoom_column,
@@ -202,10 +222,11 @@ pub async fn block_sizestats(
         col_from,
         col_to,
         group,
-    )
+    })
     .await
 }
 
+#[allow(clippy::too_many_arguments)]
 #[tauri::command]
 pub async fn block_allstats(
     logname: String,
@@ -217,7 +238,18 @@ pub async fn block_allstats(
     thresholds: Vec<String>,
     group: bool,
 ) -> Result<Vec<u8>, String> {
-    block::allstats(logname, zoom_column, time_from, time_to, col_from, col_to, thresholds, group).await
+    use block::AllStatsParams;
+    
+    block::allstats(AllStatsParams {
+        logname,
+        zoom_column,
+        time_from,
+        time_to,
+        col_from,
+        col_to,
+        thresholds,
+        group,
+    }).await
 }
 
 #[tauri::command]
@@ -252,6 +284,7 @@ pub async fn export_to_csv(
     export::export_to_csv(parquet_path, output_dir).await
 }
 
+#[allow(clippy::too_many_arguments)]
 #[tauri::command]
 pub async fn filter_trace(
     logname: String,
@@ -263,16 +296,18 @@ pub async fn filter_trace(
     col_to: Option<f64>,
     maxrecords: Option<usize>,
 ) -> Result<TraceDataBytes, String> {
-    utils::filter_trace(
+    use utils::FilterTraceParams;
+    
+    utils::filter_trace(FilterTraceParams {
         logname,
-        tracetype,
+        tracetype, 
         zoom_column,
         time_from,
         time_to,
         col_from,
         col_to,
-        maxrecords.unwrap_or(DEFAULT_PREVIEW_RECORDS),
-    )
+        max_records: maxrecords.unwrap_or(DEFAULT_PREVIEW_RECORDS),
+    })
     .await
 }
 

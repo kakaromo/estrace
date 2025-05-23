@@ -19,6 +19,8 @@ use crate::trace::ufs::{save_ufs_to_parquet, ufs_bottom_half_latency_process};
 use crate::trace::{Block, LatencySummary, TraceParseResult, BLOCK_CACHE, UFS, UFS_CACHE, ProgressEvent, CANCEL_SIGNAL};
 
 use crate::trace::filter::{filter_block_data, filter_ufs_data};
+use crate::trace::block::block_to_record_batch;
+use crate::trace::ufs::ufs_to_record_batch;
 
 use super::{ACTIVE_BLOCK_PATTERN, ACTIVE_UFS_PATTERN};
 
@@ -130,8 +132,8 @@ pub fn calculate_percentile(sorted_values: &[f64], percentile: f64) -> f64 {
 }
 
 // 통계 계산을 위한 헬퍼 함수
-pub fn calculate_statistics(values: &mut Vec<f64>) -> LatencySummary {
-    values.sort_by(|a, b| a.partial_cmp(&b).unwrap_or(std::cmp::Ordering::Equal));
+pub fn calculate_statistics(values: &mut [f64]) -> LatencySummary {
+    values.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
 
     let n = values.len();
     if n == 0 {
@@ -188,7 +190,7 @@ pub fn parse_time_to_ms(time_str: &str) -> Result<f64, String> {
 
     // 숫자와 단위 분리
     for c in time_str.chars() {
-        if c.is_digit(10) || c == '.' {
+        if c.is_ascii_digit() || c == '.' {
             num_str.push(c);
         } else {
             unit_str.push(c);
@@ -690,7 +692,7 @@ pub async fn trace_lengths(logname: String) -> Result<TraceLengths, String> {
         vec![logname.clone()]
     };
 
-    let ufs_len = files.get(0)
+    let ufs_len = files.first()
         .map(|p| parquet_num_rows(p))
         .transpose()?
         .unwrap_or(0);
@@ -704,7 +706,7 @@ pub async fn trace_lengths(logname: String) -> Result<TraceLengths, String> {
 
 // 로그 파일 파싱 및 parquet 저장 함수
 pub async fn starttrace(fname: String, logfolder: String, window: tauri::Window) -> Result<TraceParseResult, String> {
-    let result = spawn_blocking(move || {
+    spawn_blocking(move || {
         // 파일 정보 확인
         let file_meta = match std::fs::metadata(&fname) {
             Ok(meta) => meta,
@@ -727,9 +729,7 @@ pub async fn starttrace(fname: String, logfolder: String, window: tauri::Window)
         });
 
         // 메모리 맵 방식 또는 일반 파일 읽기 선택
-        let content: String;
-        
-        if file_size > 1_000_000_000 {  // 1GB 이상은 스트리밍 방식으로 처리
+        let content = if file_size > 1_000_000_000 {  // 1GB 이상은 스트리밍 방식으로 처리
             println!("대용량 파일 감지: 스트리밍 방식으로 처리합니다");
             
             // 파일 라인 수 예측 (샘플링)
@@ -757,18 +757,18 @@ pub async fn starttrace(fname: String, logfolder: String, window: tauri::Window)
             });
             
             // 전체 파일 읽기
-            content = std::fs::read_to_string(&fname).map_err(|e| e.to_string())?;
+            std::fs::read_to_string(&fname).map_err(|e| e.to_string())?
         } else {
             // 1GB 미만은 메모리 맵 사용
             let file = File::open(&fname).map_err(|e| e.to_string())?;
             let mmap = unsafe { Mmap::map(&file).map_err(|e| e.to_string())? };
             
             // 파일 내용 UTF-8로 변환
-            content = match std::str::from_utf8(&mmap) {
+            match std::str::from_utf8(&mmap) {
                 Ok(c) => c.to_string(),
                 Err(e) => return Err(format!("File is not valid UTF-8: {}", e)),
-            };
-        }
+            }
+        };
 
         // 청크 크기 최적화: 파일 크기에 따라 조정
         let chunk_size = if file_size > 10_000_000_000 {  // 10GB 이상
@@ -928,9 +928,9 @@ pub async fn starttrace(fname: String, logfolder: String, window: tauri::Window)
         println!("파싱 완료: UFS 이벤트 {}, Block 이벤트 {}, 미인식 라인 {}",
                  ufs_list.len(), block_list.len(), 
                  if missing_lines.len() > 1000 { 
-                     format!("1000+") 
+                     "1000+".to_string() 
                  } else { 
-                     format!("{}", missing_lines.len())
+                     missing_lines.len().to_string()
                  });
         
         // 진행 상태 업데이트: latency 계산 시작
@@ -1107,9 +1107,7 @@ pub async fn starttrace(fname: String, logfolder: String, window: tauri::Window)
         })
     })
     .await
-    .map_err(|e| e.to_string())?;
-
-    result
+    .map_err(|e| e.to_string())?
 }
 
 // Captures가 이미 있는 경우 UFS 파싱 (중복 코드 방지)
@@ -1138,7 +1136,7 @@ pub fn parse_ufs_trace_with_caps(caps: &regex::Captures) -> Result<UFS, String> 
     let size_str = caps.name("size").ok_or("size field missing")?.as_str();
     let size: i32 = size_str.parse::<i32>().map_err(|e| e.to_string())?;
     // byte를 4KB 단위로 변환 (4096 bytes = 4KB)
-    let size: u32 = (size.abs() as u32) / 4096;
+    let size: u32 = size.unsigned_abs() / 4096;
 
     // LBA 처리 - 터무니 없는 값(최대값) 체크
     let lba_str = caps.name("lba").map(|m| m.as_str()).unwrap_or("0");
@@ -1257,62 +1255,124 @@ pub fn parse_block_trace_with_caps(caps: &regex::Captures) -> Result<Block, Stri
     })
 }
 
-pub async fn filter_trace(
-    logname: String,
-    tracetype: String,
-    zoom_column: String,
+// 필터 검색을 위한 매개변수 구조체
+#[derive(Debug, Clone)]
+pub struct FilterTraceParams {
+    pub logname: String,
+    pub tracetype: String,
+    pub zoom_column: String,
+    pub time_from: Option<f64>,
+    pub time_to: Option<f64>,
+    pub col_from: Option<f64>,
+    pub col_to: Option<f64>,
+    pub max_records: usize,
+}
+
+// 추가적인 필터링을 위한 함수
+async fn filter_block_trace(
+    logname: &str,
+    zoom_column: &str,
     time_from: Option<f64>,
     time_to: Option<f64>,
     col_from: Option<f64>,
     col_to: Option<f64>,
     max_records: usize,
 ) -> Result<TraceDataBytes, String> {
-    // 필터링 및 샘플링 결과 직접 반환
-    match tracetype.as_str() {
-        "ufs" => {
-            let starttime = std::time::Instant::now();
-            let ufs_vec = filter_ufs_data(&logname, time_from, time_to, &zoom_column, col_from, col_to)?;
-            let ufs_sample_info = sample_ufs(&ufs_vec, max_records);
+    // filter_block_data를 사용하여 필터링
+    let filtered_blocks = filter_block_data(logname, time_from, time_to, zoom_column, col_from, col_to)?;
+    
+    // total_count 미리 계산
+    let total_count = filtered_blocks.len();
+    
+    // max_records 제한 적용
+    let limited_blocks = if total_count > max_records {
+        filtered_blocks.iter().take(max_records).cloned().collect()
+    } else {
+        filtered_blocks
+    };
+    
+    // Arrow RecordBatch 변환 및 IPC 포맷으로 직렬화
+    let batch = block_to_record_batch(&limited_blocks)?;
+    let bytes = batch_to_ipc_bytes(&batch)?;
+    let sampled_count = limited_blocks.len();
+    let sampling_ratio = if total_count > 0 {
+        sampled_count as f64 / total_count as f64
+    } else {
+        1.0
+    };
+    
+    Ok(TraceDataBytes {
+        ufs: ArrowBytes {
+            bytes: vec![],
+            total_count: 0,
+            sampled_count: 0,
+            sampling_ratio: 1.0,
+        },
+        block: ArrowBytes {
+            bytes,
+            total_count,
+            sampled_count,
+            sampling_ratio,
+        },
+    })
+}
 
-            let batch = crate::trace::ufs::ufs_to_record_batch(&ufs_sample_info.data)?;
-            let ufs_bytes = batch_to_ipc_bytes(&batch)?;
-            println!("filter_trace elapsed time: {:?}", starttime.elapsed());
-            Ok(TraceDataBytes {
-                ufs: ArrowBytes {
-                    bytes: ufs_bytes,
-                    total_count: ufs_sample_info.total_count,
-                    sampled_count: ufs_sample_info.sampled_count,
-                    sampling_ratio: ufs_sample_info.sampling_ratio,
-                },
-                block: ArrowBytes {
-                    bytes: vec![],
-                    total_count: 0,
-                    sampled_count: 0,
-                    sampling_ratio: 0.0,
-                },
-            })
-        }
-        "block" => {
-            let block_vec = filter_block_data(&logname, time_from, time_to, &zoom_column, col_from, col_to)?;
-            let block_sample_info = sample_block(&block_vec, max_records);
+async fn filter_ufs_trace(
+    logname: &str,
+    zoom_column: &str,
+    time_from: Option<f64>,
+    time_to: Option<f64>,
+    col_from: Option<f64>,
+    col_to: Option<f64>,
+    max_records: usize,
+) -> Result<TraceDataBytes, String> {
+    // filter_ufs_data를 사용하여 필터링
+    let filtered_ufs = filter_ufs_data(logname, time_from, time_to, zoom_column, col_from, col_to)?;
+    
+    // total_count 미리 계산
+    let total_count = filtered_ufs.len();
+    
+    // max_records 제한 적용
+    let limited_ufs = if total_count > max_records {
+        filtered_ufs.iter().take(max_records).cloned().collect()
+    } else {
+        filtered_ufs
+    };
+    
+    // Arrow RecordBatch 변환 및 IPC 포맷으로 직렬화
+    let batch = ufs_to_record_batch(&limited_ufs)?;
+    let bytes = batch_to_ipc_bytes(&batch)?;
+    let sampled_count = limited_ufs.len();
+    let sampling_ratio = if total_count > 0 {
+        sampled_count as f64 / total_count as f64
+    } else {
+        1.0
+    };
+    
+    Ok(TraceDataBytes {
+        ufs: ArrowBytes {
+            bytes,
+            total_count,
+            sampled_count,
+            sampling_ratio,
+        },
+        block: ArrowBytes {
+            bytes: vec![],
+            total_count: 0,
+            sampled_count: 0,
+            sampling_ratio: 1.0,
+        },
+    })
+}
 
-            let batch = crate::trace::block::block_to_record_batch(&block_sample_info.data)?;
-            let block_bytes = batch_to_ipc_bytes(&batch)?;
-            Ok(TraceDataBytes {
-                ufs: ArrowBytes {
-                    bytes: vec![],
-                    total_count: 0,
-                    sampled_count: 0,
-                    sampling_ratio: 0.0,
-                },
-                block: ArrowBytes {
-                    bytes: block_bytes,
-                    total_count: block_sample_info.total_count,
-                    sampled_count: block_sample_info.sampled_count,
-                    sampling_ratio: block_sample_info.sampling_ratio,
-                },
-            })
-        }
-        _ => Err("Unsupported trace type".to_string()),
-    } // 세미콜론 제거
+pub async fn filter_trace(params: FilterTraceParams) -> Result<TraceDataBytes, String> {
+    if params.tracetype == "block" {
+        filter_block_trace(&params.logname, &params.zoom_column, params.time_from, params.time_to, params.col_from, params.col_to, params.max_records)
+            .await
+    } else if params.tracetype == "ufs" {
+        filter_ufs_trace(&params.logname, &params.zoom_column, params.time_from, params.time_to, params.col_from, params.col_to, params.max_records)
+            .await
+    } else {
+        Err(format!("Unknown trace type: {}", params.tracetype))
+    }
 }

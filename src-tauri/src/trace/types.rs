@@ -1,6 +1,8 @@
 use serde::Serialize;
 use std::collections::{BTreeMap, HashMap};
 
+// UFS는 Universal Flash Storage의 약어이므로 UFs로 변경하지 않고 원래 이름 유지
+#[allow(clippy::upper_case_acronyms)]
 #[derive(Serialize, Debug, Clone)]
 pub struct UFS {
     pub time: f64,
