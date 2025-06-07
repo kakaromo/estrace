@@ -66,6 +66,8 @@
     let retryCount:number = $state(0);
     let maxRetries:number = 3;
     let showRetryDialog:boolean = $state(false);
+    // 차트 리렌더링을 위한 키 추가
+    let chartKey:number = $state(0);
     
     // 시각화 항목 상태
     let ispattern = $state(true);
@@ -119,25 +121,23 @@
             $prevFilterTrace = {...$filtertrace};
             
             try {
-            if (!tracedata[$selectedTrace]) {
-                await loadTraceData();
-            }
-
-            
-            
-            // 필터링된 데이터 설정
-            await updateFilteredData();
-            
-            // 선택된 유형에 따라 통계 데이터 다시 로드
-            await loadStatsData();
-            
-            // 추가 지연으로 모든 차트 렌더링 완료 보장
-            await delay(300);
+                if (!tracedata[$selectedTrace]) {
+                    await loadTraceData();
+                }
+                
+                // 필터링된 데이터 설정
+                await updateFilteredData();
+                
+                // 선택된 유형에 따라 통계 데이터 다시 로드
+                await loadStatsData();
+                
+                // 추가 지연으로 모든 차트 렌더링 완료 보장
+                await delay(300);
             } catch (error) {
-            console.error('[Trace] 데이터 처리 오류:', error);
+                console.error('[Trace] 데이터 처리 오류:', error);
             } finally {
-            console.log('[Trace] 모든 처리 완료, 로딩 상태 해제');
-            isLoading = false;
+                console.log('[Trace] 모든 처리 완료, 로딩 상태 해제');
+                isLoading = false;
             }
         }
         })();
@@ -180,40 +180,47 @@
     // 필터링된 데이터 설정
     async function updateFilteredData() {
         if ($selectedTrace) {
-        isLoading = true;
-        console.log('[Trace] 필터링된 데이터 요청 중...');
-        
-        try {
-            const result = await filterTraceData(fileNames[$selectedTrace], tracedata, $selectedTrace, $filtertrace);
-            if (result !== null) {
-            console.log('[Trace] 필터링된 데이터 수신 완료');
-            filteredData[$selectedTrace] = result[$selectedTrace];
+            isLoading = true;
+            console.log('[Trace] 필터링된 데이터 요청 중...');
             
-            // 데이터 변경 후 UI 업데이트를 위한 tick 대기
-            await tick();
-            
-            // 차트 렌더링을 위한 추가 지연
-            console.log('[Trace] 차트 렌더링 대기 중...');
-            await delay(500);
-            console.log('[Trace] 차트 렌더링 대기 완료');
+            try {
+                const result = await filterTraceData(fileNames[$selectedTrace], tracedata, $selectedTrace, $filtertrace);
+                if (result !== null) {
+                    console.log('[Trace] 필터링된 데이터 수신 완료');
+                    filteredData[$selectedTrace] = result[$selectedTrace];
+                    
+                    // 데이터 변경 후 UI 업데이트를 위한 tick 대기
+                    await tick();
+                    
+                    // 차트 렌더링을 위한 추가 지연
+                    console.log('[Trace] 차트 렌더링 대기 중...');
+                    await delay(500);
+                    console.log('[Trace] 차트 렌더링 대기 완료');
+                }
+                return true;
+            } catch (error) {
+                console.error('[Trace] 데이터 필터링 오류:', error);
+                return false;
+            } finally {
+                // 작업이 성공하든 실패하든 로딩 상태 해제
+                isLoading = false;
             }
-            return true;
-        } catch (error) {
-            console.error('[Trace] 데이터 필터링 오류:', error);
-            return false;
-        }
         }
         return false;
     }
 
     // 선택된 유형에 따라 통계 데이터 로드
     async function loadStatsData() {
-        if ($selectedTrace === 'ufs') {
-            const stats = await fetchUfsStats(fileNames.ufs, $filtertrace);
-            ufsStats = stats;
-        } else if ($selectedTrace === 'block') {
-            const stats = await fetchBlockStats(fileNames.block, $filtertrace);
-            blockStats = stats;
+        try {
+            if ($selectedTrace === 'ufs') {
+                const stats = await fetchUfsStats(fileNames.ufs, $filtertrace);
+                ufsStats = stats;
+            } else if ($selectedTrace === 'block') {
+                const stats = await fetchBlockStats(fileNames.block, $filtertrace);
+                blockStats = stats;
+            }
+        } catch (error) {
+            console.error('[Trace] 통계 데이터 로드 중 오류 발생:', error);
         }
     }
 
@@ -335,6 +342,8 @@
                 // 자동 재시도
                 console.log(`자동 재시도 중... (${retryCount}/${maxRetries})`);
                 await new Promise(resolve => setTimeout(resolve, 1000));
+                // 재귀 호출 시 isLoading이 중첩 설정될 수 있으므로 일시적으로 false로 설정
+                isLoading = false;
                 return loadTraceData();
             }
             
@@ -346,12 +355,33 @@
     
     // 수동 재시도 함수
     async function retryLoading() {
-        showRetryDialog = false;
-        retryCount = 0; // 수동 재시도시 카운트 초기화
-        const success = await loadTraceData();
-        if (!success && retryCount >= maxRetries) {
-            // 최대 재시도 횟수 초과하면 홈으로 이동
-            goto('/');
+        try {
+            isLoading = true;
+            showRetryDialog = false;
+            retryCount = 0; // 수동 재시도시 카운트 초기화
+            
+            // 차트 키 변경으로 강제 재렌더링
+            chartKey++;
+            console.log('[Trace] 차트 리렌더링 키 변경:', chartKey);
+            
+            const success = await loadTraceData();
+            
+            if (success) {
+                // 필터링된 데이터 설정 및 통계 데이터 로드
+                await updateFilteredData();
+                await loadStatsData();
+                
+                // 차트 렌더링을 위한 추가 지연
+                await delay(300);
+            } else if (retryCount >= maxRetries) {
+                // 최대 재시도 횟수 초과하면 홈으로 이동
+                goto('/');
+            }
+        } catch (error) {
+            console.error('[Trace] 재시도 중 오류 발생:', error);
+        } finally {
+            console.log('[Trace] 재시도 작업 완료, 로딩 상태 해제');
+            isLoading = false;
         }
     }
 
@@ -468,6 +498,7 @@
                     </Card.Header>
                     <Card.Content>
                         <ScatterCharts
+                            key={chartKey}
                             data={currentFiltered}
                             xAxisKey='time'
                             yAxisKey={patternAxis.key}
@@ -486,6 +517,7 @@
                     </Card.Header>
                     <Card.Content>
                         <ScatterCharts
+                            key={chartKey}
                             data={currentFiltered}
                             xAxisKey='time'
                             yAxisKey='qd'
@@ -504,9 +536,9 @@
                     </Card.Header>
                     <Card.Content>
                         {#if $selectedTrace === 'ufs'} 
-                        <CPUTabs traceType={$selectedTrace} data={filteredData.ufs.data} legendKey='cpu' />
+                        <CPUTabs key={chartKey} traceType={$selectedTrace} data={filteredData.ufs.data} legendKey='cpu' />
                         {:else if $selectedTrace === 'block'}
-                        <CPUTabs traceType={$selectedTrace} data={filteredData.block.data} legendKey='cpu' />
+                        <CPUTabs key={chartKey} traceType={$selectedTrace} data={filteredData.block.data} legendKey='cpu' />
                         {/if}                        
                     </Card.Content>
                 </Card.Root>
@@ -519,9 +551,9 @@
                     </Card.Header>
                     <Card.Content>
                         {#if $selectedTrace === 'ufs'} 
-                        <RWDStats data={ufsStats.continuous} tracetype={$selectedTrace} {isrwd} />
+                        <RWDStats key={chartKey} data={ufsStats.continuous} tracetype={$selectedTrace} {isrwd} />
                         {:else if $selectedTrace === 'block'}
-                        <RWDStats data={blockStats.continuous} tracetype={$selectedTrace} {isrwd} />
+                        <RWDStats key={chartKey} data={blockStats.continuous} tracetype={$selectedTrace} {isrwd} />
                         {/if}
                     </Card.Content>
                 </Card.Root>                
@@ -534,6 +566,7 @@
                     </Card.Header>
                     <Card.Content>
                         <LatencyTabs
+                            key={chartKey}
                             traceType={$selectedTrace}
                             filteredData={currentFiltered}
                             legendKey={legendKey}
@@ -556,7 +589,7 @@
                     </Card.Header>
                     <Card.Content>
                         {#if currentStats.sizeCounts?.opcode_stats}
-                        <SizeStats opcode_size_counts={currentStats.sizeCounts.opcode_stats} />
+                        <SizeStats key={chartKey} opcode_size_counts={currentStats.sizeCounts.opcode_stats} />
                         {/if}
                     </Card.Content>
                 </Card.Root> 
