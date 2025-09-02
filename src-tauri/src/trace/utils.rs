@@ -474,13 +474,6 @@ pub async fn readtrace(logname: String, max_records: usize) -> Result<TraceDataB
                         });
                     }
                 }
-
-                // 캐시에 저장
-                {
-                    let mut ufs_cache = UFS_CACHE.lock().map_err(|e| e.to_string())?;
-                    let ufspath = path.to_string_lossy().to_string();
-                    ufs_cache.insert(ufspath, ufs_vec.clone());
-                }
             } else if fname.contains("block") && fname.ends_with(".parquet") {
                 // block parquet 파일 읽기 - 메모리 효율적인 스트리밍 방식으로
                 println!("Processing block file: {}", path.display());
@@ -637,15 +630,21 @@ pub async fn readtrace(logname: String, max_records: usize) -> Result<TraceDataB
                         });
                     }
                 }
-
-                // 캐시에 저장
-                {
-                    let mut block_cache = BLOCK_CACHE.lock().map_err(|e| e.to_string())?;
-                    let blockpath = path.to_string_lossy().to_string();
-                    block_cache.insert(blockpath, block_vec.clone());
-                }
             }
         }
+    }
+
+    // 캐시에 저장 (루프 밖에서)
+    if !ufs_vec.is_empty() {
+        println!("Storing UFS cache with key: '{}'", logname);
+        let mut ufs_cache = UFS_CACHE.lock().map_err(|e| e.to_string())?;
+        ufs_cache.insert(logname.clone(), ufs_vec.clone());
+    }
+    
+    if !block_vec.is_empty() {
+        println!("Storing Block cache with key: '{}'", logname);
+        let mut block_cache = BLOCK_CACHE.lock().map_err(|e| e.to_string())?;
+        block_cache.insert(logname.clone(), block_vec.clone());
     }
 
     // // 데이터가 많은 경우 샘플링하여 반환
@@ -692,14 +691,17 @@ pub async fn trace_lengths(logname: String) -> Result<TraceLengths, String> {
         vec![logname.clone()]
     };
 
-    let ufs_len = files.first()
-        .map(|p| parquet_num_rows(p))
-        .transpose()?
-        .unwrap_or(0);
-    let block_len = files.get(1)
-        .map(|p| parquet_num_rows(p))
-        .transpose()?
-        .unwrap_or(0);
+    let mut ufs_len = 0;
+    let mut block_len = 0;
+
+    // 각 파일의 타입을 파일명으로 감지
+    for file in files {
+        if file.contains("_ufs.parquet") {
+            ufs_len = parquet_num_rows(&file)?;
+        } else if file.contains("_block.parquet") {
+            block_len = parquet_num_rows(&file)?;
+        }
+    }
 
     Ok(TraceLengths { ufs: ufs_len, block: block_len })
 }
@@ -1047,6 +1049,7 @@ pub async fn starttrace(fname: String, logfolder: String, window: tauri::Window)
                 logfolder.clone(),
                 fname.clone(),
                 &timestamp,
+                Some(&window),
             )?
         } else {
             String::new()
@@ -1080,6 +1083,7 @@ pub async fn starttrace(fname: String, logfolder: String, window: tauri::Window)
                 logfolder.clone(),
                 fname.clone(),
                 &timestamp,
+                Some(&window),
             )?
         } else {
             String::new()

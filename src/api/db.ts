@@ -294,7 +294,7 @@ export async function updateTestInfoLogName(id: number, logname: string) {
 /**
  * 재파싱 결과를 데이터베이스에 업데이트합니다.
  */
-export async function updateReparseResult(id: number, logname: string) {
+export async function updateReparseResult(id: number, logname: string, logtype?: string) {
     await open();
     
     // 기존 트레이스 정보 확인
@@ -303,8 +303,37 @@ export async function updateReparseResult(id: number, logname: string) {
         throw new Error(`테스트 정보를 찾을 수 없습니다 (ID: ${id})`);
     }
     
-    // logname 업데이트
-    await db.execute('UPDATE testinfo SET logname = ? WHERE id = ?', [logname, id]);
+    // logname과 logtype 업데이트
+    if (logtype) {
+        await db.execute('UPDATE testinfo SET logname = ?, logtype = ? WHERE id = ?', [logname, logtype, id]);
+    } else {
+        await db.execute('UPDATE testinfo SET logname = ? WHERE id = ?', [logname, id]);
+    }
     
     return result[0];
+}
+
+/**
+ * log 테이블에 로그 파일 경로를 저장합니다.
+ */
+export async function setLogFile(path: string) {
+    await open();
+    await db.execute('INSERT INTO log (path) VALUES (?)', [path]);
+}
+
+/**
+ * log 테이블에서 모든 로그 파일 목록을 가져옵니다.
+ */
+export async function getAllLogFiles() {
+    await open();
+    const result = await db.select('SELECT * FROM log ORDER BY id DESC');
+    return result;
+}
+
+/**
+ * log 테이블에서 특정 로그 파일을 삭제합니다.
+ */
+export async function deleteLogFile(id: number) {
+    await open();
+    await db.execute('DELETE FROM log WHERE id = ?', [id]);
 }

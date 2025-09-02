@@ -469,13 +469,22 @@
             const parsedResult = JSON.parse(result);
             
             // 파싱 결과의 파일 경로들을 합쳐서 logname으로 저장
-            let logname = parsedResult.ufs_parquet_filename;
-            if (parsedResult.block_parquet_filename) {
-                logname = logname + "," + parsedResult.block_parquet_filename;
+            let logname = "";
+            let detectedLogType = "";
+            
+            if (parsedResult.ufs_parquet_filename && parsedResult.block_parquet_filename) {
+                logname = parsedResult.ufs_parquet_filename + "," + parsedResult.block_parquet_filename;
+                detectedLogType = "ufs,block";
+            } else if (parsedResult.ufs_parquet_filename) {
+                logname = parsedResult.ufs_parquet_filename;
+                detectedLogType = "ufs";
+            } else if (parsedResult.block_parquet_filename) {
+                logname = parsedResult.block_parquet_filename;
+                detectedLogType = "block";
             }
             
-            // DB 업데이트
-            await updateReparseResult(id, logname);
+            // DB 업데이트 (로그 타입도 함께 업데이트)
+            await updateReparseResult(id, logname, detectedLogType);
             
             await message(`트레이스 ${id}번이 성공적으로 재파싱되었습니다.`);
             

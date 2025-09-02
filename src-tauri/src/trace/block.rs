@@ -8,6 +8,7 @@ use arrow::datatypes::{DataType, Field, Schema};
 use arrow::record_batch::RecordBatch;
 use arrow::temporal_conversions::MILLISECONDS;
 use parquet::arrow::ArrowWriter;
+use tauri::Emitter;
 
 use crate::trace::filter::filter_block_data;
 use crate::trace::utils::{
@@ -349,12 +350,13 @@ pub fn block_to_record_batch(block_list: &[Block]) -> Result<RecordBatch, String
     .map_err(|e| e.to_string())
 }
 
-// Parquet 파일 저장 함수
+// Parquet 파일 저장 함수 - chunk 단위로 분할하여 OOM 방지
 pub fn save_block_to_parquet(
     block_traces: &[Block],
     logfolder: String,
     fname: String,
     timestamp: &str,
+    window: Option<&tauri::Window>,
 ) -> Result<String, String> {
     let stem = PathBuf::from(&fname)
         .file_stem()
@@ -369,12 +371,78 @@ pub fn save_block_to_parquet(
     let mut path = folder_path;
     path.push(block_filename.clone());
 
-    let batch = block_to_record_batch(block_traces)?;
-    let schema = batch.schema();
+    // chunk 크기 설정 (100,000 레코드씩 처리)
+    const CHUNK_SIZE: usize = 100_000;
+    let total_records = block_traces.len();
+    
+    if total_records == 0 {
+        return Err("저장할 데이터가 없습니다.".to_string());
+    }
+    
+    println!("Block 데이터 저장 시작: {} 레코드를 {} 레코드씩 Chunk로 처리", total_records, CHUNK_SIZE);
+    
+    let total_chunks = (total_records + CHUNK_SIZE - 1) / CHUNK_SIZE;
+    
+    // 첫 번째 Chunk로 스키마 생성
+    let first_chunk = if total_records > CHUNK_SIZE {
+        &block_traces[0..CHUNK_SIZE]
+    } else {
+        block_traces
+    };
+    
+    let first_batch = block_to_record_batch(first_chunk)?;
+    let schema = first_batch.schema();
     let file = File::create(&path).map_err(|e| e.to_string())?;
     let mut writer = ArrowWriter::try_new(file, schema.clone(), None).map_err(|e| e.to_string())?;
-    writer.write(&batch).map_err(|e| e.to_string())?;
+    
+    // 첫 번째 Chunk 쓰기
+    writer.write(&first_batch).map_err(|e| e.to_string())?;
+    println!("Block Chunk 1/{} 저장 완료", total_chunks);
+    
+    // 진행률 업데이트 (첫 번째 Chunk)
+    if let Some(w) = window {
+        let progress = 95.0 + (1.0 / total_chunks as f64) * 5.0; // 95%에서 100% 사이
+        let _ = w.emit("trace-progress", crate::trace::ProgressEvent {
+            stage: "saving".to_string(),
+            progress: progress as f32,
+            current: (95 + ((1 * 5) / total_chunks)) as u64,
+            total: 100,
+            message: format!("Block Parquet 저장 중: {}/{} Chunk", 1, total_chunks),
+            eta_seconds: (total_chunks - 1) as f32 * 0.5,
+            processing_speed: 0.0,
+        });
+    }
+    
+    // 나머지 Chunk들 처리
+    let mut chunk_num = 2;
+    for chunk_start in (CHUNK_SIZE..total_records).step_by(CHUNK_SIZE) {
+        let chunk_end = std::cmp::min(chunk_start + CHUNK_SIZE, total_records);
+        let chunk = &block_traces[chunk_start..chunk_end];
+        
+        let batch = block_to_record_batch(chunk)?;
+        writer.write(&batch).map_err(|e| e.to_string())?;
+        
+        println!("Block Chunk {}/{} 저장 완료", chunk_num, total_chunks);
+        
+        // 진행률 업데이트
+        if let Some(w) = window {
+            let progress = 95.0 + (chunk_num as f64 / total_chunks as f64) * 5.0;
+            let _ = w.emit("trace-progress", crate::trace::ProgressEvent {
+                stage: "saving".to_string(),
+                progress: progress as f32,
+                current: (95 + ((chunk_num * 5) / total_chunks)) as u64,
+                total: 100,
+                message: format!("Block Parquet 저장 중: {}/{} Chunk", chunk_num, total_chunks),
+                eta_seconds: (total_chunks - chunk_num) as f32 * 0.5,
+                processing_speed: 0.0,
+            });
+        }
+        
+        chunk_num += 1;
+    }
+    
     writer.close().map_err(|e| e.to_string())?;
+    println!("Block Parquet 파일 저장 완료: {}", path.to_string_lossy());
 
     Ok(path.to_string_lossy().to_string())
 }

@@ -254,17 +254,46 @@
     // parquet 파일 경로 설정
     function setParquetFilePaths() {
         if (data && data.logname) {
-            const names = data.logname.split(',');
+            console.log('setParquetFilePaths - data.logname:', data.logname);
+            console.log('setParquetFilePaths - data.logtype:', data.logtype);
             
-            if (names.length > 0) {
+            const names = data.logname.split(',');
+            console.log('setParquetFilePaths - names:', names);
+            
+            if (data.logtype === 'block') {
+                // block만 있는 경우
+                fileNames.block = names[0];
+                parquetFiles.block = names[0];
+                fileNames.ufs = '';
+                parquetFiles.ufs = '';
+            } else if (data.logtype === 'ufs') {
+                // ufs만 있는 경우
                 fileNames.ufs = names[0];
                 parquetFiles.ufs = names[0];
+                fileNames.block = '';
+                parquetFiles.block = '';
+            } else if (data.logtype === 'both' || names.length > 1) {
+                // 둘 다 있는 경우
+                console.log('Processing both UFS and Block files');
+                if (names.length > 0) {
+                    fileNames.ufs = names[0];
+                    parquetFiles.ufs = names[0];
+                }
+                
+                if (names.length > 1) {
+                    fileNames.block = names[1];
+                    parquetFiles.block = names[1];
+                }
+            } else {
+                // 기타 경우
+                console.log('Unknown logtype, using first name for both');
+                fileNames.ufs = names[0] || '';
+                parquetFiles.ufs = names[0] || '';
+                fileNames.block = names[0] || '';
+                parquetFiles.block = names[0] || '';
             }
             
-            if (names.length > 1) {
-                fileNames.block = names[1];
-                parquetFiles.block = names[1];
-            }
+            console.log('setParquetFilePaths - final fileNames:', fileNames);
         }
     }
 

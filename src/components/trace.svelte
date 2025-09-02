@@ -3,7 +3,7 @@
     import { get, writable } from 'svelte/store';
     import { traceFile, Status, traceStatusStore } from '../stores/file.js';
     import { setting } from '../stores/setting.js';    
-    import { setTestInfo } from '../api/db.js';
+    import { setTestInfo, setLogFile } from '../api/db.js';
     
     import { Button } from "$lib/components/ui/button";
     import * as Dialog from "$lib/components/ui/dialog";
@@ -319,13 +319,28 @@
             }
             
             // Save test info and get the ID
-            let filename = parsed.ufs_parquet_filename;
-            if (parsed.block_parquet_filename) {
-                filename = filename + "," + parsed.block_parquet_filename;
+            let filename = "";
+            let detectedLogType = "";
+            
+            if (parsed.ufs_parquet_filename && parsed.block_parquet_filename) {
+                filename = parsed.ufs_parquet_filename + "," + parsed.block_parquet_filename;
+                detectedLogType = "ufs,block";
+            } else if (parsed.ufs_parquet_filename) {
+                filename = parsed.ufs_parquet_filename;
+                detectedLogType = "ufs";
+            } else if (parsed.block_parquet_filename) {
+                filename = parsed.block_parquet_filename;
+                detectedLogType = "block";
             }
             
+            // 자동으로 감지된 로그 타입 사용 (사용자가 입력하지 않은 경우)
+            const finalLogType = logtype || detectedLogType;
+            
             // Save with source log path included
-            await setTestInfo(logtype, title, content, logfolder, filename, fileName);
+            await setTestInfo(finalLogType, title, content, logfolder, filename, fileName);
+            
+            // Also save to log table for log file tracking
+            await setLogFile(fileName);
             
             await message(`Trace가 성공적으로 완료되었습니다. (총 소요시간: ${formatElapsedTime(elapsedSeconds)})`);
             traceStatusStore.set(Status.Success); // 상태를 명확히 Success로 설정
@@ -373,7 +388,12 @@
                 </div>
                 <div class="grid grid-cols-4 items-center gap-4">
                 <Label for="logtype">Log Type</Label>
-                <Input id="logtype" bind:value={logtype} class="col-span-3" />
+                <select id="logtype" bind:value={logtype} class="col-span-3 px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+                    <option value="">자동 감지</option>
+                    <option value="ufs">UFS</option>
+                    <option value="block">Block</option>
+                    <option value="ufs,block">UFS + Block</option>
+                </select>
                 </div>
                 <div class="grid grid-cols-4 items-center gap-4">
                 <Label for="title">Title</Label>

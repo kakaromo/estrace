@@ -10,10 +10,49 @@ pub fn filter_ufs_data(
     col_from: Option<f64>,
     col_to: Option<f64>,
 ) -> Result<Vec<UFS>, String> {
+    // 디버깅을 위한 로그 추가
+    println!("filter_ufs_data called with logname: '{}'", logname);
+    
     // 캐시에서 데이터 불러오기
     let cached_ufs_list = {
         let cache = UFS_CACHE.lock().map_err(|e| e.to_string())?;
-        cache.get(logname).ok_or("UFS Cache not found")?.clone()
+        
+        // 캐시에 있는 모든 키 출력
+        println!("Available UFS cache keys: {:?}", cache.keys().collect::<Vec<_>>());
+        
+        // logname이 빈 문자열이거나 캐시에서 직접 찾을 수 없는 경우
+        let effective_logname = if logname.is_empty() || !cache.contains_key(logname) {
+            let cache_keys: Vec<&String> = cache.keys().collect();
+            
+            if logname.is_empty() {
+                // 빈 문자열인 경우, UFS 파일을 찾아서 사용
+                if let Some(key) = cache_keys.iter().find(|k| k.contains("_ufs.parquet")) {
+                    println!("Using UFS cache key for empty logname: {}", key);
+                    key.as_str()
+                } else {
+                    println!("No UFS cache found for empty logname");
+                    return Err("UFS Cache not found".to_string());
+                }
+            } else {
+                // logname이 있지만 정확히 매칭되지 않는 경우, 부분 매칭 시도
+                if let Some(key) = cache_keys.iter().find(|k| k.ends_with(logname) || k.contains(logname)) {
+                    println!("Using UFS cache key for partial match '{}': {}", logname, key);
+                    key.as_str()
+                } else if let Some(key) = cache_keys.iter().find(|k| k.contains("_ufs.parquet")) {
+                    println!("Using fallback UFS cache key for '{}': {}", logname, key);
+                    key.as_str()
+                } else {
+                    println!("No matching UFS cache found for logname: {}", logname);
+                    return Err("UFS Cache not found".to_string());
+                }
+            }
+        } else {
+            logname
+        };
+        
+        println!("Using effective UFS logname: '{}'", effective_logname);
+        
+        cache.get(effective_logname).ok_or("UFS Cache not found")?.clone()
     };
 
     // 시간 필터링
@@ -67,10 +106,49 @@ pub fn filter_block_data(
     col_from: Option<f64>,
     col_to: Option<f64>,
 ) -> Result<Vec<Block>, String> {
+    // 디버깅을 위한 로그 추가
+    println!("filter_block_data called with logname: '{}'", logname);
+    
     // 캐시에서 데이터 불러오기
     let cached_block_list = {
         let cache = BLOCK_CACHE.lock().map_err(|e| e.to_string())?;
-        cache.get(logname).ok_or("Block Cache not found")?.clone()
+        
+        // 캐시에 있는 모든 키 출력
+        println!("Available cache keys: {:?}", cache.keys().collect::<Vec<_>>());
+        
+        // logname이 빈 문자열이거나 캐시에서 직접 찾을 수 없는 경우
+        let effective_logname = if logname.is_empty() || !cache.contains_key(logname) {
+            let cache_keys: Vec<&String> = cache.keys().collect();
+            
+            if logname.is_empty() {
+                // 빈 문자열인 경우, block 파일을 찾아서 사용
+                if let Some(key) = cache_keys.iter().find(|k| k.contains("_block.parquet")) {
+                    println!("Using cache key for empty logname: {}", key);
+                    key.as_str()
+                } else {
+                    println!("No block cache found for empty logname");
+                    return Err("Block Cache not found".to_string());
+                }
+            } else {
+                // logname이 있지만 정확히 매칭되지 않는 경우, 부분 매칭 시도
+                if let Some(key) = cache_keys.iter().find(|k| k.ends_with(logname) || k.contains(logname)) {
+                    println!("Using cache key for partial match '{}': {}", logname, key);
+                    key.as_str()
+                } else if let Some(key) = cache_keys.iter().find(|k| k.contains("_block.parquet")) {
+                    println!("Using fallback block cache key for '{}': {}", logname, key);
+                    key.as_str()
+                } else {
+                    println!("No matching block cache found for logname: {}", logname);
+                    return Err("Block Cache not found".to_string());
+                }
+            }
+        } else {
+            logname
+        };
+        
+        println!("Using effective logname: '{}'", effective_logname);
+        
+        cache.get(effective_logname).ok_or("Block Cache not found")?.clone()
     };
 
     // 시간 필터링

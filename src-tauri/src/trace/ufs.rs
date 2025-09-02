@@ -8,6 +8,7 @@ use arrow::datatypes::{DataType, Field, Schema};
 use arrow::record_batch::RecordBatch;
 use arrow::temporal_conversions::MILLISECONDS;
 use parquet::arrow::ArrowWriter;
+use tauri::Emitter;
 
 use crate::trace::filter::filter_ufs_data;
 use crate::trace::utils::{
@@ -239,12 +240,13 @@ pub fn ufs_to_record_batch(ufs_list: &[UFS]) -> Result<RecordBatch, String> {
     .map_err(|e| e.to_string())
 }
 
-// Parquet 파일 저장 함수
+// Parquet 파일 저장 함수 - chunk 단위로 분할하여 OOM 방지
 pub fn save_ufs_to_parquet(
     ufs_list: &[UFS],
     logfolder: String,
     fname: String,
     timestamp: &str,
+    window: Option<&tauri::Window>,
 ) -> Result<String, String> {
     // logfolder 내에 stem 폴더 생성
     let stem = PathBuf::from(&fname)
@@ -261,12 +263,78 @@ pub fn save_ufs_to_parquet(
     let mut path = folder_path;
     path.push(&ufs_filename);
 
-    let batch = ufs_to_record_batch(ufs_list)?;
-    let schema = batch.schema();
+    // chunk 크기 설정 (100,000 레코드씩 처리)
+    const CHUNK_SIZE: usize = 100_000;
+    let total_records = ufs_list.len();
+    
+    if total_records == 0 {
+        return Err("저장할 데이터가 없습니다.".to_string());
+    }
+    
+    println!("UFS 데이터 저장 시작: {} 레코드를 {} 레코드씩 Chunk로 처리", total_records, CHUNK_SIZE);
+    
+    let total_chunks = (total_records + CHUNK_SIZE - 1) / CHUNK_SIZE;
+    
+    // 첫 번째 Chunk로 스키마 생성
+    let first_chunk = if total_records > CHUNK_SIZE {
+        &ufs_list[0..CHUNK_SIZE]
+    } else {
+        ufs_list
+    };
+    
+    let first_batch = ufs_to_record_batch(first_chunk)?;
+    let schema = first_batch.schema();
     let file = File::create(&path).map_err(|e| e.to_string())?;
     let mut writer = ArrowWriter::try_new(file, schema.clone(), None).map_err(|e| e.to_string())?;
-    writer.write(&batch).map_err(|e| e.to_string())?;
+    
+        // 첫 번째 Chunk 쓰기
+    writer.write(&first_batch).map_err(|e| e.to_string())?;
+    println!("UFS Chunk 1/{} 저장 완료", total_chunks);
+    
+    // 진행률 업데이트 (첫 번째 Chunk)
+    if let Some(w) = window {
+        let progress = 85.0 + (1.0 / total_chunks as f64) * 10.0; // 85%에서 95% 사이
+        let _ = w.emit("trace-progress", crate::trace::ProgressEvent {
+            stage: "saving".to_string(),
+            progress: progress as f32,
+            current: (85 + ((1 * 10) / total_chunks)) as u64,
+            total: 100,
+            message: format!("UFS Parquet 저장 중: {}/{} Chunk", 1, total_chunks),
+            eta_seconds: (total_chunks - 1) as f32 * 0.5,
+            processing_speed: 0.0,
+        });
+    }
+    
+    // 나머지 Chunk들 처리
+    let mut chunk_num = 2;
+    for chunk_start in (CHUNK_SIZE..total_records).step_by(CHUNK_SIZE) {
+        let chunk_end = std::cmp::min(chunk_start + CHUNK_SIZE, total_records);
+        let chunk = &ufs_list[chunk_start..chunk_end];
+        
+        let batch = ufs_to_record_batch(chunk)?;
+        writer.write(&batch).map_err(|e| e.to_string())?;
+        
+        println!("UFS Chunk {}/{} 저장 완료", chunk_num, total_chunks);
+        
+        // 진행률 업데이트
+        if let Some(w) = window {
+            let progress = 85.0 + (chunk_num as f64 / total_chunks as f64) * 10.0;
+            let _ = w.emit("trace-progress", crate::trace::ProgressEvent {
+                stage: "saving".to_string(),
+                progress: progress as f32,
+                current: (85 + ((chunk_num * 10) / total_chunks)) as u64,
+                total: 100,
+                message: format!("UFS Parquet 저장 중: {}/{} Chunk", chunk_num, total_chunks),
+                eta_seconds: (total_chunks - chunk_num) as f32 * 0.5,
+                processing_speed: 0.0,
+            });
+        }
+        
+        chunk_num += 1;
+    }
+    
     writer.close().map_err(|e| e.to_string())?;
+    println!("UFS Parquet 파일 저장 완료: {}", path.to_string_lossy());
 
     Ok(path.to_string_lossy().to_string())
 }
@@ -558,6 +626,13 @@ pub async fn allstats(params: UfsAllStatsParams, thresholds: Vec<String>) -> Res
         opcode_qd.insert(opcode.clone(), Vec::new());
     }
 
+    // 연속성 통계를 위한 변수 초기화
+    let mut op_stats: BTreeMap<String, ContinuityCount> = BTreeMap::new();
+    let mut total_requests = 0;
+    let mut total_continuous = 0;
+    let mut total_bytes_continuity: u64 = 0;
+    let mut continuous_bytes: u64 = 0;
+
     // 전체 통계 한번에 계산
     for ufs in &filtered_ufs {
         if ufs.action == "complete_rsp" {
@@ -592,6 +667,36 @@ pub async fn allstats(params: UfsAllStatsParams, thresholds: Vec<String>) -> Res
                 }
             }
             ctod_groups.entry(ufs.opcode.clone()).or_default().push(ufs.ctod);
+
+            // 연속성 통계 (send_req에서만 연속성이 의미가 있음)
+            if ufs.opcode == "0x28" || ufs.opcode == "0x2a" || ufs.opcode == "0x42" {
+                // opcode별 연속성 통계 업데이트
+                let stats = op_stats
+                    .entry(ufs.opcode.clone())
+                    .or_insert(ContinuityCount {
+                        continuous: 0,
+                        non_continuous: 0,
+                        ratio: 0.0,
+                        total_bytes: 0,
+                        continuous_bytes: 0,
+                        bytes_ratio: 0.0,
+                    });
+
+                // UFS의 size 필드는 이미 4KB 단위로 저장되어 있음
+                let bytes = ufs.size as u64 * 4096; // 4KB = 4096 bytes
+                stats.total_bytes += bytes;
+                total_bytes_continuity += bytes;
+
+                if ufs.continuous {
+                    stats.continuous += 1;
+                    stats.continuous_bytes += bytes;
+                    total_continuous += 1;
+                    continuous_bytes += bytes;
+                } else {
+                    stats.non_continuous += 1;
+                }
+                total_requests += 1;
+            }
         }
 
         // 크기 통계 (KB 단위로 변환)
@@ -599,6 +704,16 @@ pub async fn allstats(params: UfsAllStatsParams, thresholds: Vec<String>) -> Res
         if let Some(size_counts) = size_stats.get_mut(&ufs.opcode) {
             *size_counts.entry(size_kb).or_insert(0) += 1;
             *total_counts.get_mut(&ufs.opcode).unwrap() += 1;
+        }
+    }
+
+    // 연속성 통계의 비율 계산
+    for (_, stats) in op_stats.iter_mut() {
+        let total = stats.continuous + stats.non_continuous;
+        if total > 0 {
+            stats.ratio = (stats.continuous as f64) / (total as f64) * 100.0;
+            stats.bytes_ratio =
+                (stats.continuous_bytes as f64) / (stats.total_bytes as f64) * 100.0;
         }
     }
 
@@ -645,6 +760,19 @@ pub async fn allstats(params: UfsAllStatsParams, thresholds: Vec<String>) -> Res
         total_counts,
     };
 
+    // 전체 연속성 통계 계산
+    let overall_ratio = if total_requests > 0 {
+        (total_continuous as f64) / (total_requests as f64) * 100.0
+    } else {
+        0.0
+    };
+
+    let bytes_ratio = if total_bytes_continuity > 0 {
+        (continuous_bytes as f64) / (total_bytes_continuity as f64) * 100.0
+    } else {
+        0.0
+    };
+
     // TraceStats 구조체를 사용 (UfsTraceStats 대신)
     let result = TraceStats {
         dtoc_stat: dtoc_stats,
@@ -652,14 +780,14 @@ pub async fn allstats(params: UfsAllStatsParams, thresholds: Vec<String>) -> Res
         ctoc_stat: ctoc_stats,
         size_counts: size_result,
         continuity: ContinuityStats {
-            op_stats: std::collections::BTreeMap::new(), // 비어있는 continuity 통계
+            op_stats,
             total: TotalContinuity {
-                total_requests: 0,
-                continuous_requests: 0,
-                overall_ratio: 0.0,
-                total_bytes: 0,
-                continuous_bytes: 0,
-                bytes_ratio: 0.0,
+                total_requests,
+                continuous_requests: total_continuous,
+                overall_ratio,
+                total_bytes: total_bytes_continuity,
+                continuous_bytes,
+                bytes_ratio,
             },
         },
     };
