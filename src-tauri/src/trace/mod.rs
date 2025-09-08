@@ -280,7 +280,7 @@ pub async fn block_continuity_stats(
 pub async fn export_to_csv(
     parquet_path: String,
     output_dir: Option<String>,
-) -> Result<String, String> {
+) -> Result<Vec<String>, String> {
     export::export_to_csv(parquet_path, output_dir).await
 }
 

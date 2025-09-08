@@ -235,12 +235,18 @@
         try {
             isExporting = true;
             
-            const result = await invoke<string>("export_to_csv", { 
+            const result = await invoke<string[]>("export_to_csv", { 
                 parquetPath: parquetFiles[currentType], 
                 fileType: currentType
             });
             
-            exportResult = result;
+            // 여러 파일이 생성된 경우 메시지 표시
+            if (result.length > 1) {
+                exportResult = `CSV 파일이 엑셀 행 제한으로 인해 ${result.length}개 파일로 분할되었습니다:\n${result.map((path, index) => `${index + 1}. ${path}`).join('\n')}`;
+            } else {
+                exportResult = result[0];
+            }
+            
             showExportDialog = true;
             
         } catch (error) {
