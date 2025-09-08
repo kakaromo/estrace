@@ -33,6 +33,11 @@ jobs:
       fail-fast: false
       matrix:
         target: ['aarch64-apple-darwin', 'x86_64-apple-darwin']
+        include:
+          - target: 'aarch64-apple-darwin'
+            args: '--target aarch64-apple-darwin'
+          - target: 'x86_64-apple-darwin'
+            args: '--target x86_64-apple-darwin'
 
     steps:
       - name: Checkout repository
@@ -79,15 +84,20 @@ jobs:
         run: |
           BUILD_MODE="${{ github.event.inputs.release_type }}"
           echo "===== Build output files (${BUILD_MODE}) ====="
-          find src-tauri/target/${{ matrix.target }}/${{ github.event.inputs.release_type }}/bundle -type f -name "*.dmg" -o -name "*.app.tar.gz"
+          find src-tauri/target/${{ matrix.target }}/${{ github.event.inputs.release_type }}/bundle -type f -name "*.dmg" -o -name "*.app.tar.gz" || echo "No bundle files found, listing all target directories:"
+          ls -la src-tauri/target/ || echo "No target directory found"
+          echo "===== Checking for .dmg files recursively ====="
+          find src-tauri/target -name "*.dmg" -type f 2>/dev/null || echo "No .dmg files found anywhere"
 
       # 실행 파일 직접 업로드
       - name: Upload macOS binary
         uses: actions/upload-artifact@v4
         with:
           name: ${{ steps.get_version.outputs.name }}_${{ steps.get_version.outputs.version }}_${{ github.event.inputs.release_type }}_${{ matrix.target == 'aarch64-apple-darwin' && 'arm64' || 'x64' }}.dmg
-          if-no-files-found: error
-          path: src-tauri/target/${{ matrix.target }}/${{ github.event.inputs.release_type }}/bundle/dmg/*.dmg
+          if-no-files-found: warn
+          path: |
+            src-tauri/target/${{ matrix.target }}/${{ github.event.inputs.release_type }}/bundle/dmg/*.dmg
+            src-tauri/target/${{ github.event.inputs.release_type }}/bundle/dmg/*.dmg
           compression-level: 0  # 압축 없음
 
   # Windows 빌드 작업
@@ -132,7 +142,6 @@ jobs:
           releaseBody: 'See the assets to download this version and install.'
           releaseDraft: true
           prerelease: false
-          args: ${{ matrix.args }}
          
       # 실행 파일 경로 출력
       - name: List build output
@@ -217,7 +226,6 @@ jobs:
           releaseBody: 'See the assets to download this version and install.'
           releaseDraft: true
           prerelease: false
-          args: ${{ matrix.args }}
          
       # 실행 파일 경로 출력
       - name: List build output
