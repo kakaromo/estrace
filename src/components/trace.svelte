@@ -36,7 +36,6 @@
         }
     });
 
-    let logtype = $state('');
     let title = $state('');
     let logfolder = $state('');   
     let content = $state('');
@@ -220,7 +219,6 @@
         if (!logfolder) {
             logfolder = get(setting).logfolder || '';
         }
-        logtype = '';
         title = '';
         content = '';
         
@@ -277,11 +275,6 @@
             return;
         }
 
-        if (!logtype) {
-            await message('Test type이 지정되지 않았습니다.');            
-            return;
-        }
-
         if (!logfolder) {
             await message('Log folder가 지정되지 않았습니다.');            
             return;
@@ -333,8 +326,8 @@
                 detectedLogType = "block";
             }
             
-            // 자동으로 감지된 로그 타입 사용 (사용자가 입력하지 않은 경우)
-            const finalLogType = logtype || detectedLogType;
+            // 자동으로 감지된 로그 타입 사용
+            const finalLogType = detectedLogType;
             
             // Save with source log path included
             await setTestInfo(finalLogType, title, content, logfolder, filename, fileName);
@@ -385,15 +378,6 @@
                 <div class="grid grid-cols-4 items-center gap-4">
                 <Label for="logfolder">Log folder</Label>
                 <Input id="logfolder" bind:value={logfolder} class="col-span-3" />
-                </div>
-                <div class="grid grid-cols-4 items-center gap-4">
-                <Label for="logtype">Log Type</Label>
-                <select id="logtype" bind:value={logtype} class="col-span-3 px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
-                    <option value="">자동 감지</option>
-                    <option value="ufs">UFS</option>
-                    <option value="block">Block</option>
-                    <option value="ufs,block">UFS + Block</option>
-                </select>
                 </div>
                 <div class="grid grid-cols-4 items-center gap-4">
                 <Label for="title">Title</Label>
