@@ -10,7 +10,7 @@ use arrow::temporal_conversions::MILLISECONDS;
 use parquet::arrow::ArrowWriter;
 use tauri::Emitter;
 
-use crate::trace::filter::filter_block_data;
+use crate::trace::filter::{filter_block_data};
 use crate::trace::utils::{
     calculate_statistics, create_range_key, initialize_ranges, normalize_io_type, parse_time_to_ms,
 };
