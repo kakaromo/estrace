@@ -10,55 +10,66 @@ pub fn filter_ufs_data(
     col_from: Option<f64>,
     col_to: Option<f64>,
 ) -> Result<Vec<UFS>, String> {
+    println!("🎯 [DEBUG] filter_ufs_data 호출: logname='{}'", logname);
+    
     // 캐시에서 데이터 불러오기 (원본 데이터 우선)
     let cached_ufs_list = {
         let cache = UFS_CACHE.lock().map_err(|e| e.to_string())?;
         
-        // 디버깅: 현재 캐시 키들을 출력
-        let cache_keys: Vec<&String> = cache.keys().collect();
-        println!("🔍 [DEBUG] UFS 캐시 키들: {:?}", cache_keys);
+        // 디버깅: 캐시에 있는 모든 키 출력
+        let available_keys: Vec<String> = cache.keys().cloned().collect();
+        println!("🔍 [DEBUG] 캐시에 있는 UFS 키들: {:?}", available_keys);
         
-        // 원본 logname을 우선적으로 찾기
-        let effective_logname = if cache.contains_key(logname) {
-            println!("🎯 [DEBUG] 정확한 logname 매칭: {}", logname);
-            logname
-        } else if logname.is_empty() || !cache.contains_key(logname) {
-            let cache_keys: Vec<&String> = cache.keys().collect();
+        // 1. 먼저 정확한 키로 시도
+        if let Some(data) = cache.get(logname) {
+            println!("🎯 [DEBUG] 정확한 키 '{}' 매치: {} 개 레코드", logname, data.len());
+            data.clone()
+        }
+        // 2. 개별 파일 키가 없다면, 복합 키에서 찾기
+        else {
+            let mut found_data: Option<Vec<UFS>> = None;
             
-            if logname.is_empty() {
-                // 빈 문자열인 경우, UFS 파일을 찾아서 사용 (샘플링 제외)
-                if let Some(key) = cache_keys.iter().find(|k| k.contains("_ufs.parquet") && !k.contains("_v3_random")) {
-                    println!("🎯 [DEBUG] 원본 UFS 파일 선택: {}", key);
-                    key.as_str()
-                } else if let Some(key) = cache_keys.iter().find(|k| k.contains("_ufs.parquet")) {
-                    println!("⚠️ [DEBUG] 샘플링된 UFS 파일 사용: {}", key);
-                    key.as_str()
-                } else {
-                    return Err("UFS Cache not found".to_string());
-                }
-            } else {
-                // logname이 있지만 정확히 매칭되지 않는 경우, 부분 매칭 시도 (샘플링 제외)
-                if let Some(key) = cache_keys.iter().find(|k| (k.ends_with(logname) || k.contains(logname)) && !k.contains("_v3_random")) {
-                    println!("🎯 [DEBUG] 원본 부분 매칭: {}", key);
-                    key.as_str()
-                } else if let Some(key) = cache_keys.iter().find(|k| k.ends_with(logname) || k.contains(logname)) {
-                    println!("⚠️ [DEBUG] 샘플링된 부분 매칭: {}", key);
-                    key.as_str()
-                } else if let Some(key) = cache_keys.iter().find(|k| k.contains("_ufs.parquet") && !k.contains("_v3_random")) {
-                    println!("🎯 [DEBUG] 기본 원본 UFS: {}", key);
-                    key.as_str()
-                } else if let Some(key) = cache_keys.iter().find(|k| k.contains("_ufs.parquet")) {
-                    println!("⚠️ [DEBUG] 기본 샘플링된 UFS: {}", key);
-                    key.as_str()
-                } else {
-                    return Err("UFS Cache not found".to_string());
+            // 모든 캐시 키를 확인하여 복합 키 찾기
+            for (cache_key, data) in cache.iter() {
+                // 콤마로 구분된 복합 키인지 확인
+                if cache_key.contains(',') {
+                    let files: Vec<&str> = cache_key.split(',').map(|s| s.trim()).collect();
+                    // logname이 복합 키의 일부인지 확인
+                    if files.iter().any(|&file| file == logname) {
+                        println!("🎯 [DEBUG] 복합 키 '{}' 에서 '{}' 찾음: {} 개 레코드", cache_key, logname, data.len());
+                        found_data = Some(data.clone());
+                        break;
+                    }
                 }
             }
-        } else {
-            logname
-        };
-        
-        cache.get(effective_logname).ok_or("UFS Cache not found")?.clone()
+            
+            // 3. 캐시에 없으면 자동으로 readtrace 호출하여 데이터 로드
+            if found_data.is_none() {
+                drop(cache); // 락 해제
+                println!("⚡ [DEBUG] UFS 캐시 없음, 자동 로드 시도: '{}'", logname);
+                
+                // readtrace 호출로 데이터 로드 및 캐시 저장
+                let rt = tokio::runtime::Runtime::new().map_err(|e| e.to_string())?;
+                match rt.block_on(crate::trace::utils::readtrace(logname.to_string(), 1000000)) {
+                    Ok(_) => {
+                        println!("✅ [DEBUG] 자동 readtrace 완료");
+                        // 다시 캐시에서 시도
+                        let cache = UFS_CACHE.lock().map_err(|e| e.to_string())?;
+                        if let Some(data) = cache.get(logname) {
+                            println!("✅ [DEBUG] 자동 로드 성공: '{}' -> {} 개 레코드", logname, data.len());
+                            data.clone()
+                        } else {
+                            return Err(format!("자동 로드 후에도 UFS Cache not found for key '{}'", logname));
+                        }
+                    }
+                    Err(e) => {
+                        return Err(format!("UFS 파일 자동 로드 실패: {}", e));
+                    }
+                }
+            } else {
+                found_data.unwrap()
+            }
+        }
     };
 
     // 시간 필터링
@@ -112,44 +123,66 @@ pub fn filter_block_data(
     col_from: Option<f64>,
     col_to: Option<f64>,
 ) -> Result<Vec<Block>, String> {
+    println!("🎯 [DEBUG] filter_block_data 호출: logname='{}'", logname);
+    
     // 캐시에서 데이터 불러오기 (원본 데이터 우선)
     let cached_block_list = {
         let cache = BLOCK_CACHE.lock().map_err(|e| e.to_string())?;
         
-        // 원본 logname을 우선적으로 찾기
-        let effective_logname = if cache.contains_key(logname) {
-            logname
-        } else if logname.is_empty() || !cache.contains_key(logname) {
-            let cache_keys: Vec<&String> = cache.keys().collect();
+        // 디버깅: 캐시에 있는 모든 키 출력
+        let available_keys: Vec<String> = cache.keys().cloned().collect();
+        println!("🔍 [DEBUG] 캐시에 있는 Block 키들: {:?}", available_keys);
+        
+        // 1. 먼저 정확한 키로 시도
+        if let Some(data) = cache.get(logname) {
+            println!("🎯 [DEBUG] 정확한 키 '{}' 매치: {} 개 레코드", logname, data.len());
+            data.clone()
+        }
+        // 2. 개별 파일 키가 없다면, 복합 키에서 찾기
+        else {
+            let mut found_data: Option<Vec<Block>> = None;
             
-            if logname.is_empty() {
-                // 빈 문자열인 경우, block 파일을 찾아서 사용 (샘플링 제외)
-                if let Some(key) = cache_keys.iter().find(|k| k.contains("_block.parquet") && !k.contains("_v3_random")) {
-                    key.as_str()
-                } else if let Some(key) = cache_keys.iter().find(|k| k.contains("_block.parquet")) {
-                    key.as_str()
-                } else {
-                    return Err("Block Cache not found".to_string());
-                }
-            } else {
-                // logname이 있지만 정확히 매칭되지 않는 경우, 부분 매칭 시도 (샘플링 제외)
-                if let Some(key) = cache_keys.iter().find(|k| (k.ends_with(logname) || k.contains(logname)) && !k.contains("_v3_random")) {
-                    key.as_str()
-                } else if let Some(key) = cache_keys.iter().find(|k| k.ends_with(logname) || k.contains(logname)) {
-                    key.as_str()
-                } else if let Some(key) = cache_keys.iter().find(|k| k.contains("_block.parquet") && !k.contains("_v3_random")) {
-                    key.as_str()
-                } else if let Some(key) = cache_keys.iter().find(|k| k.contains("_block.parquet")) {
-                    key.as_str()
-                } else {
-                    return Err("Block Cache not found".to_string());
+            // 모든 캐시 키를 확인하여 복합 키 찾기
+            for (cache_key, data) in cache.iter() {
+                // 콤마로 구분된 복합 키인지 확인
+                if cache_key.contains(',') {
+                    let files: Vec<&str> = cache_key.split(',').map(|s| s.trim()).collect();
+                    // logname이 복합 키의 일부인지 확인
+                    if files.iter().any(|&file| file == logname) {
+                        println!("🎯 [DEBUG] 복합 키 '{}' 에서 '{}' 찾음: {} 개 레코드", cache_key, logname, data.len());
+                        found_data = Some(data.clone());
+                        break;
+                    }
                 }
             }
-        } else {
-            logname
-        };
-        
-        cache.get(effective_logname).ok_or("Block Cache not found")?.clone()
+            
+            // 3. 캐시에 없으면 자동으로 readtrace 호출하여 데이터 로드  
+            if found_data.is_none() {
+                drop(cache); // 락 해제
+                println!("⚡ [DEBUG] Block 캐시 없음, 자동 로드 시도: '{}'", logname);
+                
+                // readtrace 호출로 데이터 로드 및 캐시 저장
+                let rt = tokio::runtime::Runtime::new().map_err(|e| e.to_string())?;
+                match rt.block_on(crate::trace::utils::readtrace(logname.to_string(), 1000000)) {
+                    Ok(_) => {
+                        println!("✅ [DEBUG] 자동 readtrace 완료");
+                        // 다시 캐시에서 시도
+                        let cache = BLOCK_CACHE.lock().map_err(|e| e.to_string())?;
+                        if let Some(data) = cache.get(logname) {
+                            println!("✅ [DEBUG] 자동 로드 성공: '{}' -> {} 개 레코드", logname, data.len());
+                            data.clone()
+                        } else {
+                            return Err(format!("자동 로드 후에도 Block Cache not found for key '{}'", logname));
+                        }
+                    }
+                    Err(e) => {
+                        return Err(format!("Block 파일 자동 로드 실패: {}", e));
+                    }
+                }
+            } else {
+                found_data.unwrap()
+            }
+        }
     };
 
     // 시간 필터링
