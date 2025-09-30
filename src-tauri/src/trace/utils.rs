@@ -45,60 +45,6 @@ pub fn sample_ufs(ufs_list: &[UFS], max_records: usize) -> SamplingInfo<UFS> {
             sampling_ratio: 100.0,
         }
     } else {
-        // 먼저 전체 데이터의 opcode 분포를 확인 (디버그용)
-        let mut opcode_counts = std::collections::HashMap::new();
-        for ufs in ufs_list {
-            *opcode_counts.entry(ufs.opcode.clone()).or_insert(0) += 1;
-        }
-        
-        println!("🔍 [전체 데이터] UFS opcode 분포:");
-        let mut sorted_opcodes: Vec<_> = opcode_counts.iter().collect();
-        sorted_opcodes.sort_by(|a, b| b.1.cmp(a.1));
-        for (opcode, count) in sorted_opcodes.iter().take(10) {
-            println!("  {}: {} ({:.2}%)", opcode, count, **count as f64 / total_count as f64 * 100.0);
-        }
-        
-        // 시간대별 opcode 분포도 확인
-        let min_time = ufs_list.iter().map(|u| u.time).fold(f64::INFINITY, f64::min);
-        let max_time = ufs_list.iter().map(|u| u.time).fold(f64::NEG_INFINITY, f64::max);
-        let time_range = max_time - min_time;
-        let segment_count = 10; // 10개 구간으로 나누어 분석
-        let segment_duration = time_range / segment_count as f64;
-        
-        println!("🔍 [시간대별 분포] 시간 구간별 opcode 분포:");
-        println!("  시간 범위: {:.6}s - {:.6}s (총 {:.6}s)", min_time, max_time, time_range);
-        println!("  구간당 시간: {:.6}s", segment_duration);
-        
-        for segment in 0..segment_count {
-            let segment_start = min_time + segment as f64 * segment_duration;
-            let segment_end = min_time + (segment + 1) as f64 * segment_duration;
-            
-            let segment_data: Vec<_> = ufs_list.iter()
-                .filter(|ufs| ufs.time >= segment_start && ufs.time < segment_end)
-                .collect();
-            
-            println!("  구간 {} ({:.6}s-{:.6}s): {} 레코드 검색됨", 
-                     segment, segment_start, segment_end, segment_data.len());
-            
-            if !segment_data.is_empty() {
-                let mut segment_opcodes = std::collections::HashMap::new();
-                for ufs in &segment_data {
-                    *segment_opcodes.entry(ufs.opcode.clone()).or_insert(0) += 1;
-                }
-                
-                let total_in_segment = segment_data.len();
-                println!("    총 {} 레코드에서 opcode 분포:", total_in_segment);
-                
-                let mut sorted_segment: Vec<_> = segment_opcodes.iter().collect();
-                sorted_segment.sort_by(|a, b| b.1.cmp(a.1));
-                for (opcode, count) in sorted_segment.iter().take(3) {
-                    println!("      {}: {} ({:.1}%)", opcode, count, **count as f64 / total_in_segment as f64 * 100.0);
-                }
-            } else {
-                println!("    구간이 비어있음");
-            }
-        }
-        
         // 랜덤 샘플링 수행
         use rand::seq::SliceRandom;
         use rand::SeedableRng;
