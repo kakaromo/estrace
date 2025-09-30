@@ -11,6 +11,7 @@
   import { getFolder, setFolder } from "../../api/db.js";
 
   import { open } from '@tauri-apps/plugin-dialog';
+  import { invoke } from '@tauri-apps/api/core';
 
   interface App {
     name: string;
@@ -95,6 +96,18 @@
     await setFolder('logfolder', logfolder);
     closeDialog();
   }
+
+  // 캐시 초기화 함수
+  async function clearCache() {
+    try {
+      const result = await invoke('clear_all_cache');
+      console.log('Cache cleared:', result);
+      window.alert('캐시가 성공적으로 초기화되었습니다.\n' + result);
+    } catch (error) {
+      console.error('Cache clear failed:', error);
+      window.alert('캐시 초기화에 실패했습니다: ' + error);
+    }
+  }
 </script>
 
 <Dialog.Root bind:open={dialogopen}>
@@ -118,6 +131,19 @@
         <div class="grid grid-cols-4 items-center gap-4">
           <Label for="logfolder">Log Folder</Label>
           <Input id="logfolder" bind:value={logfolder} class="col-span-3" onclick={handleFileOpen} />
+        </div>
+        
+        <!-- 캐시 초기화 섹션 -->
+        <div class="grid grid-cols-4 items-center gap-4 pt-4 border-t">
+          <Label>Cache Management</Label>
+          <div class="col-span-3">
+            <Button variant="outline" onclick={clearCache} class="w-full">
+              캐시 초기화 (Clear Cache)
+            </Button>
+            <p class="text-sm text-gray-500 mt-1">
+              캐시를 초기화하여 최신 데이터를 다시 로드합니다.
+            </p>
+          </div>
         </div>
         <!-- <div class="flex items-center">
           <Label>Apps</Label>

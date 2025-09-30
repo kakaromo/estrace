@@ -502,3 +502,9 @@ pub fn check_cancel_status() -> Result<bool, String> {
     let cancel = CANCEL_SIGNAL.lock().map_err(|e| e.to_string())?;
     Ok(*cancel)
 }
+
+// Tauri 명령 - 캐시 초기화
+#[tauri::command]
+pub async fn clear_all_cache() -> Result<String, String> {
+    utils::clear_all_cache().await
+}

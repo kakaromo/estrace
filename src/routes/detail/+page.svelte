@@ -189,6 +189,42 @@
                     console.log('[Trace] 필터링된 데이터 수신 완료');
                     filteredData[$selectedTrace] = result[$selectedTrace];
                     
+                    // 필터된 데이터의 opcode, iotype 별 count 분석
+                    const data = result[$selectedTrace].data;
+                    if (data && Array.isArray(data)) {
+                        // opcode별 count
+                        const opcodeCount = {};
+                        const iotypeCount = {};
+                        
+                        data.forEach(item => {
+                            // opcode 분석
+                            if (item.opcode !== undefined) {
+                                opcodeCount[item.opcode] = (opcodeCount[item.opcode] || 0) + 1;
+                            }
+                            
+                            // iotype 분석 
+                            if (item.io_type !== undefined) {
+                                iotypeCount[item.io_type] = (iotypeCount[item.io_type] || 0) + 1;
+                            }
+                        });
+                        
+                        console.log(`[${$selectedTrace.toUpperCase()}] 필터된 데이터 분석:`);
+                        console.log(`총 레코드: ${data.length}`);
+                        console.log('Opcode별 Count:', opcodeCount);
+                        console.log('IOType별 Count:', iotypeCount);
+                        
+                        // 상위 5개씩 정렬해서 표시
+                        const sortedOpcodes = Object.entries(opcodeCount)
+                            .sort(([,a], [,b]) => b - a)
+                            .slice(0, 5);
+                        const sortedIotypes = Object.entries(iotypeCount)
+                            .sort(([,a], [,b]) => b - a)
+                            .slice(0, 5);
+                            
+                        console.log('상위 5개 Opcode:', sortedOpcodes);
+                        console.log('상위 5개 IOType:', sortedIotypes);
+                    }
+                    
                     // 데이터 변경 후 UI 업데이트를 위한 tick 대기
                     await tick();
                     
@@ -511,7 +547,7 @@
                 <div class="flex gap-2 text-xs text-gray-400 items-center ml-auto">
                     <span>total: {filteredData[$selectedTrace].total_count}</span>
                     <span>sampling: {filteredData[$selectedTrace].sampled_count}</span>
-                    <span>sample ratio: {Number(filteredData[$selectedTrace].sampling_ratio.toFixed(2))}%</span>
+                    <span>sample ratio: {filteredData[$selectedTrace].sampling_ratio.toFixed(2)}%</span>
                 </div>
                 {/if}
             </div>

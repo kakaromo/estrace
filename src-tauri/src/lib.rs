@@ -19,6 +19,7 @@ pub fn run() {
         // 프로그램 시작 시 UFS_CACHE 재할당
         let mut ufs_cache = trace::UFS_CACHE.lock().expect("Failed to lock UFS_CACHE");
         *ufs_cache = HashMap::new();
+        println!("✅ UFS_CACHE cleared at startup");
     }
     {
         // 프로그램 시작 시 BLOCK_CACHE 재할당
@@ -26,6 +27,7 @@ pub fn run() {
             .lock()
             .expect("Failed to lock BLOCK_CACHE");
         *block_cache = HashMap::new();
+        println!("✅ BLOCK_CACHE cleared at startup");
     }
 
     // Initialize default patterns - 수정된 호출 방식
@@ -71,6 +73,8 @@ pub fn run() {
             trace::cancel_trace_process,
             trace::reset_cancel_signal,
             trace::check_cancel_status,
+            // Cache management
+            trace::clear_all_cache,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

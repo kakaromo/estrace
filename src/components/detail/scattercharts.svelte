@@ -19,9 +19,10 @@
     xAxisLabel?: string;
     yAxisLabel?: string;
     ycolumn: string;
+    actionFilter?: string;  // 'd' 또는 'c' 액션 필터 추가
   }
 
-  let { data, xAxisKey, yAxisKey, legendKey, xAxisLabel = 'time', yAxisLabel = 'sector', ycolumn } :ScatterChartProps = $props();
+  let { data, xAxisKey, yAxisKey, legendKey, xAxisLabel = 'time', yAxisLabel = 'sector', ycolumn, actionFilter } :ScatterChartProps = $props();
 
   // 차트 상태 변수
   let chartTitle = $state('');
@@ -380,18 +381,33 @@ function prepareChartData() {
     // action 필드는 UFS에서는 'command', Block에서는 'action'으로 사용됨
     const action = item.action || item.command || '';
 
-    // Block 데이터는 block_rq_issue 또는 block_rq_complete로 식별
-    if (ycolumn === 'dtoc' || ycolumn === 'ctoc') {
-      // 만약 ctod 차트라면 complete 응답만 포함
-      // UFS는 complete_rsp, Block은 block_rq_complete
-      if (!(action === 'complete_rsp' || action === 'block_rq_complete')) {
-        return; // 필터링된 데이터는 건너뜀
+    // actionFilter가 있는 경우 (CPU 차트 등)
+    if (actionFilter) {
+      if (actionFilter === 'd') {
+        // 'd' 탭: issue/send 액션만 포함
+        if (!(action === 'send_req' || action === 'block_rq_issue')) {
+          return; // 필터링된 데이터는 건너뜀
+        }
+      } else if (actionFilter === 'c') {
+        // 'c' 탭: complete 액션만 포함
+        if (!(action === 'complete_rsp' || action === 'block_rq_complete')) {
+          return; // 필터링된 데이터는 건너뜀
+        }
       }
     } else {
-      // 그 외 차트는 issue/send 요청만 포함
-      // UFS는 send_req, Block은 block_rq_issue
-      if (!(action === 'send_req' || action === 'block_rq_issue')) {
-        return; // 필터링된 데이터는 건너뜀
+      // 기존 ycolumn 기반 필터링 로직 유지
+      if (ycolumn === 'dtoc' || ycolumn === 'ctoc') {
+        // 만약 dtoc/ctoc 차트라면 complete 응답만 포함
+        // UFS는 complete_rsp, Block은 block_rq_complete
+        if (!(action === 'complete_rsp' || action === 'block_rq_complete')) {
+          return; // 필터링된 데이터는 건너뜀
+        }
+      } else {
+        // 그 외 차트는 issue/send 요청만 포함
+        // UFS는 send_req, Block은 block_rq_issue
+        if (!(action === 'send_req' || action === 'block_rq_issue')) {
+          return; // 필터링된 데이터는 건너뜀
+        }
       }
     }
 

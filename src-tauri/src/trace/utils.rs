@@ -5,7 +5,6 @@ use std::path::PathBuf;
 use chrono::Local;
 use datafusion::prelude::*;
 use memmap2::Mmap;
-use rand::prelude::*;
 use rayon::prelude::*;
 use tauri::async_runtime::spawn_blocking;
 use tauri::Emitter;
@@ -46,19 +45,82 @@ pub fn sample_ufs(ufs_list: &[UFS], max_records: usize) -> SamplingInfo<UFS> {
             sampling_ratio: 100.0,
         }
     } else {
-        // 샘플링이 필요한 경우
-        let mut rng = rand::rng();
-        let sampled_data = ufs_list
-            .choose_multiple(&mut rng, max_records)
-            .cloned()
-            .collect();
-
-        let sampling_ratio = (max_records as f64 / total_count as f64) * 100.0;
-
+        // 먼저 전체 데이터의 opcode 분포를 확인 (디버그용)
+        let mut opcode_counts = std::collections::HashMap::new();
+        for ufs in ufs_list {
+            *opcode_counts.entry(ufs.opcode.clone()).or_insert(0) += 1;
+        }
+        
+        println!("🔍 [전체 데이터] UFS opcode 분포:");
+        let mut sorted_opcodes: Vec<_> = opcode_counts.iter().collect();
+        sorted_opcodes.sort_by(|a, b| b.1.cmp(a.1));
+        for (opcode, count) in sorted_opcodes.iter().take(10) {
+            println!("  {}: {} ({:.2}%)", opcode, count, **count as f64 / total_count as f64 * 100.0);
+        }
+        
+        // 시간대별 opcode 분포도 확인
+        let min_time = ufs_list.iter().map(|u| u.time).fold(f64::INFINITY, f64::min);
+        let max_time = ufs_list.iter().map(|u| u.time).fold(f64::NEG_INFINITY, f64::max);
+        let time_range = max_time - min_time;
+        let segment_count = 10; // 10개 구간으로 나누어 분석
+        let segment_duration = time_range / segment_count as f64;
+        
+        println!("🔍 [시간대별 분포] 시간 구간별 opcode 분포:");
+        println!("  시간 범위: {:.6}s - {:.6}s (총 {:.6}s)", min_time, max_time, time_range);
+        println!("  구간당 시간: {:.6}s", segment_duration);
+        
+        for segment in 0..segment_count {
+            let segment_start = min_time + segment as f64 * segment_duration;
+            let segment_end = min_time + (segment + 1) as f64 * segment_duration;
+            
+            let segment_data: Vec<_> = ufs_list.iter()
+                .filter(|ufs| ufs.time >= segment_start && ufs.time < segment_end)
+                .collect();
+            
+            println!("  구간 {} ({:.6}s-{:.6}s): {} 레코드 검색됨", 
+                     segment, segment_start, segment_end, segment_data.len());
+            
+            if !segment_data.is_empty() {
+                let mut segment_opcodes = std::collections::HashMap::new();
+                for ufs in &segment_data {
+                    *segment_opcodes.entry(ufs.opcode.clone()).or_insert(0) += 1;
+                }
+                
+                let total_in_segment = segment_data.len();
+                println!("    총 {} 레코드에서 opcode 분포:", total_in_segment);
+                
+                let mut sorted_segment: Vec<_> = segment_opcodes.iter().collect();
+                sorted_segment.sort_by(|a, b| b.1.cmp(a.1));
+                for (opcode, count) in sorted_segment.iter().take(3) {
+                    println!("      {}: {} ({:.1}%)", opcode, count, **count as f64 / total_in_segment as f64 * 100.0);
+                }
+            } else {
+                println!("    구간이 비어있음");
+            }
+        }
+        
+        // 랜덤 샘플링 수행
+        use rand::seq::SliceRandom;
+        use rand::SeedableRng;
+        
+        let mut rng = rand::rngs::StdRng::seed_from_u64(12345); // 고정 시드로 재현 가능한 결과
+        let mut indices: Vec<usize> = (0..total_count).collect();
+        indices.shuffle(&mut rng);
+        indices.truncate(max_records);
+        indices.sort(); // 시간 순서 유지를 위해 정렬
+        
+        let mut sampled_data = Vec::with_capacity(max_records);
+        for &index in &indices {
+            sampled_data.push(ufs_list[index].clone());
+        }
+        
+        let sampled_count = sampled_data.len();
+        let sampling_ratio = (sampled_count as f64 / total_count as f64) * 100.0;
+        
         SamplingInfo {
             data: sampled_data,
             total_count,
-            sampled_count: max_records,
+            sampled_count,
             sampling_ratio,
         }
     }
@@ -76,19 +138,32 @@ pub fn sample_block(block_list: &[Block], max_records: usize) -> SamplingInfo<Bl
             sampling_ratio: 100.0,
         }
     } else {
-        // 샘플링이 필요한 경우
-        let mut rng = rand::rng();
-        let sampled_data = block_list
-            .choose_multiple(&mut rng, max_records)
-            .cloned()
-            .collect();
-
-        let sampling_ratio = (max_records as f64 / total_count as f64) * 100.0;
-
+        // 랜덤 샘플링으로 임시 변경 (테스트용)
+        use rand::seq::SliceRandom;
+        use rand::SeedableRng;
+        
+        println!("🔍 [RANDOM sampling] Block 랜덤 샘플링: {}/{} 레코드", max_records, total_count);
+        
+        let mut rng = rand::rngs::StdRng::seed_from_u64(12345); // 고정 시드로 재현 가능한 결과
+        let mut indices: Vec<usize> = (0..total_count).collect();
+        indices.shuffle(&mut rng);
+        indices.truncate(max_records);
+        indices.sort(); // 시간 순서 유지를 위해 정렬
+        
+        let mut sampled_data = Vec::with_capacity(max_records);
+        for &index in &indices {
+            sampled_data.push(block_list[index].clone());
+        }
+        
+        let sampled_count = sampled_data.len();
+        let sampling_ratio = (sampled_count as f64 / total_count as f64) * 100.0;
+        
+        println!("  Random sampled: {} records, ratio: {:.2}%", sampled_count, sampling_ratio);
+        
         SamplingInfo {
             data: sampled_data,
             total_count,
-            sampled_count: max_records,
+            sampled_count,
             sampling_ratio,
         }
     }
@@ -268,39 +343,44 @@ pub fn initialize_ranges(thresholds: &[String]) -> BTreeMap<String, usize> {
 // readtrace 함수 - max_records 매개변수 추가
 pub async fn readtrace(logname: String, max_records: usize) -> Result<TraceDataBytes, String> {
     let starttime = std::time::Instant::now();
+    
+    println!("🔍 readtrace 호출: logname='{}', max_records={}", logname, max_records);
+    
+    // 캐시 키 생성 (원본 파일명 사용)
+    let cache_key = format!("{}", logname);
+    println!("🔑 캐시 키: '{}'", cache_key);
+    
     // 캐시 확인: 두 캐시 모두 있는지 확인
     {
         let ufs_cache = UFS_CACHE.lock().map_err(|e| e.to_string())?;
         let block_cache = BLOCK_CACHE.lock().map_err(|e| e.to_string())?;
 
-        if ufs_cache.contains_key(&logname) || block_cache.contains_key(&logname) {
+        if ufs_cache.contains_key(&cache_key) || block_cache.contains_key(&cache_key) {
             let empty_ufs_vec: Vec<UFS> = Vec::new();
             let empty_block_vec: Vec<Block> = Vec::new();
 
-            let ufs_data = ufs_cache.get(&logname).unwrap_or(&empty_ufs_vec);
-            let block_data = block_cache.get(&logname).unwrap_or(&empty_block_vec);
+            let ufs_data = ufs_cache.get(&cache_key).unwrap_or(&empty_ufs_vec);
+            let block_data = block_cache.get(&cache_key).unwrap_or(&empty_block_vec);
 
-            let ufs_sample_info = sample_ufs(ufs_data, max_records);
-            let block_sample_info = sample_block(block_data, max_records);
+            // 캐시된 데이터는 이미 샘플링된 데이터이므로 추가 샘플링 없이 바로 사용
+            let ufs_batch = crate::trace::ufs::ufs_to_record_batch(&ufs_data)?;
+            let block_batch = crate::trace::block::block_to_record_batch(&block_data)?;
 
-            // let ufs_batch = crate::trace::ufs::ufs_to_record_batch(&ufs_sample_info.data)?;
-            // let block_batch = crate::trace::block::block_to_record_batch(&block_sample_info.data)?;
-
-            // let ufs_bytes = batch_to_ipc_bytes(&ufs_batch)?;
-            // let block_bytes = batch_to_ipc_bytes(&block_batch)?;
+            let ufs_bytes = batch_to_ipc_bytes(&ufs_batch)?;
+            let block_bytes = batch_to_ipc_bytes(&block_batch)?;
 
             return Ok(TraceDataBytes {
                 ufs: ArrowBytes {
-                    bytes: vec![],
-                    total_count: ufs_sample_info.total_count,
-                    sampled_count: ufs_sample_info.sampled_count,
-                    sampling_ratio: ufs_sample_info.sampling_ratio,
+                    bytes: ufs_bytes,
+                    total_count: ufs_data.len(),
+                    sampled_count: ufs_data.len(),
+                    sampling_ratio: 100.0, // 캐시된 데이터는 이미 샘플링된 상태
                 },
                 block: ArrowBytes {
-                    bytes: vec![],
-                    total_count: block_sample_info.total_count,
-                    sampled_count: block_sample_info.sampled_count,
-                    sampling_ratio: block_sample_info.sampling_ratio,
+                    bytes: block_bytes,
+                    total_count: block_data.len(),
+                    sampled_count: block_data.len(),
+                    sampling_ratio: 100.0, // 캐시된 데이터는 이미 샘플링된 상태
                 },
             });
         }
@@ -332,17 +412,7 @@ pub async fn readtrace(logname: String, max_records: usize) -> Result<TraceDataB
 
         if let Some(fname) = path.file_name().and_then(|s| s.to_str()) {
             if fname.contains("ufs") && fname.ends_with(".parquet") {
-                // UFS parquet 파일 읽기 - 메모리 효율적인 스트리밍 방식으로
-                println!("Processing UFS file: {}", path.display());
-                
-                // 메타데이터를 통한 파일 크기 확인
-                let file_size = match std::fs::metadata(&path) {
-                    Ok(metadata) => metadata.len(),
-                    Err(_) => 0,
-                };
-                println!("File size: {} bytes", file_size);
-
-                // 최신 DataFusion API에 맞게 수정
+                // UFS parquet 파일 읽기
                 let read_options = ParquetReadOptions::default();
                 
                 let df = ctx
@@ -475,17 +545,7 @@ pub async fn readtrace(logname: String, max_records: usize) -> Result<TraceDataB
                     }
                 }
             } else if fname.contains("block") && fname.ends_with(".parquet") {
-                // block parquet 파일 읽기 - 메모리 효율적인 스트리밍 방식으로
-                println!("Processing block file: {}", path.display());
-                
-                // 메타데이터를 통한 파일 크기 확인
-                let file_size = match std::fs::metadata(&path) {
-                    Ok(metadata) => metadata.len(),
-                    Err(_) => 0,
-                };
-                println!("File size: {} bytes", file_size);
-
-                // 최신 DataFusion API에 맞게 수정
+                // Block parquet 파일 읽기
                 let read_options = ParquetReadOptions::default();
                 
                 let df = ctx
@@ -634,42 +694,40 @@ pub async fn readtrace(logname: String, max_records: usize) -> Result<TraceDataB
         }
     }
 
-    // 캐시에 저장 (루프 밖에서)
-    if !ufs_vec.is_empty() {
-        println!("Storing UFS cache with key: '{}'", logname);
-        let mut ufs_cache = UFS_CACHE.lock().map_err(|e| e.to_string())?;
-        ufs_cache.insert(logname.clone(), ufs_vec.clone());
-    }
+    println!("📊 샘플링 시작: UFS={}, Block={}, max_records={}", ufs_vec.len(), block_vec.len(), max_records);
     
-    if !block_vec.is_empty() {
-        println!("Storing Block cache with key: '{}'", logname);
-        let mut block_cache = BLOCK_CACHE.lock().map_err(|e| e.to_string())?;
-        block_cache.insert(logname.clone(), block_vec.clone());
-    }
-
-    // // 데이터가 많은 경우 샘플링하여 반환
+    // 먼저 샘플링을 수행
     let ufs_sample_info = sample_ufs(&ufs_vec, max_records);
     let block_sample_info = sample_block(&block_vec, max_records);
+    
+    // 샘플링된 데이터를 캐시에 저장
+    if !ufs_sample_info.data.is_empty() {
+        let mut ufs_cache = UFS_CACHE.lock().map_err(|e| e.to_string())?;
+        ufs_cache.insert(cache_key.clone(), ufs_sample_info.data.clone());
+    }
+    
+    if !block_sample_info.data.is_empty() {
+        let mut block_cache = BLOCK_CACHE.lock().map_err(|e| e.to_string())?;
+        block_cache.insert(cache_key.clone(), block_sample_info.data.clone());
+    }
 
-    // // JSON으로 직렬화하여 반환
-    // let ufs_batch = crate::trace::ufs::ufs_to_record_batch(&ufs_sample_info.data)?;
-    // let block_batch = crate::trace::block::block_to_record_batch(&block_sample_info.data)?;
+    // Arrow IPC 형식으로 직렬화하여 반환
+    let ufs_batch = crate::trace::ufs::ufs_to_record_batch(&ufs_sample_info.data)?;
+    let block_batch = crate::trace::block::block_to_record_batch(&block_sample_info.data)?;
 
-    // let startbytes = std::time::Instant::now();
-    // let ufs_bytes = compress_zstd(&batch_to_ipc_bytes(&ufs_batch)?)?;
-    // let block_bytes = compress_zstd(&batch_to_ipc_bytes(&block_batch)?)?;
-    // println!("compress elapsed time: {:?}", startbytes.elapsed());
+    let ufs_bytes = batch_to_ipc_bytes(&ufs_batch)?;
+    let block_bytes = batch_to_ipc_bytes(&block_batch)?;
 
     println!("readtrace elapsed time: {:?}", starttime.elapsed());
     Ok(TraceDataBytes {
         ufs: ArrowBytes {
-            bytes: vec![],
+            bytes: ufs_bytes,
             total_count: ufs_sample_info.total_count,
             sampled_count: ufs_sample_info.sampled_count,
             sampling_ratio: ufs_sample_info.sampling_ratio,
         },
         block: ArrowBytes {
-            bytes: vec![],
+            bytes: block_bytes,
             total_count: block_sample_info.total_count,
             sampled_count: block_sample_info.sampled_count,
             sampling_ratio: block_sample_info.sampling_ratio,
@@ -1300,9 +1358,9 @@ async fn filter_block_trace(
     let bytes = batch_to_ipc_bytes(&batch)?;
     let sampled_count = limited_blocks.len();
     let sampling_ratio = if total_count > 0 {
-        sampled_count as f64 / total_count as f64
+        (sampled_count as f64 / total_count as f64) * 100.0  // 백분율로 계산
     } else {
-        1.0
+        100.0
     };
     
     Ok(TraceDataBytes {
@@ -1310,7 +1368,7 @@ async fn filter_block_trace(
             bytes: vec![],
             total_count: 0,
             sampled_count: 0,
-            sampling_ratio: 1.0,
+            sampling_ratio: 100.0,
         },
         block: ArrowBytes {
             bytes,
@@ -1348,9 +1406,9 @@ async fn filter_ufs_trace(
     let bytes = batch_to_ipc_bytes(&batch)?;
     let sampled_count = limited_ufs.len();
     let sampling_ratio = if total_count > 0 {
-        sampled_count as f64 / total_count as f64
+        (sampled_count as f64 / total_count as f64) * 100.0  // 백분율로 계산
     } else {
-        1.0
+        100.0
     };
     
     Ok(TraceDataBytes {
@@ -1364,7 +1422,7 @@ async fn filter_ufs_trace(
             bytes: vec![],
             total_count: 0,
             sampled_count: 0,
-            sampling_ratio: 1.0,
+            sampling_ratio: 100.0,
         },
     })
 }
@@ -1379,4 +1437,28 @@ pub async fn filter_trace(params: FilterTraceParams) -> Result<TraceDataBytes, S
     } else {
         Err(format!("Unknown trace type: {}", params.tracetype))
     }
+}
+
+// 캐시 초기화 함수
+pub async fn clear_all_cache() -> Result<String, String> {
+    println!("🧹 모든 캐시 초기화 시작");
+    
+    // UFS 캐시 초기화
+    {
+        let mut ufs_cache = UFS_CACHE.lock().map_err(|e| e.to_string())?;
+        let ufs_count = ufs_cache.len();
+        ufs_cache.clear();
+        println!("  - UFS 캐시 초기화: {} 항목 삭제", ufs_count);
+    }
+    
+    // Block 캐시 초기화
+    {
+        let mut block_cache = BLOCK_CACHE.lock().map_err(|e| e.to_string())?;
+        let block_count = block_cache.len();
+        block_cache.clear();
+        println!("  - Block 캐시 초기화: {} 항목 삭제", block_count);
+    }
+    
+    println!("✅ 모든 캐시 초기화 완료");
+    Ok("캐시가 성공적으로 초기화되었습니다.".to_string())
 }
