@@ -30,14 +30,15 @@
     // ScatterCharts 구성 데이터 정의
     const getChartConfig = (mainTab, subTab) => {
         if (subTab === 'cpu') {
-            console.log(`CPU 차트 생성 - Y축 범위 0-7로 고정`);
+            console.log(`CPU 차트 생성 - mainTab: ${mainTab}, Y축 범위 0-7로 고정`);
             return {
                 xAxisKey: 'time',
                 yAxisKey: 'cpu',
                 legendKey: 'cpu',
                 yAxisLabel: 'cpu',
                 ycolumn: 'cpu',
-                yAxisRange: [0, 7]  // CPU는 항상 0-7로 고정
+                yAxisRange: [0, 7],  // CPU는 항상 0-7로 고정
+                actionFilter: mainTab  // 'd' 또는 'c' 액션 필터 추가
             };
         } else if (subTab === 'addr') {
             if (traceType === 'ufs') {
@@ -46,7 +47,8 @@
                     yAxisKey: 'lba',
                     legendKey: 'cpu',
                     yAxisLabel: '4KB',
-                    ycolumn: 'lba'
+                    ycolumn: 'lba',
+                    actionFilter: mainTab  // 'd' 또는 'c' 액션 필터 추가
                 };
             } else if (traceType === 'block') {
                 return {
@@ -54,7 +56,8 @@
                     yAxisKey: 'sector',
                     legendKey: 'cpu',
                     yAxisLabel: 'sector',
-                    ycolumn: 'sector'
+                    ycolumn: 'sector',
+                    actionFilter: mainTab  // 'd' 또는 'c' 액션 필터 추가
                 };
             }
         }
@@ -100,6 +103,7 @@
                                 yAxisLabel={config.yAxisLabel}
                                 ycolumn={config.ycolumn}
                                 yAxisRange={config.yAxisRange}
+                                actionFilter={config.actionFilter}
                             />
                         {:else}
                             <div class="p-4 text-center text-gray-500">데이터가 없습니다.</div>

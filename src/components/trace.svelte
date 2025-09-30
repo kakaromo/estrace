@@ -379,6 +379,7 @@
                 <Label for="logfolder">Log folder</Label>
                 <Input id="logfolder" bind:value={logfolder} class="col-span-3" />
                 </div>
+
                 <div class="grid grid-cols-4 items-center gap-4">
                 <Label for="title">Title</Label>
                 <Input id="title" bind:value={title} class="col-span-3" />
@@ -407,7 +408,7 @@
                 <div class="flex justify-between items-center mb-1">
                     <button 
                         class="text-xs text-blue-600 hover:text-blue-800 underline"
-                        on:click={() => showDetails = !showDetails}
+                        onclick={() => showDetails = !showDetails}
                     >
                         {showDetails ? '상세 정보 숨기기' : '상세 정보 보기'}
                     </button>

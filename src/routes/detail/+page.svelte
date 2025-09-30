@@ -189,6 +189,8 @@
                     console.log('[Trace] 필터링된 데이터 수신 완료');
                     filteredData[$selectedTrace] = result[$selectedTrace];
                     
+                    // 필터된 데이터의 opcode, iotype 별 count 분석
+                    const data = result[$selectedTrace].data;   
                     // 데이터 변경 후 UI 업데이트를 위한 tick 대기
                     await tick();
                     
@@ -511,7 +513,7 @@
                 <div class="flex gap-2 text-xs text-gray-400 items-center ml-auto">
                     <span>total: {filteredData[$selectedTrace].total_count}</span>
                     <span>sampling: {filteredData[$selectedTrace].sampled_count}</span>
-                    <span>sample ratio: {Number(filteredData[$selectedTrace].sampling_ratio.toFixed(2))}%</span>
+                    <span>sample ratio: {filteredData[$selectedTrace].sampling_ratio.toFixed(2)}%</span>
                 </div>
                 {/if}
             </div>
