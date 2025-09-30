@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { tableFromIPC } from 'apache-arrow';
 import { compareTraceCount, traceSizeCount, traceSaimpleCount } from '$stores/trace';
 import { getBufferSize } from "$api/db";
+import { handleCompressedData, logCompressionInfo } from './compression';
 
 export async function fetchTraceLengths(logname: string) {
   return await invoke('trace_lengths', { logname });
@@ -114,7 +115,7 @@ export async function filterTraceData(logname: string, traceData: any, selectedT
     //   maxrecords: buffersize
     // });
 
-    const result: number[] = await invoke('filter_trace', {
+    const result: any = await invoke('filter_trace', {
       logname: logname,
       tracetype: selectedTrace,
       zoomColumn: zoom_column,
@@ -125,8 +126,29 @@ export async function filterTraceData(logname: string, traceData: any, selectedT
       maxrecords: buffersize
     });
 
-    const ufsData = new Uint8Array(result.ufs.bytes);
-    const blockData = new Uint8Array(result.block.bytes);
+    // 압축 정보 로깅
+    logCompressionInfo(
+      'UFS', 
+      result.ufs.compressed, 
+      result.ufs.original_size, 
+      result.ufs.compressed_size, 
+      result.ufs.compression_ratio
+    );
+    logCompressionInfo(
+      'Block', 
+      result.block.compressed, 
+      result.block.original_size, 
+      result.block.compressed_size, 
+      result.block.compression_ratio
+    );
+
+    // 압축 해제 처리
+    const ufsRawData = new Uint8Array(result.ufs.bytes);
+    const blockRawData = new Uint8Array(result.block.bytes);
+    
+    const ufsData = handleCompressedData(ufsRawData, result.ufs.compressed);
+    const blockData = handleCompressedData(blockRawData, result.block.compressed);
+    
     const ufsTable = tableFromIPC(ufsData);
     const blockTable = tableFromIPC(blockData);
     const tracedata = {

@@ -10,6 +10,9 @@ use tauri::async_runtime::spawn_blocking;
 use tauri::Emitter;
 use arrow::ipc::writer::StreamWriter;
 use parquet::file::reader::{FileReader, SerializedFileReader};
+use flate2::write::GzEncoder;
+use flate2::Compression;
+use std::io::Write;
 
 use serde::Serialize;
 
@@ -122,6 +125,10 @@ pub struct ArrowBytes {
     pub total_count: usize,
     pub sampled_count: usize,
     pub sampling_ratio: f64,
+    pub compressed: bool,
+    pub compression_ratio: f64,
+    pub original_size: usize,
+    pub compressed_size: usize,
 }
 
 #[derive(Serialize, Debug, Clone)]
@@ -237,13 +244,45 @@ pub fn normalize_io_type(io: &str) -> String {
     io.chars().next().unwrap_or_default().to_string()
 }
 
-// RecordBatch를 Arrow IPC 바이트로 변환하는 헬퍼
+// RecordBatch를 Arrow IPC 바이트로 변환하는 헬퍼 (압축 없음)
 fn batch_to_ipc_bytes(batch: &arrow::record_batch::RecordBatch) -> Result<Vec<u8>, String> {
     let mut buf = Vec::new();
     let mut writer = StreamWriter::try_new(&mut buf, batch.schema().as_ref()).map_err(|e| e.to_string())?;
     writer.write(batch).map_err(|e| e.to_string())?;
     writer.finish().map_err(|e| e.to_string())?;
     Ok(buf)
+}
+
+// RecordBatch를 Gzip 압축된 Arrow IPC 바이트로 변환하는 헬퍼
+fn batch_to_compressed_ipc_bytes(batch: &arrow::record_batch::RecordBatch) -> Result<(Vec<u8>, usize, f64), String> {
+    // 먼저 Arrow IPC 바이트 생성
+    let mut ipc_buf = Vec::new();
+    let mut writer = StreamWriter::try_new(&mut ipc_buf, batch.schema().as_ref()).map_err(|e| e.to_string())?;
+    writer.write(batch).map_err(|e| e.to_string())?;
+    writer.finish().map_err(|e| e.to_string())?;
+    
+    let original_size = ipc_buf.len();
+    
+    // Gzip 압축 적용
+    let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
+    encoder.write_all(&ipc_buf).map_err(|e| e.to_string())?;
+    let compressed_bytes = encoder.finish().map_err(|e| e.to_string())?;
+    let compressed_size = compressed_bytes.len();
+    
+    // 압축률 계산
+    let compression_ratio = if original_size > 0 {
+        compressed_size as f64 / original_size as f64
+    } else {
+        1.0
+    };
+    
+    println!("Gzip 압축 효과: {} -> {} bytes ({:.1}% 감소, 압축비: {:.1}:1)", 
+             original_size, 
+             compressed_size,
+             (1.0 - compression_ratio) * 100.0,
+             1.0 / compression_ratio);
+    
+    Ok((compressed_bytes, original_size, compression_ratio))
 }
 
 // 구간 키 생성 함수 - latencystats에서 중복 사용
@@ -296,7 +335,7 @@ pub async fn readtrace(logname: String, max_records: usize) -> Result<TraceDataB
     let cache_key = format!("{}", logname);
     println!("🔑 캐시 키: '{}'", cache_key);
     
-    // 캐시 확인: 두 캐시 모두 있는지 확인
+    // 캐시 확인: 원본 데이터가 있는지 확인
     {
         let ufs_cache = UFS_CACHE.lock().map_err(|e| e.to_string())?;
         let block_cache = BLOCK_CACHE.lock().map_err(|e| e.to_string())?;
@@ -308,25 +347,41 @@ pub async fn readtrace(logname: String, max_records: usize) -> Result<TraceDataB
             let ufs_data = ufs_cache.get(&cache_key).unwrap_or(&empty_ufs_vec);
             let block_data = block_cache.get(&cache_key).unwrap_or(&empty_block_vec);
 
-            // 캐시된 데이터는 이미 샘플링된 데이터이므로 추가 샘플링 없이 바로 사용
-            let ufs_batch = crate::trace::ufs::ufs_to_record_batch(&ufs_data)?;
-            let block_batch = crate::trace::block::block_to_record_batch(&block_data)?;
+            println!("🎯 [DEBUG] 캐시된 원본 데이터 사용: UFS={}, Block={}", ufs_data.len(), block_data.len());
+            
+            // 캐시된 원본 데이터를 샘플링해서 반환
+            let ufs_sample_info = sample_ufs(&ufs_data, max_records);
+            let block_sample_info = sample_block(&block_data, max_records);
+            
+            let ufs_batch = crate::trace::ufs::ufs_to_record_batch(&ufs_sample_info.data)?;
+            let block_batch = crate::trace::block::block_to_record_batch(&block_sample_info.data)?;
 
-            let ufs_bytes = batch_to_ipc_bytes(&ufs_batch)?;
-            let block_bytes = batch_to_ipc_bytes(&block_batch)?;
+            let (ufs_bytes, ufs_original_size, ufs_compression_ratio) = batch_to_compressed_ipc_bytes(&ufs_batch)?;
+            let (block_bytes, block_original_size, block_compression_ratio) = batch_to_compressed_ipc_bytes(&block_batch)?;
+            
+            let ufs_compressed_size = ufs_bytes.len();
+            let block_compressed_size = block_bytes.len();
 
             return Ok(TraceDataBytes {
                 ufs: ArrowBytes {
                     bytes: ufs_bytes,
-                    total_count: ufs_data.len(),
-                    sampled_count: ufs_data.len(),
-                    sampling_ratio: 100.0, // 캐시된 데이터는 이미 샘플링된 상태
+                    total_count: ufs_sample_info.total_count,
+                    sampled_count: ufs_sample_info.sampled_count,
+                    sampling_ratio: ufs_sample_info.sampling_ratio,
+                    compressed: true,
+                    compression_ratio: ufs_compression_ratio,
+                    original_size: ufs_original_size,
+                    compressed_size: ufs_compressed_size,
                 },
                 block: ArrowBytes {
                     bytes: block_bytes,
-                    total_count: block_data.len(),
-                    sampled_count: block_data.len(),
-                    sampling_ratio: 100.0, // 캐시된 데이터는 이미 샘플링된 상태
+                    total_count: block_sample_info.total_count,
+                    sampled_count: block_sample_info.sampled_count,
+                    sampling_ratio: block_sample_info.sampling_ratio,
+                    compressed: true,
+                    compression_ratio: block_compression_ratio,
+                    original_size: block_original_size,
+                    compressed_size: block_compressed_size,
                 },
             });
         }
@@ -352,12 +407,20 @@ pub async fn readtrace(logname: String, max_records: usize) -> Result<TraceDataB
     // 각 파일 처리: 파일명에 따라 ufs 또는 block으로 구분
     for file in files {
         let path = PathBuf::from(&file);
+        println!("📁 파일 확인: '{}'", file);
+        
         if !path.is_file() {
+            println!("⚠️  파일이 존재하지 않음: '{}'", file);
             continue; // 파일이 아니면 건너뜁니다.
         }
+        
+        println!("✅ 파일 존재 확인: '{}'", file);
 
         if let Some(fname) = path.file_name().and_then(|s| s.to_str()) {
+            println!("🔍 파일명 분석: '{}'", fname);
+            
             if fname.contains("ufs") && fname.ends_with(".parquet") {
+                println!("📊 UFS parquet 파일 처리 시작: '{}'", file);
                 // UFS parquet 파일 읽기
                 let read_options = ParquetReadOptions::default();
                 
@@ -491,6 +554,7 @@ pub async fn readtrace(logname: String, max_records: usize) -> Result<TraceDataB
                     }
                 }
             } else if fname.contains("block") && fname.ends_with(".parquet") {
+                println!("📊 Block parquet 파일 처리 시작: '{}'", file);
                 // Block parquet 파일 읽기
                 let read_options = ParquetReadOptions::default();
                 
@@ -640,29 +704,59 @@ pub async fn readtrace(logname: String, max_records: usize) -> Result<TraceDataB
         }
     }
 
-    println!("📊 샘플링 시작: UFS={}, Block={}, max_records={}", ufs_vec.len(), block_vec.len(), max_records);
-    
-    // 먼저 샘플링을 수행
-    let ufs_sample_info = sample_ufs(&ufs_vec, max_records);
-    let block_sample_info = sample_block(&block_vec, max_records);
-    
-    // 샘플링된 데이터를 캐시에 저장
-    if !ufs_sample_info.data.is_empty() {
+    println!("📋 데이터 로딩 완료: UFS={} 개, Block={} 개 레코드", ufs_vec.len(), block_vec.len());
+
+    // 원본 데이터를 캐시에 저장
+    {
         let mut ufs_cache = UFS_CACHE.lock().map_err(|e| e.to_string())?;
-        ufs_cache.insert(cache_key.clone(), ufs_sample_info.data.clone());
-    }
-    
-    if !block_sample_info.data.is_empty() {
         let mut block_cache = BLOCK_CACHE.lock().map_err(|e| e.to_string())?;
-        block_cache.insert(cache_key.clone(), block_sample_info.data.clone());
+        
+        // 1. 복합 키로 저장 (기존)
+        ufs_cache.insert(cache_key.clone(), ufs_vec.clone());
+        block_cache.insert(cache_key.clone(), block_vec.clone());
+        
+        // 2. 개별 파일 키로도 저장 (통계 요청 시 사용)
+        if cache_key.contains(',') {
+            // 복합 키인 경우: 각 파일별로 분리해서 저장
+            let files: Vec<&str> = cache_key.split(',').map(|s| s.trim()).collect();
+            for file in files {
+                if file.contains("_ufs.parquet") && !ufs_vec.is_empty() {
+                    ufs_cache.insert(file.to_string(), ufs_vec.clone());
+                    println!("💾 개별 UFS 키로도 저장: '{}' -> {} 개 레코드", file, ufs_vec.len());
+                }
+                if file.contains("_block.parquet") && !block_vec.is_empty() {
+                    block_cache.insert(file.to_string(), block_vec.clone());
+                    println!("💾 개별 Block 키로도 저장: '{}' -> {} 개 레코드", file, block_vec.len());
+                }
+            }
+        } else {
+            // 단일 키인 경우: 파일 타입에 따라 해당 캐시에만 저장
+            if cache_key.contains("_ufs.parquet") && !ufs_vec.is_empty() {
+                // UFS 파일인 경우 UFS 캐시에만 저장 (이미 위에서 저장했으므로 로그만)
+                println!("💾 단일 UFS 파일 캐시 저장: '{}' -> {} 개 레코드", cache_key, ufs_vec.len());
+            }
+            if cache_key.contains("_block.parquet") && !block_vec.is_empty() {
+                // Block 파일인 경우 Block 캐시에만 저장 (이미 위에서 저장했으므로 로그만)
+                println!("💾 단일 Block 파일 캐시 저장: '{}' -> {} 개 레코드", cache_key, block_vec.len());
+            }
+        }
+        
+        println!("💾 원본 데이터를 캐시에 저장: UFS={}, Block={}", ufs_vec.len(), block_vec.len());
     }
 
-    // Arrow IPC 형식으로 직렬화하여 반환
+    // 샘플링을 수행
+    let ufs_sample_info = sample_ufs(&ufs_vec, max_records);
+    let block_sample_info = sample_block(&block_vec, max_records);
+
+    // Arrow IPC 형식으로 직렬화하여 반환 (LZ4 압축 적용)
     let ufs_batch = crate::trace::ufs::ufs_to_record_batch(&ufs_sample_info.data)?;
     let block_batch = crate::trace::block::block_to_record_batch(&block_sample_info.data)?;
 
-    let ufs_bytes = batch_to_ipc_bytes(&ufs_batch)?;
-    let block_bytes = batch_to_ipc_bytes(&block_batch)?;
+    let (ufs_bytes, ufs_original_size, ufs_compression_ratio) = batch_to_compressed_ipc_bytes(&ufs_batch)?;
+    let (block_bytes, block_original_size, block_compression_ratio) = batch_to_compressed_ipc_bytes(&block_batch)?;
+    
+    let ufs_compressed_size = ufs_bytes.len();
+    let block_compressed_size = block_bytes.len();
 
     println!("readtrace elapsed time: {:?}", starttime.elapsed());
     Ok(TraceDataBytes {
@@ -671,12 +765,20 @@ pub async fn readtrace(logname: String, max_records: usize) -> Result<TraceDataB
             total_count: ufs_sample_info.total_count,
             sampled_count: ufs_sample_info.sampled_count,
             sampling_ratio: ufs_sample_info.sampling_ratio,
+            compressed: true,
+            compression_ratio: ufs_compression_ratio,
+            original_size: ufs_original_size,
+            compressed_size: ufs_compressed_size,
         },
         block: ArrowBytes {
             bytes: block_bytes,
             total_count: block_sample_info.total_count,
             sampled_count: block_sample_info.sampled_count,
             sampling_ratio: block_sample_info.sampling_ratio,
+            compressed: true,
+            compression_ratio: block_compression_ratio,
+            original_size: block_original_size,
+            compressed_size: block_compressed_size,
         },
     })
 }
@@ -1286,28 +1388,39 @@ async fn filter_block_trace(
     col_to: Option<f64>,
     max_records: usize,
 ) -> Result<TraceDataBytes, String> {
+    println!("🎄 [DEBUG] filter_block_trace 호출: logname='{}', max_records={}", logname, max_records);
+    
     // filter_block_data를 사용하여 필터링
     let filtered_blocks = filter_block_data(logname, time_from, time_to, zoom_column, col_from, col_to)?;
     
     // total_count 미리 계산
     let total_count = filtered_blocks.len();
+    println!("📈 [DEBUG] Block 데이터 필터링 완료: total_count={}", total_count);
     
-    // max_records 제한 적용
-    let limited_blocks = if total_count > max_records {
-        filtered_blocks.iter().take(max_records).cloned().collect()
+    // max_records 제한 적용 (랜덤 샘플링)
+    let sampling_info = if total_count > max_records {
+        println!("⚙️ [DEBUG] Block 랜덤 샘플링 수행: {} -> {} 레코드", total_count, max_records);
+        sample_block(&filtered_blocks, max_records)
     } else {
-        filtered_blocks
+        println!("✅ [DEBUG] Block 샘플링 불필요: {} 레코드 그대로 사용", total_count);
+        SamplingInfo {
+            data: filtered_blocks,
+            total_count,
+            sampled_count: total_count,
+            sampling_ratio: 100.0,
+        }
     };
+    
+    let limited_blocks = sampling_info.data;
+    let sampled_count = sampling_info.sampled_count;
+    let sampling_ratio = sampling_info.sampling_ratio;
+    
+    println!("📋 [DEBUG] Block 샘플링 결과: sampled_count={}, sampling_ratio={:.1}%", sampled_count, sampling_ratio);
     
     // Arrow RecordBatch 변환 및 IPC 포맷으로 직렬화
     let batch = block_to_record_batch(&limited_blocks)?;
     let bytes = batch_to_ipc_bytes(&batch)?;
-    let sampled_count = limited_blocks.len();
-    let sampling_ratio = if total_count > 0 {
-        (sampled_count as f64 / total_count as f64) * 100.0  // 백분율로 계산
-    } else {
-        100.0
-    };
+    let bytes_size = bytes.len();
     
     Ok(TraceDataBytes {
         ufs: ArrowBytes {
@@ -1315,12 +1428,20 @@ async fn filter_block_trace(
             total_count: 0,
             sampled_count: 0,
             sampling_ratio: 100.0,
+            compressed: false,
+            compression_ratio: 1.0,
+            original_size: 0,
+            compressed_size: 0,
         },
         block: ArrowBytes {
             bytes,
             total_count,
             sampled_count,
             sampling_ratio,
+            compressed: false,
+            compression_ratio: 1.0,
+            original_size: bytes_size,
+            compressed_size: bytes_size,
         },
     })
 }
@@ -1334,28 +1455,41 @@ async fn filter_ufs_trace(
     col_to: Option<f64>,
     max_records: usize,
 ) -> Result<TraceDataBytes, String> {
+    println!("🎄 [DEBUG] filter_ufs_trace 호출: logname='{}', max_records={}", logname, max_records);
+    
     // filter_ufs_data를 사용하여 필터링
     let filtered_ufs = filter_ufs_data(logname, time_from, time_to, zoom_column, col_from, col_to)?;
     
     // total_count 미리 계산
     let total_count = filtered_ufs.len();
+    println!("📈 [DEBUG] UFS 데이터 필터링 완료: total_count={}", total_count);
     
-    // max_records 제한 적용
-    let limited_ufs = if total_count > max_records {
-        filtered_ufs.iter().take(max_records).cloned().collect()
+    // max_records 제한 적용 (랜덤 샘플링)
+    let sampling_info = if total_count > max_records {
+        println!("⚙️ [DEBUG] UFS 랜덤 샘플링 수행: {} -> {} 레코드", total_count, max_records);
+        sample_ufs(&filtered_ufs, max_records)
     } else {
-        filtered_ufs
+        println!("✅ [DEBUG] UFS 샘플링 불필요: {} 레코드 그대로 사용", total_count);
+        SamplingInfo {
+            data: filtered_ufs,
+            total_count,
+            sampled_count: total_count,
+            sampling_ratio: 100.0,
+        }
     };
+    
+    let limited_ufs = sampling_info.data;
+    let sampled_count = sampling_info.sampled_count;
+    let sampling_ratio = sampling_info.sampling_ratio;
+    
+    println!("📋 [DEBUG] UFS 샘플링 결과: sampled_count={}, sampling_ratio={:.1}%", sampled_count, sampling_ratio);
+    
+    println!("📋 [DEBUG] UFS 샘플링 결과: sampled_count={}, sampling_ratio={:.1}%", sampled_count, sampling_ratio);
     
     // Arrow RecordBatch 변환 및 IPC 포맷으로 직렬화
     let batch = ufs_to_record_batch(&limited_ufs)?;
     let bytes = batch_to_ipc_bytes(&batch)?;
-    let sampled_count = limited_ufs.len();
-    let sampling_ratio = if total_count > 0 {
-        (sampled_count as f64 / total_count as f64) * 100.0  // 백분율로 계산
-    } else {
-        100.0
-    };
+    let bytes_size = bytes.len();
     
     Ok(TraceDataBytes {
         ufs: ArrowBytes {
@@ -1363,12 +1497,20 @@ async fn filter_ufs_trace(
             total_count,
             sampled_count,
             sampling_ratio,
+            compressed: false,
+            compression_ratio: 1.0,
+            original_size: bytes_size,
+            compressed_size: bytes_size,
         },
         block: ArrowBytes {
             bytes: vec![],
             total_count: 0,
             sampled_count: 0,
             sampling_ratio: 100.0,
+            compressed: false,
+            compression_ratio: 1.0,
+            original_size: 0,
+            compressed_size: 0,
         },
     })
 }

@@ -43,6 +43,8 @@
         fetchTraceLengths
     } from '$utils/trace-helper';
     
+    import { handleCompressedData, logCompressionInfo } from '$utils/compression';
+    
     // 페이지 ID 및 기본 상태
     // const id = page.params.id;
     const id = $testinfoid;
@@ -319,24 +321,47 @@
             if (cached) {
                 tracedata = deserializeBigInt(cached);
             } else {
-                const result: number[] = await invoke('readtrace', {
+                const result: any = await invoke('readtrace', {
                     logfolder: data.logfolder,
                     logname: data.logname,
                     maxrecords: buffersize
                 });
-                // const ufsData = await decompress(new Uint8Array(result.ufs.bytes));
-                // const blockData = await decompress(new Uint8Array(result.block.bytes));
-                // const ufsTable = tableFromIPC(ufsData);
-                // const blockTable = tableFromIPC(blockData);
+                
+                // 압축 정보 로깅
+                logCompressionInfo(
+                    'UFS', 
+                    result.ufs.compressed, 
+                    result.ufs.original_size, 
+                    result.ufs.compressed_size, 
+                    result.ufs.compression_ratio
+                );
+                logCompressionInfo(
+                    'Block', 
+                    result.block.compressed, 
+                    result.block.original_size, 
+                    result.block.compressed_size, 
+                    result.block.compression_ratio
+                );
+
+                // 압축 해제 처리
+                const ufsRawData = new Uint8Array(result.ufs.bytes);
+                const blockRawData = new Uint8Array(result.block.bytes);
+                
+                const ufsData = handleCompressedData(ufsRawData, result.ufs.compressed);
+                const blockData = handleCompressedData(blockRawData, result.block.compressed);
+                
+                const ufsTable = tableFromIPC(ufsData);
+                const blockTable = tableFromIPC(blockData);
+                
                 tracedata = {
                     ufs: {
-                        data: '',
+                        data: ufsTable.toArray(),
                         total_count: result.ufs.total_count,
                         sampled_count: result.ufs.sampled_count,
                         sampling_ratio: result.ufs.sampling_ratio
                     },
                     block: {
-                        data: '',
+                        data: blockTable.toArray(),
                         total_count: result.block.total_count,
                         sampled_count: result.block.sampled_count,
                         sampling_ratio: result.block.sampling_ratio

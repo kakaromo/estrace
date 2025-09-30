@@ -1947,6 +1947,7 @@ dependencies = [
  "arrow",
  "chrono",
  "datafusion",
+ "flate2",
  "lazy_static",
  "memmap2",
  "num_cpus",

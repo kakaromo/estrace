@@ -10,7 +10,7 @@ use arrow::temporal_conversions::MILLISECONDS;
 use parquet::arrow::ArrowWriter;
 use tauri::Emitter;
 
-use crate::trace::filter::filter_ufs_data;
+use crate::trace::filter::{filter_ufs_data};
 use crate::trace::utils::{
     calculate_statistics, create_range_key, initialize_ranges, parse_time_to_ms,
 };
@@ -466,7 +466,7 @@ pub async fn sizestats(params: UfsSizeStatsParams) -> Result<Vec<u8>, String> {
     // size 기준 count 계산
     for ufs in &filtered_ufs {
         if let Some(size_counts) = opcode_stats.get_mut(&ufs.opcode) {
-            let size_kb = ufs.size / 1024;
+            let size_kb = ufs.size;
 
             *size_counts.entry(size_kb).or_insert(0) += 1;
             *total_counts.get_mut(&ufs.opcode).unwrap() += 1;
@@ -700,7 +700,7 @@ pub async fn allstats(params: UfsAllStatsParams, thresholds: Vec<String>) -> Res
         }
 
         // 크기 통계 (KB 단위로 변환)
-        let size_kb = ufs.size / 1024;
+        let size_kb = ufs.size * 4; // 4KB 단위이므로 4를 곱함
         if let Some(size_counts) = size_stats.get_mut(&ufs.opcode) {
             *size_counts.entry(size_kb).or_insert(0) += 1;
             *total_counts.get_mut(&ufs.opcode).unwrap() += 1;

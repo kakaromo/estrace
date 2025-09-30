@@ -8,7 +8,8 @@
   import { getFolder } from "../api/db.js";
   import { traceFile, Status, traceStatusStore } from '../stores/file.js';
   import { clear } from 'idb-keyval';
-
+  import { invoke } from '@tauri-apps/api/core';
+  
   const macOS = navigator.userAgent.includes('Macintosh');
   let showAboutDialog = false;
   let showSettingsDialog = false;
@@ -31,6 +32,17 @@
     } catch (error) {
       console.error('파일 열기 실패:', error);
     }
+  }
+
+  async function clearCache() {
+    // 백엔드 캐시 클리어
+    await invoke('clear_all_cache');
+    
+    // IndexedDB 캐시 클리어
+    await clear();
+    
+    // 메모리 캐시 클리어 (페이지 새로고침)
+    window.location.reload();
   }
 
   onMount(async () => {
@@ -93,7 +105,7 @@
       <Menubar.Separator />
 
       <Menubar.Item on:click={() => {
-        clear();
+        clearCache;
         console.log('session clear');
       }}>
         Session Clear

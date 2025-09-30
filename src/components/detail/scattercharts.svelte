@@ -297,6 +297,12 @@
   
   // Y축 범위 설정 함수
   function openYAxisRangeDialog() {
+    // CPU 차트의 경우 y축 범위 변경을 제한
+    if (yAxisKey === 'cpu') {
+      alert('CPU 차트의 Y축 범위는 0~7로 고정되어 있습니다.');
+      return;
+    }
+    
     // 현재 차트의 Y축 범위 가져오기
     const yAxisModel = chartInstance.getModel().getComponent('yAxis', 0);
     if (yAxisModel) {
@@ -583,7 +589,13 @@ function prepareChartData() {
           fontSize: 13,
           padding: dynamicPadding,
           fontWeight: 'bolder'
-        }
+        },
+        // CPU 차트일 때 y축을 0~7로 고정
+        ...(yAxisKey === 'cpu' && {
+          min: 0,
+          max: 7,
+          interval: 1
+        })
       },
       series: series
     };
