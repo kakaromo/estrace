@@ -28,7 +28,7 @@
     import { 
         SelectType,
         SizeStats,
-        ScatterCharts, 
+        ScatterChartsDeck, 
         VisualItem, 
         RWDStats,
         LatencyTabs,
@@ -44,6 +44,7 @@
     } from '$utils/trace-helper';
     
     import { handleCompressedData, logCompressionInfo } from '$utils/compression';
+    import { arrowToWebGLData } from '$utils/webgl-optimizer';
     
     // 페이지 ID 및 기본 상태
     // const id = page.params.id;
@@ -55,7 +56,9 @@
     let traceLengths:any = $state({});
 
     // 선택된 타입의 필터된 데이터를 접근하기 위한 반응형 변수
-    let currentFiltered:Array = $derived(filteredData[$selectedTrace]?.data ?? []);
+    // ⚡ 성능 최적화: Arrow Table 직접 사용 (.data 제거)
+    let currentFilteredTable = $derived(filteredData[$selectedTrace]?.table ?? null);
+    let currentFiltered:Array = $derived(filteredData[$selectedTrace]?.data ?? []); // 호환성용 (CPUTabs, RWDStats 등)
     let legendKey:string = $derived($selectedTrace === 'ufs' ? 'opcode' : 'io_type');
     let patternAxis:Object = $derived($selectedTrace === 'ufs'
         ? { key: 'lba', label: '4KB', column: 'lba' }
@@ -184,22 +187,21 @@
         if ($selectedTrace) {
             isLoading = true;
             console.log('[Trace] 필터링된 데이터 요청 중...');
+            const filterStart = performance.now();
             
             try {
                 const result = await filterTraceData(fileNames[$selectedTrace], tracedata, $selectedTrace, $filtertrace);
                 if (result !== null) {
-                    console.log('[Trace] 필터링된 데이터 수신 완료');
+                    const filterEnd = performance.now();
+                    console.log(`[Performance] filterTraceData 완료: ${(filterEnd - filterStart).toFixed(2)}ms`);
+                    
                     filteredData[$selectedTrace] = result[$selectedTrace];
                     
-                    // 필터된 데이터의 opcode, iotype 별 count 분석
-                    const data = result[$selectedTrace].data;   
-                    // 데이터 변경 후 UI 업데이트를 위한 tick 대기
+                    // ⚡ 성능 최적화: tick만 대기하고 인위적 delay 제거
                     await tick();
                     
-                    // 차트 렌더링을 위한 추가 지연
-                    console.log('[Trace] 차트 렌더링 대기 중...');
-                    await delay(500);
-                    console.log('[Trace] 차트 렌더링 대기 완료');
+                    const totalEnd = performance.now();
+                    console.log(`[Performance] 전체 필터링+렌더링: ${(totalEnd - filterStart).toFixed(2)}ms`);
                 }
                 return true;
             } catch (error) {
@@ -317,10 +319,53 @@
             const cacheKey = `traceData_${id}_${data.logfolder}_${data.logname}`;
             
             // IndexedDB에서 캐시된 데이터 불러오기
-            let cached = await get(cacheKey);
-            if (cached) {
-                tracedata = deserializeBigInt(cached);
-            } else {
+            let cached = null;
+            try {
+                cached = await get(cacheKey);
+            } catch (cacheError) {
+                console.warn('[Performance] 캐시 읽기 실패, 원본 데이터 로드:', cacheError);
+            }
+            
+            if (cached && cached.ufs && cached.block) {
+                try {
+                    console.log('[Performance] 캐시된 데이터 발견, Arrow Table 복원 중...');
+                    const restoreStart = performance.now();
+                    
+                    // Arrow IPC 바이너리에서 Table 복원
+                    const ufsBytes = cached.ufs.bytes instanceof Uint8Array 
+                        ? cached.ufs.bytes 
+                        : new Uint8Array(cached.ufs.bytes);
+                    const blockBytes = cached.block.bytes instanceof Uint8Array
+                        ? cached.block.bytes
+                        : new Uint8Array(cached.block.bytes);
+                    
+                    const ufsTable = tableFromIPC(ufsBytes);
+                    const blockTable = tableFromIPC(blockBytes);
+                    
+                    tracedata = {
+                        ufs: {
+                            table: ufsTable,
+                            total_count: cached.ufs.total_count,
+                            sampled_count: cached.ufs.sampled_count,
+                            sampling_ratio: cached.ufs.sampling_ratio
+                        },
+                        block: {
+                            table: blockTable,
+                            total_count: cached.block.total_count,
+                            sampled_count: cached.block.sampled_count,
+                            sampling_ratio: cached.block.sampling_ratio
+                        }
+                    };
+                    
+                    const restoreEnd = performance.now();
+                    console.log(`[Performance] 캐시 복원 완료: ${(restoreEnd - restoreStart).toFixed(2)}ms`);
+                } catch (restoreError) {
+                    console.warn('[Performance] 캐시 복원 실패, 원본 데이터 로드:', restoreError);
+                    cached = null; // 복원 실패 시 원본 데이터 로드하도록
+                }
+            }
+            
+            if (!cached) {
                 const result: any = await invoke('readtrace', {
                     logfolder: data.logfolder,
                     logname: data.logname,
@@ -353,23 +398,47 @@
                 const ufsTable = tableFromIPC(ufsData);
                 const blockTable = tableFromIPC(blockData);
                 
+                console.log('[Performance] Arrow Table 생성 완료');
+                
+                // ⚡ 성능 최적화: Arrow Table 직접 사용, toArray() 제거
                 tracedata = {
                     ufs: {
-                        data: ufsTable.toArray(),
+                        table: ufsTable,  // Table 객체 저장
                         total_count: result.ufs.total_count,
                         sampled_count: result.ufs.sampled_count,
                         sampling_ratio: result.ufs.sampling_ratio
                     },
                     block: {
-                        data: blockTable.toArray(),
+                        table: blockTable,  // Table 객체 저장
                         total_count: result.block.total_count,
                         sampled_count: result.block.sampled_count,
                         sampling_ratio: result.block.sampling_ratio
                     }
                 };
                 
-                // IndexedDB에 데이터 저장
-                await set(cacheKey, serializeBigInt(tracedata));
+                // ⚡ 최적화: Arrow IPC 바이너리를 직접 캐싱 (직렬화 불필요)
+                const cacheStart = performance.now();
+                try {
+                    await set(cacheKey, {
+                        ufs: {
+                            bytes: ufsData,  // Uint8Array 직접 저장 (IndexedDB는 TypedArray 지원)
+                            total_count: result.ufs.total_count,
+                            sampled_count: result.ufs.sampled_count,
+                            sampling_ratio: result.ufs.sampling_ratio
+                        },
+                        block: {
+                            bytes: blockData,  // Uint8Array 직접 저장
+                            total_count: result.block.total_count,
+                            sampled_count: result.block.sampled_count,
+                            sampling_ratio: result.block.sampling_ratio
+                        }
+                    });
+                    const cacheEnd = performance.now();
+                    console.log(`[Performance] Arrow IPC 바이너리 캐싱 완료: ${(cacheEnd - cacheStart).toFixed(2)}ms`);
+                } catch (cacheError) {
+                    console.warn('[Performance] 캐싱 실패 (무시하고 계속):', cacheError);
+                    // 캐싱 실패해도 계속 진행
+                }
             }
             
             // 데이터 저장 및 초기화
@@ -559,8 +628,9 @@
                         <Card.Title>{$selectedTrace.toUpperCase()} Pattern</Card.Title>
                     </Card.Header>
                     <Card.Content>
-                        <ScatterCharts
+                        <ScatterChartsDeck
                             key={chartKey}
+                            table={currentFilteredTable}
                             data={currentFiltered}
                             xAxisKey='time'
                             yAxisKey={patternAxis.key}
@@ -578,8 +648,9 @@
                         <Card.Title>{$selectedTrace.toUpperCase()} QueueDepth</Card.Title>
                     </Card.Header>
                     <Card.Content>
-                        <ScatterCharts
+                        <ScatterChartsDeck
                             key={chartKey}
+                            table={currentFilteredTable}
                             data={currentFiltered}
                             xAxisKey='time'
                             yAxisKey='qd'
@@ -598,9 +669,9 @@
                     </Card.Header>
                     <Card.Content>
                         {#if $selectedTrace === 'ufs'} 
-                        <CPUTabs key={chartKey} traceType={$selectedTrace} data={filteredData.ufs.data} legendKey='cpu' />
+                        <CPUTabs key={chartKey} traceType={$selectedTrace} table={filteredData.ufs?.table} data={filteredData.ufs?.data} legendKey='cpu' />
                         {:else if $selectedTrace === 'block'}
-                        <CPUTabs key={chartKey} traceType={$selectedTrace} data={filteredData.block.data} legendKey='cpu' />
+                        <CPUTabs key={chartKey} traceType={$selectedTrace} table={filteredData.block?.table} data={filteredData.block?.data} legendKey='cpu' />
                         {/if}                        
                     </Card.Content>
                 </Card.Root>
@@ -631,6 +702,7 @@
                             key={chartKey}
                             traceType={$selectedTrace}
                             filteredData={currentFiltered}
+                            filteredTable={currentFilteredTable}
                             legendKey={legendKey}
                             thresholds={thresholds}
                             dtocStat={currentStats.dtocStat}

@@ -255,6 +255,8 @@ fn batch_to_ipc_bytes(batch: &arrow::record_batch::RecordBatch) -> Result<Vec<u8
 
 // RecordBatch를 Gzip 압축된 Arrow IPC 바이트로 변환하는 헬퍼
 fn batch_to_compressed_ipc_bytes(batch: &arrow::record_batch::RecordBatch) -> Result<(Vec<u8>, usize, f64), String> {
+    let compress_start = std::time::Instant::now();
+    
     // 먼저 Arrow IPC 바이트 생성
     let mut ipc_buf = Vec::new();
     let mut writer = StreamWriter::try_new(&mut ipc_buf, batch.schema().as_ref()).map_err(|e| e.to_string())?;
@@ -262,25 +264,44 @@ fn batch_to_compressed_ipc_bytes(batch: &arrow::record_batch::RecordBatch) -> Re
     writer.finish().map_err(|e| e.to_string())?;
     
     let original_size = ipc_buf.len();
+    let ipc_time = compress_start.elapsed();
     
-    // Gzip 압축 적용
-    let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
-    encoder.write_all(&ipc_buf).map_err(|e| e.to_string())?;
-    let compressed_bytes = encoder.finish().map_err(|e| e.to_string())?;
-    let compressed_size = compressed_bytes.len();
+    // ⚡ 압축 임계값: 10KB 이하는 압축하지 않음 (오버헤드가 더 큼)
+    const COMPRESSION_THRESHOLD: usize = 10 * 1024; // 10KB
     
-    // 압축률 계산
-    let compression_ratio = if original_size > 0 {
-        compressed_size as f64 / original_size as f64
+    let (compressed_bytes, compressed_size, compression_ratio) = if original_size < COMPRESSION_THRESHOLD {
+        println!("⏭️  압축 건너뜀 ({}KB < 10KB 임계값)", original_size / 1024);
+        let ratio = 1.0;
+        (ipc_buf.clone(), original_size, ratio)
     } else {
-        1.0
+        // ⚡ Gzip 압축 적용 (fast 레벨: 압축률 약간 낮지만 3-5배 빠름)
+        let compress_start_inner = std::time::Instant::now();
+        let mut encoder = GzEncoder::new(Vec::new(), Compression::fast());
+        encoder.write_all(&ipc_buf).map_err(|e| e.to_string())?;
+        let compressed = encoder.finish().map_err(|e| e.to_string())?;
+        let compress_time = compress_start_inner.elapsed();
+        
+        let comp_size = compressed.len();
+        let ratio = if original_size > 0 {
+            comp_size as f64 / original_size as f64
+        } else {
+            1.0
+        };
+        
+        println!("⚡ Gzip(fast) 압축: {} -> {} bytes ({:.1}% 감소, {:.1}:1, {}ms)", 
+                 original_size, 
+                 comp_size,
+                 (1.0 - ratio) * 100.0,
+                 1.0 / ratio,
+                 compress_time.as_millis());
+        
+        (compressed, comp_size, ratio)
     };
     
-    println!("Gzip 압축 효과: {} -> {} bytes ({:.1}% 감소, 압축비: {:.1}:1)", 
-             original_size, 
-             compressed_size,
-             (1.0 - compression_ratio) * 100.0,
-             1.0 / compression_ratio);
+    let total_time = compress_start.elapsed();
+    println!("📊 [Performance] IPC 변환: {}ms, 총 시간: {}ms", 
+             ipc_time.as_millis(), 
+             total_time.as_millis());
     
     Ok((compressed_bytes, original_size, compression_ratio))
 }

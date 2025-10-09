@@ -1,4 +1,5 @@
 use crate::trace::{Block, BLOCK_CACHE, UFS, UFS_CACHE};
+use rayon::prelude::*;
 
 // 공통 필터링 로직 구현
 // UFS 데이터 필터링 함수
@@ -72,45 +73,77 @@ pub fn filter_ufs_data(
         }
     };
 
-    // 시간 필터링
+    // ⚡ 병렬 시간 필터링 (데이터 크기에 따라 병렬/순차 선택)
+    let data_size = cached_ufs_list.len();
+    let use_parallel = data_size > 10000; // 10K 이상일 때만 병렬 처리
+    
     let time_filtered: Vec<UFS> = if let (Some(t_from), Some(t_to)) = (time_from, time_to) {
         if t_from == 0.0 && t_to == 0.0 {
             cached_ufs_list
         } else {
-            cached_ufs_list
-                .into_iter()
-                .filter(|ufs| ufs.time >= t_from && ufs.time <= t_to)
-                .collect()
+            if use_parallel {
+                println!("⚡ [Performance] UFS 병렬 시간 필터링: {} 레코드", data_size);
+                cached_ufs_list
+                    .into_par_iter()
+                    .filter(|ufs| ufs.time >= t_from && ufs.time <= t_to)
+                    .collect()
+            } else {
+                cached_ufs_list
+                    .into_iter()
+                    .filter(|ufs| ufs.time >= t_from && ufs.time <= t_to)
+                    .collect()
+            }
         }
     } else {
         cached_ufs_list
     };
 
-    // 추가 필드 기반 필터링
+    // ⚡ 병렬 필드 필터링
     let filtered = if let (Some(v_from), Some(v_to)) = (col_from, col_to) {
         if v_from == 0.0 && v_to == 0.0 {
             time_filtered
         } else {
-            time_filtered
-                .into_iter()
-                .filter(|ufs| {
-                    let value = match zoom_column {
-                        "lba" => ufs.lba as f64,
-                        "dtoc" => ufs.dtoc,
-                        "ctoc" => ufs.ctoc,
-                        "ctod" => ufs.ctod,
-                        "qd" => ufs.qd as f64,
-                        "cpu" => ufs.cpu as f64,
-                        _ => return false, // 지원하지 않는 컬럼
-                    };
-                    value >= v_from && value <= v_to
-                })
-                .collect()
+            let filtered_size = time_filtered.len();
+            if use_parallel && filtered_size > 10000 {
+                println!("⚡ [Performance] UFS 병렬 필드 필터링 ({}): {} 레코드", zoom_column, filtered_size);
+                time_filtered
+                    .into_par_iter()
+                    .filter(|ufs| {
+                        let value = match zoom_column {
+                            "lba" => ufs.lba as f64,
+                            "dtoc" => ufs.dtoc,
+                            "ctoc" => ufs.ctoc,
+                            "ctod" => ufs.ctod,
+                            "qd" => ufs.qd as f64,
+                            "cpu" => ufs.cpu as f64,
+                            _ => return false, // 지원하지 않는 컬럼
+                        };
+                        value >= v_from && value <= v_to
+                    })
+                    .collect()
+            } else {
+                time_filtered
+                    .into_iter()
+                    .filter(|ufs| {
+                        let value = match zoom_column {
+                            "lba" => ufs.lba as f64,
+                            "dtoc" => ufs.dtoc,
+                            "ctoc" => ufs.ctoc,
+                            "ctod" => ufs.ctod,
+                            "qd" => ufs.qd as f64,
+                            "cpu" => ufs.cpu as f64,
+                            _ => return false, // 지원하지 않는 컬럼
+                        };
+                        value >= v_from && value <= v_to
+                    })
+                    .collect()
+            }
         }
     } else {
         time_filtered
     };
 
+    println!("✅ [Performance] UFS 필터링 완료: {} -> {} 레코드", data_size, filtered.len());
     Ok(filtered)
 }
 
@@ -185,44 +218,76 @@ pub fn filter_block_data(
         }
     };
 
-    // 시간 필터링
+    // ⚡ 병렬 시간 필터링 (데이터 크기에 따라 병렬/순차 선택)
+    let data_size = cached_block_list.len();
+    let use_parallel = data_size > 10000; // 10K 이상일 때만 병렬 처리
+    
     let time_filtered: Vec<Block> = if let (Some(t_from), Some(t_to)) = (time_from, time_to) {
         if t_from == 0.0 && t_to == 0.0 {
             cached_block_list
         } else {
-            cached_block_list
-                .into_iter()
-                .filter(|block| block.time >= t_from && block.time <= t_to)
-                .collect()
+            if use_parallel {
+                println!("⚡ [Performance] Block 병렬 시간 필터링: {} 레코드", data_size);
+                cached_block_list
+                    .into_par_iter()
+                    .filter(|block| block.time >= t_from && block.time <= t_to)
+                    .collect()
+            } else {
+                cached_block_list
+                    .into_iter()
+                    .filter(|block| block.time >= t_from && block.time <= t_to)
+                    .collect()
+            }
         }
     } else {
         cached_block_list
     };
 
-    // 추가 필드 기반 필터링
+    // ⚡ 병렬 필드 필터링
     let filtered = if let (Some(v_from), Some(v_to)) = (col_from, col_to) {
         if v_from == 0.0 && v_to == 0.0 {
             time_filtered
         } else {
-            time_filtered
-                .into_iter()
-                .filter(|block| {
-                    let value: f64 = match zoom_column {
-                        "sector" => block.sector as f64,
-                        "dtoc" => block.dtoc,
-                        "ctoc" => block.ctoc,
-                        "ctod" => block.ctod,
-                        "qd" => block.qd as f64,
-                        "cpu" => block.cpu as f64,
-                        _ => return false, // 지원하지 않는 컬럼
-                    };
-                    value >= v_from && value <= v_to
-                })
-                .collect()
+            let filtered_size = time_filtered.len();
+            if use_parallel && filtered_size > 10000 {
+                println!("⚡ [Performance] Block 병렬 필드 필터링 ({}): {} 레코드", zoom_column, filtered_size);
+                time_filtered
+                    .into_par_iter()
+                    .filter(|block| {
+                        let value: f64 = match zoom_column {
+                            "sector" => block.sector as f64,
+                            "dtoc" => block.dtoc,
+                            "ctoc" => block.ctoc,
+                            "ctod" => block.ctod,
+                            "qd" => block.qd as f64,
+                            "cpu" => block.cpu as f64,
+                            _ => return false, // 지원하지 않는 컬럼
+                        };
+                        value >= v_from && value <= v_to
+                    })
+                    .collect()
+            } else {
+                time_filtered
+                    .into_iter()
+                    .filter(|block| {
+                        let value: f64 = match zoom_column {
+                            "sector" => block.sector as f64,
+                            "dtoc" => block.dtoc,
+                            "ctoc" => block.ctoc,
+                            "ctod" => block.ctod,
+                            "qd" => block.qd as f64,
+                            "cpu" => block.cpu as f64,
+                            _ => return false, // 지원하지 않는 컬럼
+                        };
+                        value >= v_from && value <= v_to
+                    })
+                    .collect()
+            }
         }
     } else {
         time_filtered
     };
 
+    println!("✅ [Performance] Block 필터링 완료: {} -> {} 레코드", data_size, filtered.len());
     Ok(filtered)
 }

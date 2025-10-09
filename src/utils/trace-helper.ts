@@ -151,15 +151,20 @@ export async function filterTraceData(logname: string, traceData: any, selectedT
     
     const ufsTable = tableFromIPC(ufsData);
     const blockTable = tableFromIPC(blockData);
+    
+    // ⚡ 성능 최적화: Arrow Table 직접 사용
+    console.log('[Performance] filterTraceData 완료 - toArray() 호출 없음');
     const tracedata = {
         ufs: {
-            data: ufsTable.toArray(),
+            table: ufsTable,  // Arrow Table 객체 (ScatterChartsDeck용)
+            data: null,       // 필요시 별도로 변환 (CPUTabs 등 레거시 컴포넌트용)
             total_count: result.ufs.total_count,
             sampled_count: result.ufs.sampled_count,
             sampling_ratio: result.ufs.sampling_ratio
         },
         block: {
-            data: blockTable.toArray(),
+            table: blockTable,  // Arrow Table 객체
+            data: null,         // 필요시 별도로 변환
             total_count: result.block.total_count,
             sampled_count: result.block.sampled_count,
             sampling_ratio: result.block.sampling_ratio

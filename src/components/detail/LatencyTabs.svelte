@@ -4,7 +4,8 @@
     
     interface LatencyTabsProps {
         traceType: string;
-        filteredData: any[];
+        filteredData?: any[];  // 호환성용
+        filteredTable?: any;   // Arrow Table 객체
         legendKey: string;
         thresholds: string[];
         dtocStat: any;
@@ -15,6 +16,7 @@
     let { 
         traceType = '', 
         filteredData = [], 
+        filteredTable = null,
         legendKey = 'opcode', 
         thresholds = [], 
         dtocStat = {}, 
@@ -33,7 +35,8 @@
     </div>
     <Tabs.Content value="dtoc" class="border-none p-0 outline-none">
         <TabContent 
-            data={filteredData} 
+            data={filteredData}
+            table={filteredTable}
             traceType={traceType}
             columnType="dtoc" 
             {legendKey}
@@ -43,7 +46,8 @@
     </Tabs.Content>
     <Tabs.Content value="ctod" class="border-none p-0 outline-none">
         <TabContent 
-            data={filteredData} 
+            data={filteredData}
+            table={filteredTable}
             traceType={traceType}
             columnType="ctod" 
             {legendKey}
@@ -53,7 +57,8 @@
     </Tabs.Content>
     <Tabs.Content value="ctoc" class="border-none p-0 outline-none">
         <TabContent 
-            data={filteredData} 
+            data={filteredData}
+            table={filteredTable}
             traceType={traceType}
             columnType="ctoc" 
             {legendKey}
