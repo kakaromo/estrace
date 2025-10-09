@@ -47,6 +47,9 @@
   let legendshow = $state(true);
   let prevData: any = null;
   
+  // 범례 필터링 상태 (각 범례 항목의 표시/숨김 상태)
+  let hiddenLegends = $state(new Set<string>());
+  
   // Y축 타입 판단 (latency/dtoc/ctod/ctoc: 소수점 3자리, cpu: -1~8 고정)
   let isLatencyAxis = $derived(
     ycolumn === 'dtoc' ||
@@ -66,9 +69,12 @@
   let canvas: HTMLCanvasElement;
   let resizeObserver: ResizeObserver;
   
-  // 데이터 캐싱을 위한 변수
-  let transformedDataCache: any[] = [];
+  // ⚡ 데이터 캐싱을 위한 변수 (일반 변수로 선언 - Svelte 반응성 제거)
+  // deck.gl에 전달되는 데이터는 반응성이 필요 없음 (수백만 객체 Proxy 래핑 방지)
+  let transformedDataCache: any[] = []; // 필터링되지 않은 전체 데이터
+  let filteredDataCache: any[] = []; // 범례 필터링이 적용된 데이터
   let lastDataLength = 0;
+  let lastHiddenLegendsSize = 0;
   
   // 초기화 재시도 관련
   let initRetryCount = 0;
@@ -96,6 +102,26 @@
   let originalDataBounds = { xMin: 0, xMax: 100, yMin: 0, yMax: 100 }; // 원본 범위 저장
   let containerWidth = $state(800);
   let containerHeight = $state(600);
+  
+  // ⚡ bounds 캐시 (transformDataForDeck에서 계산됨)
+  let cachedBounds = { xMin: 0, xMax: 100, yMin: 0, yMax: 100 };
+  
+  // ⚡ 스케일 파라미터 (getPosition에서 실시간 계산용)
+  let scaleParams: {
+    xOffset: number;
+    yOffset: number;
+    xScale: number;
+    yScale: number;
+    xMin: number;
+    yMin: number;
+  } = {
+    xOffset: 0,
+    yOffset: 0,
+    xScale: 1,
+    yScale: 1,
+    xMin: 0,
+    yMin: 0
+  };
 
   // 드래그 선택 상태
   let isDragging = $state(false);
@@ -256,76 +282,48 @@
     return color;
   }
 
-  // ⚡ 범례 캐시
-  let legendItemsCache: Record<string, number[]> = {};
+  // ⚡ 범례 캐시 (transformDataForDeck에서 생성됨)
+  let legendItemsCache: Array<{label: string; color: number[]}> = [];
   let legendCacheKey: string = '';
 
-  // ⚡ 최적화: 범례 아이템 가져오기 (캐싱)
+  // ⚡ 최적화: 범례 아이템 가져오기 (CPU는 고정 범례, 나머지는 unique 추출)
+  // ⚡ 범례 아이템 반환 (transformDataForDeck에서 이미 생성됨)
   function getLegendItems(): Record<string, number[]> {
-    if (!transformedDataCache || transformedDataCache.length === 0) {
-      return {};
+    // Array<{label, color}> → Record<string, number[]> 변환
+    const result: Record<string, number[]> = {};
+    for (const item of legendItemsCache) {
+      result[item.label] = item.color;
+    }
+    return result;
+  }
+
+  // 범례 항목 토글 함수
+  function toggleLegend(legend: string) {
+    if (hiddenLegends.has(legend)) {
+      hiddenLegends.delete(legend);
+    } else {
+      hiddenLegends.add(legend);
+    }
+    // Set을 새로 생성하여 반응성 트리거
+    hiddenLegends = new Set(hiddenLegends);
+    
+    // 필터링된 데이터 업데이트
+    applyLegendFilter();
+    
+    // 차트 업데이트
+    if (deckInstance) {
+      updateChart();
+    }
+  }
+
+  // 범례 필터를 적용하여 filteredDataCache 생성
+  function applyLegendFilter() {
+    if (hiddenLegends.size === 0) {
+      filteredDataCache = transformedDataCache;
+      return;
     }
     
-    // ⚡ 캐시 키 생성 (데이터 길이 + legendKey)
-    const cacheKey = `${transformedDataCache.length}-${legendKey}`;
-    if (cacheKey === legendCacheKey && Object.keys(legendItemsCache).length > 0) {
-      return legendItemsCache;
-    }
-    
-    const legendItems: Record<string, number[]> = {};
-    
-    // ⚡ 최적화: Set으로 중복 체크 (더 빠름)
-    const seenLegends = new Set<string>();
-    
-    for (let i = 0; i < transformedDataCache.length; i++) {
-      const item = transformedDataCache[i];
-      if (item.legend && !seenLegends.has(item.legend)) {
-        seenLegends.add(item.legend);
-        legendItems[item.legend] = item.color;
-      }
-    }
-    
-    // ⚡ 정렬 (캐시에 저장)
-    const sortedKeys = Object.keys(legendItems).sort((a, b) => {
-      const prefixOrder: any = {
-        'R': 1, // Read
-        'W': 2, // Write
-        'D': 3, // Discard
-        'F': 4, // Flush
-        '0': 5  // 0x로 시작하는 UFS 명령어
-      };
-      
-      const prefixA = a.toLowerCase().startsWith('0x') ? '0' : a[0].toUpperCase();
-      const prefixB = b.toLowerCase().startsWith('0x') ? '0' : b[0].toUpperCase();
-      
-      if (prefixA !== prefixB) {
-        const orderA = prefixOrder[prefixA] || 999;
-        const orderB = prefixOrder[prefixB] || 999;
-        return orderA - orderB;
-      }
-      
-      if (a.toLowerCase().startsWith('0x') && b.toLowerCase().startsWith('0x')) {
-        const valueA = parseInt(a.slice(2), 16);
-        const valueB = parseInt(b.slice(2), 16);
-        return valueA - valueB;
-      }
-      
-      const numA = parseInt((a.match(/\d+/) || ['0'])[0]);
-      const numB = parseInt((b.match(/\d+/) || ['0'])[0]);
-      return numA - numB;
-    });
-    
-    const sortedLegendItems: Record<string, number[]> = {};
-    for (let i = 0; i < sortedKeys.length; i++) {
-      const key = sortedKeys[i];
-      sortedLegendItems[key] = legendItems[key];
-    }
-    
-    // ⚡ 캐시 저장
-    legendItemsCache = sortedLegendItems;
-    legendCacheKey = cacheKey;
-    
-    return sortedLegendItems;
+    filteredDataCache = transformedDataCache.filter(item => !hiddenLegends.has(item.legend));
   }
 
   // ⚡ 최적화: action 필터 로직을 별도 함수로 분리
@@ -352,19 +350,29 @@
     
     if (!rawData || rawData.length === 0) {
       transformedDataCache = [];
+      filteredDataCache = [];
       lastDataLength = 0;
+      legendItemsCache = [];
+      legendCacheKey = '';
       return [];
     }
     
-    // ⚡ 캐시 히트: 데이터가 변경되지 않았으면 캐시 반환
-    if (rawData === prevData && transformedDataCache.length > 0) {
+    // ⚡ 캐시 히트: 데이터가 변경되지 않았고 hiddenLegends도 변경되지 않았으면 캐시 반환
+    if (rawData === prevData && transformedDataCache.length > 0 && lastHiddenLegendsSize === hiddenLegends.size) {
       console.log('[deck.gl] 캐시 사용, 변환 건너뜀');
       return transformedDataCache;
     }
     
-    // ⚡ 최적화: 단일 패스로 필터링+변환 + 배치 처리
+    lastHiddenLegendsSize = hiddenLegends.size;
+    
+    // ⚡ 최적화: 단일 패스로 필터링+변환+범례 추출+bounds 계산
     const result: any[] = [];
+    const legendSet = new Map<string, number[]>(); // 범례 unique 추출
     const dataLength = rawData.length;
+    
+    // ⚡ bounds 계산 (단일 패스)
+    let xMin = Infinity, xMax = -Infinity;
+    let yMin = Infinity, yMax = -Infinity;
     
     // ⚡ 대용량 데이터 최적화: 배치 처리로 UI 블로킹 방지
     const BATCH_SIZE = 50000; // 5만개씩 처리
@@ -395,13 +403,14 @@
       
       // ⚡ 범례 문자열 변환 (한 번만)
       const legendStr = String(item[lKey]);
+      const legendColor = getColorForLegend(legendStr);
       
       // ⚡ 변환 및 추가 (스프레드 연산자 제거 - 가장 느림)
       result.push({
         position: [x, y],
         originalX: x,
         originalY: y,
-        color: getColorForLegend(legendStr),
+        color: legendColor,
         legend: legendStr,
         // 필요한 필드만 복사
         action: item.action,
@@ -414,6 +423,17 @@
         size: item.size
       });
       
+      // ⚡ 범례 unique 추출 (단일 패스로 처리)
+      if (legendStr && !legendSet.has(legendStr)) {
+        legendSet.set(legendStr, legendColor);
+      }
+      
+      // ⚡ bounds 계산 (단일 패스)
+      if (x < xMin) xMin = x;
+      if (x > xMax) xMax = x;
+      if (y < yMin) yMin = y;
+      if (y > yMax) yMax = y;
+      
       // ⚡ 배치 진행 로그 (대용량 데이터만)
       processedCount++;
       if (dataLength > 100000 && processedCount % BATCH_SIZE === 0) {
@@ -424,8 +444,55 @@
     transformedDataCache = result;
     lastDataLength = dataLength;
     
+    // ⚡ bounds 캐시 업데이트 (CPU 차트는 Y축 고정)
+    if (isCpuAxis) {
+      yMin = -1;
+      yMax = 8;
+    }
+    
+    // 전역 bounds 저장 (calculateDataBounds 호출 불필요)
+    cachedBounds = {
+      xMin: xMin === Infinity ? 0 : xMin,
+      xMax: xMax === -Infinity ? 100 : xMax,
+      yMin: yMin === Infinity ? 0 : yMin,
+      yMax: yMax === -Infinity ? 100 : yMax
+    };
+    
+    // ⚡ 범례 캐시 업데이트 (단일 패스에서 추출된 데이터 사용)
+    const newCacheKey = `${result.length}-${lKey}`;
+    if (newCacheKey !== legendCacheKey) {
+      const legendStart = performance.now();
+      
+      // CPU 차트는 0-31 정렬, 나머지는 알파벳 정렬
+      const isCPU = lKey === 'cpu';
+      const sortedLegends = Array.from(legendSet.keys()).sort((a, b) => {
+        if (isCPU) {
+          return Number(a) - Number(b);
+        }
+        
+        // UFS/Block: R, W, D, F, 0x... 순서
+        const order: Record<string, number> = { 'R': 0, 'W': 1, 'D': 2, 'F': 3 };
+        const aOrder = order[a] ?? (a.startsWith('0x') ? 4 : 5);
+        const bOrder = order[b] ?? (b.startsWith('0x') ? 4 : 5);
+        
+        if (aOrder !== bOrder) return aOrder - bOrder;
+        return a.localeCompare(b);
+      });
+      
+      legendItemsCache = sortedLegends.map(legend => ({
+        label: legend,
+        color: legendSet.get(legend)!
+      }));
+      legendCacheKey = newCacheKey;
+      
+      console.log(`[범례] 추출 완료: ${legendItemsCache.length}개 (${(performance.now() - legendStart).toFixed(2)}ms)`);
+    }
+    
+    // 범례 필터 적용
+    applyLegendFilter();
+    
     const transformEnd = performance.now();
-    console.log(`⚡ [Performance] transformDataForDeck: ${(transformEnd - transformStart).toFixed(2)}ms, 원본: ${dataLength}, 필터링됨: ${result.length}`);
+    console.log(`⚡ [Performance] transformDataForDeck: ${(transformEnd - transformStart).toFixed(2)}ms, 원본: ${dataLength}, 필터링됨: ${result.length}, 표시됨: ${filteredDataCache.length}`);
     
     return transformedDataCache;
   }
@@ -449,12 +516,10 @@
       radiusMaxPixels: symbolSize * 3,
       lineWidthMinPixels: 0.5,
       getPosition: (d: any) => {
-        const pos = d.position;
-        if (!Array.isArray(pos) || pos.length !== 2) {
-          console.error('[deck.gl] 잘못된 position:', pos);
-          return [0, 0];
-        }
-        return pos;
+        // ⚡ 실시간 스케일링 (데이터 복사 없이 직접 계산)
+        const x = scaleParams.xOffset + (d.originalX - scaleParams.xMin) * scaleParams.xScale;
+        const y = scaleParams.yOffset - (d.originalY - scaleParams.yMin) * scaleParams.yScale;
+        return [x, y];
       },
       getFillColor: (d: any) => [...d.color, 204] as [number, number, number, number],
       getLineColor: (d: any) => [...d.color.map((c: number) => Math.max(0, c - 30)), 255] as [number, number, number, number],
@@ -473,27 +538,38 @@
   }
 
   // 데이터 범위 계산
+  // ⚡ 최적화: originalX/Y 사용 + for 루프
   function calculateDataBounds(transformedData: any[]) {
     if (!transformedData || transformedData.length === 0) {
       return { xMin: 0, xMax: 100, yMin: 0, yMax: 100 };
     }
 
+    const boundsStart = performance.now();
+    
     let xMin = Infinity, xMax = -Infinity;
     let yMin = Infinity, yMax = -Infinity;
 
-    transformedData.forEach((d: any) => {
-      const [x, y] = d.position;
+    // ⚡ forEach → for 루프, position 배열 접근 제거
+    const len = transformedData.length;
+    for (let i = 0; i < len; i++) {
+      const d = transformedData[i];
+      const x = d.originalX;
+      const y = d.originalY;
+      
       if (x < xMin) xMin = x;
       if (x > xMax) xMax = x;
       if (y < yMin) yMin = y;
       if (y > yMax) yMax = y;
-    });
+    }
 
     // ⚡ CPU 차트는 Y축을 -1~8로 고정
     if (isCpuAxis) {
       yMin = -1;
       yMax = 8;
     }
+
+    const boundsEnd = performance.now();
+    console.log(`⚡ [Performance] calculateDataBounds: ${(boundsEnd - boundsStart).toFixed(2)}ms`);
 
     return { xMin, xMax, yMin, yMax };
   }
@@ -535,12 +611,9 @@
       return;
     }
 
-    // 변환된 데이터를 캐시에 저장 (리사이즈 시 사용)
-    transformedDataCache = transformedData;
-    lastDataLength = transformedData.length;
-    
-    const bounds = calculateDataBounds(transformedData);
-    console.log('[deck.gl] bounds:', bounds);
+    // filteredDataCache와 bounds는 transformDataForDeck 내부에서 이미 계산됨
+    const bounds = cachedBounds;
+    console.log('[deck.gl] bounds (cached):', bounds);
     
     // 초기 뷰 설정
     const rangeX = bounds.xMax - bounds.xMin;
@@ -575,22 +648,18 @@
     const actualChartWidth = width - PADDING_LEFT - PADDING_RIGHT;
     const actualChartHeight = height - PADDING_TOP - PADDING_BOTTOM;
     
-    // 데이터를 픽셀 공간으로 변환 (정규화)
-    const scaledData = transformedData.map(d => {
-      const normalizedX = (d.position[0] - bounds.xMin) / rangeX;
-      const normalizedY = (d.position[1] - bounds.yMin) / rangeY;
-      
-      const x = PADDING_LEFT + normalizedX * actualChartWidth;
-      const y = PADDING_TOP + (1 - normalizedY) * actualChartHeight; // Y축 반전
-      
-      return {
-        ...d,
-        position: [x, y]
-      };
-    });
+    // ⚡ 스케일 파라미터를 전역으로 저장 (getPosition에서 사용)
+    scaleParams = {
+      xOffset: PADDING_LEFT,
+      yOffset: PADDING_TOP + actualChartHeight,
+      xScale: actualChartWidth / rangeX,
+      yScale: actualChartHeight / rangeY,
+      xMin: bounds.xMin,
+      yMin: bounds.yMin
+    };
     
-    console.log('[deck.gl] 스케일링된 데이터 샘플 (처음 3개):', scaledData.slice(0, 3));
-    console.log('[deck.gl] 스케일링된 position 범위:', {
+    console.log('[deck.gl] 스케일 파라미터:', scaleParams);
+    console.log('[deck.gl] position 범위:', {
       x: [PADDING_LEFT, PADDING_LEFT + actualChartWidth],
       y: [PADDING_TOP, PADDING_TOP + actualChartHeight]
     });
@@ -610,7 +679,7 @@
       initialViewState: viewState,
       controller: false, // 모든 인터랙션 비활성화 (드래그, 줌 등)
 
-      layers: createLayers(scaledData),
+      layers: createLayers(filteredDataCache),
       onViewStateChange: ({viewState: newViewState}: any) => {
         // 차트 영역 경계
         const chartLeft = PADDING_LEFT;
@@ -716,8 +785,8 @@
     const actualChartWidth = newWidth - PADDING_LEFT - PADDING_RIGHT;
     const actualChartHeight = newHeight - PADDING_TOP - PADDING_BOTTOM;
 
-    // 캐시된 데이터를 새 크기로 다시 스케일링
-    const rescaledData = transformedDataCache.map(d => {
+    // 캐시된 데이터를 새 크기로 다시 스케일링 - filteredDataCache 사용
+    const rescaledData = filteredDataCache.map(d => {
       const normalizedX = (d.position[0] - dataBounds.xMin) / rangeX;
       const normalizedY = (d.position[1] - dataBounds.yMin) / rangeY;
 
@@ -765,12 +834,14 @@
       const arrayData = hasTable ? table.toArray() : data;
       const transformedData = transformDataForDeck(arrayData);
       
-      // 변환된 데이터를 캐시에 저장 (리사이즈 시 사용)
-      transformedDataCache = transformedData;
-      lastDataLength = transformedData.length;
+      // ⚡ dataBounds가 이미 설정되어 있지 않으면 cachedBounds 사용 (초기화 또는 리셋 시)
+      // zoomToSelection()에서 dataBounds를 설정했다면 그것을 유지
+      if (dataBounds.xMin === 0 && dataBounds.xMax === 100) {
+        dataBounds = cachedBounds;
+      }
       
-      const bounds = calculateDataBounds(transformedData);
-      dataBounds = bounds;
+      // 현재 dataBounds 사용 (줌된 범위 또는 전체 범위)
+      const bounds = dataBounds;
       
       // 데이터 범위 계산
       const rangeX = bounds.xMax - bounds.xMin;
@@ -780,22 +851,21 @@
       const actualChartWidth = containerWidth - PADDING_LEFT - PADDING_RIGHT;
       const actualChartHeight = containerHeight - PADDING_TOP - PADDING_BOTTOM;
       
-      // 데이터를 픽셀 공간으로 변환
-      const scaledData = transformedData.map(d => {
-        const normalizedX = (d.position[0] - bounds.xMin) / rangeX;
-        const normalizedY = (d.position[1] - bounds.yMin) / rangeY;
-        
-        const x = PADDING_LEFT + normalizedX * actualChartWidth;
-        const y = PADDING_TOP + (1 - normalizedY) * actualChartHeight;
-        
-        return {
-          ...d,
-          position: [x, y]
-        };
-      });
+      // ⚡ scaleParams 업데이트 (getPosition이 실시간으로 사용)
+      scaleParams = {
+        xOffset: PADDING_LEFT,
+        yOffset: PADDING_TOP + actualChartHeight,
+        xScale: actualChartWidth / rangeX,
+        yScale: actualChartHeight / rangeY,
+        xMin: bounds.xMin,
+        yMin: bounds.yMin
+      };
       
-      const layers = createLayers(scaledData);
-      console.log('[deck.gl] 새 layers 생성, data count:', scaledData.length);
+      console.log('[deck.gl] scaleParams 업데이트:', scaleParams, 'bounds:', bounds);
+      
+      // ⚡ getPosition이 실시간 계산하므로 filteredDataCache를 직접 전달
+      const layers = createLayers(filteredDataCache);
+      console.log('[deck.gl] 새 layers 생성, data count:', filteredDataCache.length);
       
       deckInstance.setProps({
         layers
@@ -830,9 +900,9 @@
 
   // X축 범위 설정 함수
   function openXAxisRangeDialog() {
-    const bounds = calculateDataBounds(transformDataForDeck(data));
-    inputXMin = bounds.xMin;
-    inputXMax = bounds.xMax;
+    // transformDataForDeck이 이미 호출되어 cachedBounds가 있음
+    inputXMin = cachedBounds.xMin;
+    inputXMax = cachedBounds.xMax;
     showXAxisRangeDialog = true;
   }
   
@@ -881,9 +951,9 @@
       return;
     }
     
-    const bounds = calculateDataBounds(transformDataForDeck(data));
-    inputYMin = bounds.yMin;
-    inputYMax = bounds.yMax;
+    // transformDataForDeck이 이미 호출되어 cachedBounds가 있음
+    inputYMin = cachedBounds.yMin;
+    inputYMax = cachedBounds.yMax;
     showYAxisRangeDialog = true;
   }
   
@@ -1072,7 +1142,7 @@
       // deck.gl의 controller 다시 활성화
       if (deckInstance) {
         deckInstance.setProps({
-          controller: true
+          controller: false
         });
       }
     }
@@ -1481,25 +1551,65 @@
       <ContextMenu.Item onclick={resetZoom}>
         Reset Zoom
       </ContextMenu.Item>
+      <ContextMenu.Separator />
+      <ContextMenu.Item onclick={() => legendshow = !legendshow}>
+        {legendshow ? '✓ Show Legend' : 'Show Legend'}
+      </ContextMenu.Item>
     </ContextMenu.Content>
   </ContextMenu.Root>
   
-  <!-- Legend -->
-  {#if legendshow && Object.keys(getLegendItems()).length > 0}
-    <div class="legend-container">
-      <div class="legend-title">{legendKey}</div>
-      <div class="legend-items">
-        {#each Object.entries(getLegendItems()) as [legend, color]}
-          <div class="legend-item">
-            <span 
-              class="legend-color" 
-              style="background-color: rgb({color[0]}, {color[1]}, {color[2]})"
-            ></span>
-            <span class="legend-label">{legend}</span>
+  <!-- Legend or Toggle Button -->
+  {#if transformedDataCache.length > 0}
+    {@const legendItems = getLegendItems()}
+    {#if Object.keys(legendItems).length > 0}
+      {#if legendshow}
+        <!-- Legend -->
+        <div class="legend-container">
+          <div class="legend-title">
+            {legendKey}
+            <button 
+              class="legend-close-button"
+              onclick={() => legendshow = false}
+              title="Hide Legend"
+            >
+              ×
+            </button>
           </div>
-        {/each}
-      </div>
-    </div>
+          <div class="legend-items">
+            {#each Object.entries(legendItems) as [legend, color]}
+              <div 
+                class="legend-item" 
+                class:legend-item-hidden={hiddenLegends.has(legend)}
+                onclick={() => toggleLegend(legend)}
+                onkeydown={(e) => e.key === 'Enter' && toggleLegend(legend)}
+                role="button"
+                tabindex="0"
+              >
+                <span 
+                  class="legend-color" 
+                  style="background-color: rgb({color[0]}, {color[1]}, {color[2]})"
+                ></span>
+                <span class="legend-label">{legend}</span>
+              </div>
+            {/each}
+          </div>
+        </div>
+      {:else}
+        <!-- Legend Toggle Button (범례가 꺼져있을 때) -->
+        <button 
+          class="legend-toggle-button"
+          onclick={() => legendshow = true}
+          title="Show Legend"
+        >
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <rect x="3" y="3" width="7" height="7" rx="1"></rect>
+            <line x1="14" y1="6.5" x2="21" y2="6.5"></line>
+            <rect x="3" y="14" width="7" height="7" rx="1"></rect>
+            <line x1="14" y1="17.5" x2="21" y2="17.5"></line>
+          </svg>
+        </button>
+      {/if}
+    {/if}
   {/if}
   </div>
 </div>
@@ -1677,6 +1787,8 @@
     border-radius: 4px;
     overflow-y: auto;
     box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
+    pointer-events: auto;
+    z-index: 20;
   }
 
   .legend-title {
@@ -1685,6 +1797,57 @@
     margin-bottom: 12px;
     padding-bottom: 8px;
     border-bottom: 1px solid #e5e7eb;
+    color: #374151;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+
+  .legend-close-button {
+    background: none;
+    border: none;
+    color: #9ca3af;
+    font-size: 20px;
+    line-height: 1;
+    cursor: pointer;
+    padding: 0;
+    width: 20px;
+    height: 20px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 4px;
+    transition: all 0.2s;
+  }
+
+  .legend-close-button:hover {
+    background-color: #f3f4f6;
+    color: #374151;
+  }
+
+  .legend-toggle-button {
+    position: absolute;
+    right: 10px;
+    top: 10px;
+    width: 40px;
+    height: 40px;
+    background: rgba(255, 255, 255, 0.95);
+    border: 1px solid #e0e0e0;
+    border-radius: 4px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+    transition: all 0.2s;
+    pointer-events: auto;
+    z-index: 20;
+    color: #6b7280;
+  }
+
+  .legend-toggle-button:hover {
+    background: white;
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.15);
     color: #374151;
   }
 
@@ -1703,11 +1866,21 @@
     cursor: pointer;
     padding: 4px;
     border-radius: 4px;
-    transition: background-color 0.2s;
+    transition: all 0.2s;
+    user-select: none;
   }
 
   .legend-item:hover {
     background-color: #f3f4f6;
+  }
+
+  .legend-item-hidden {
+    opacity: 0.4;
+    text-decoration: line-through;
+  }
+
+  .legend-item-hidden:hover {
+    opacity: 0.6;
   }
 
   .legend-color {
@@ -1716,6 +1889,11 @@
     border-radius: 50%;
     flex-shrink: 0;
     border: 1px solid rgba(0, 0, 0, 0.1);
+    transition: opacity 0.2s;
+  }
+
+  .legend-item-hidden .legend-color {
+    opacity: 0.3;
   }
 
   .legend-label {

@@ -81,6 +81,16 @@
     let islatency = $state(false);
     let issizestats = $state(false);
     
+    // 각 차트별 로딩 상태
+    let loadingStates = $state({
+        pattern: false,
+        rwd: false,
+        qd: false,
+        cpu: false,
+        latency: false,
+        sizestats: false
+    });
+    
     // UFS 통계 데이터
     let ufsStats = $state({
         dtocStat: null,
@@ -161,6 +171,48 @@
             };
         }
     })
+    
+    // RWD 차트 enable 시 통계 데이터 로드
+    $effect(() => {
+        (async () => {
+            if (isrwd && !loadingStates.rwd && !currentStats.dtocStat) {
+                loadingStates.rwd = true;
+                try {
+                    await loadStatsData();
+                } finally {
+                    loadingStates.rwd = false;
+                }
+            }
+        })();
+    });
+    
+    // Size Stats enable 시 통계 데이터 로드
+    $effect(() => {
+        (async () => {
+            if (issizestats && !loadingStates.sizestats && !currentStats.sizeCounts) {
+                loadingStates.sizestats = true;
+                try {
+                    await loadStatsData();
+                } finally {
+                    loadingStates.sizestats = false;
+                }
+            }
+        })();
+    });
+    
+    // Latency enable 시 통계 데이터 로드
+    $effect(() => {
+        (async () => {
+            if (islatency && !loadingStates.latency && !currentStats.dtocStat) {
+                loadingStates.latency = true;
+                try {
+                    await loadStatsData();
+                } finally {
+                    loadingStates.latency = false;
+                }
+            }
+        })();
+    });
 
     // BigInt 직렬화 처리를 위한 함수
     function serializeBigInt(data) {
@@ -365,19 +417,27 @@
             }
             
             if (!cached) {
+                const readtraceStart = performance.now();
                 const result: any = await invoke('readtrace', {
                     logfolder: data.logfolder,
                     logname: data.logname,
                     maxrecords: buffersize
                 });
+                const readtraceEnd = performance.now();
+                console.log(`[Performance] readtrace 완료: ${(readtraceEnd - readtraceStart).toFixed(2)}ms`);
                 
+                const parseStart = performance.now();
                 // Arrow IPC 데이터 직접 변환 (압축 없음)
                 const ufsData = new Uint8Array(result.ufs.bytes);
                 const blockData = new Uint8Array(result.block.bytes);
+                const parseEnd = performance.now();
+                console.log(`[Performance] Arrow IPC 데이터 변환 완료: ${(parseEnd - parseStart).toFixed(2)}ms`);
                 
+                const tableStart = performance.now();                
                 const ufsTable = tableFromIPC(ufsData);
                 const blockTable = tableFromIPC(blockData);
-                
+                const tableEnd = performance.now();
+                console.log(`[Performance] Arrow Table 생성 시간: ${(tableEnd - tableStart).toFixed(2)}ms`);                
                 console.log('[Performance] Arrow Table 생성 완료');
                 
                 // ⚡ 성능 최적화: Arrow Table 직접 사용, toArray() 제거
@@ -663,7 +723,11 @@
                         <Card.Title>{$selectedTrace.toUpperCase()} Read/Write/Discard Statistics</Card.Title>
                     </Card.Header>
                     <Card.Content>
-                        {#if $selectedTrace === 'ufs'} 
+                        {#if loadingStates.rwd}
+                        <div class="flex justify-center items-center h-64">
+                            <Circle2 color="#FF3E00" size="60" unit="px" />
+                        </div>
+                        {:else if $selectedTrace === 'ufs'} 
                         <RWDStats key={chartKey} data={ufsStats.continuous} tracetype={$selectedTrace} {isrwd} />
                         {:else if $selectedTrace === 'block'}
                         <RWDStats key={chartKey} data={blockStats.continuous} tracetype={$selectedTrace} {isrwd} />
@@ -678,6 +742,11 @@
                         <Card.Title>{$selectedTrace.toUpperCase()} Latency</Card.Title>
                     </Card.Header>
                     <Card.Content>
+                        {#if loadingStates.latency || !currentStats.dtocStat}
+                        <div class="flex justify-center items-center h-64">
+                            <Circle2 color="#FF3E00" size="60" unit="px" />
+                        </div>
+                        {:else}
                         <LatencyTabs
                             key={chartKey}
                             traceType={$selectedTrace}
@@ -689,6 +758,7 @@
                             ctodStat={currentStats.ctodStat}
                             ctocStat={currentStats.ctocStat}
                         />
+                        {/if}
                     </Card.Content>
                 </Card.Root>                                
                 {/if}
@@ -702,7 +772,11 @@
                         <Card.Description>Size별 Count</Card.Description>
                     </Card.Header>
                     <Card.Content>
-                        {#if currentStats.sizeCounts?.opcode_stats}
+                        {#if loadingStates.sizestats}
+                        <div class="flex justify-center items-center h-64">
+                            <Circle2 color="#FF3E00" size="60" unit="px" />
+                        </div>
+                        {:else if currentStats.sizeCounts?.opcode_stats}
                         <SizeStats key={chartKey} opcode_size_counts={currentStats.sizeCounts.opcode_stats} />
                         {/if}
                     </Card.Content>
