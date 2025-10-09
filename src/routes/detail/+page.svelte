@@ -43,7 +43,6 @@
         fetchTraceLengths
     } from '$utils/trace-helper';
     
-    import { handleCompressedData, logCompressionInfo } from '$utils/compression';
     import { arrowToWebGLData } from '$utils/webgl-optimizer';
     
     // 페이지 ID 및 기본 상태
@@ -372,28 +371,9 @@
                     maxrecords: buffersize
                 });
                 
-                // 압축 정보 로깅
-                logCompressionInfo(
-                    'UFS', 
-                    result.ufs.compressed, 
-                    result.ufs.original_size, 
-                    result.ufs.compressed_size, 
-                    result.ufs.compression_ratio
-                );
-                logCompressionInfo(
-                    'Block', 
-                    result.block.compressed, 
-                    result.block.original_size, 
-                    result.block.compressed_size, 
-                    result.block.compression_ratio
-                );
-
-                // 압축 해제 처리
-                const ufsRawData = new Uint8Array(result.ufs.bytes);
-                const blockRawData = new Uint8Array(result.block.bytes);
-                
-                const ufsData = handleCompressedData(ufsRawData, result.ufs.compressed);
-                const blockData = handleCompressedData(blockRawData, result.block.compressed);
+                // Arrow IPC 데이터 직접 변환 (압축 없음)
+                const ufsData = new Uint8Array(result.ufs.bytes);
+                const blockData = new Uint8Array(result.block.bytes);
                 
                 const ufsTable = tableFromIPC(ufsData);
                 const blockTable = tableFromIPC(blockData);
