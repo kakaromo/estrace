@@ -1,25 +1,19 @@
 use datafusion::prelude::*;
 use arrow::array::*;
-use std::io::Cursor;
-use flate2::write::GzEncoder;
-use flate2::Compression;
-use std::io::Write;
 
 /// WebGL용 전처리된 데이터 구조
 #[derive(serde::Serialize)]
 pub struct WebGLChartData {
     /// Float32 형식의 위치 데이터 [x1, y1, x2, y2, ...]
-    pub positions: Vec<u8>,  // 압축된 Float32Array 바이트
+    pub positions: Vec<u8>,  // Float32Array 바이트
     /// 각 포인트의 색상 인덱스 (legend용)
-    pub color_indices: Vec<u8>,  // 압축된 Uint8Array
+    pub color_indices: Vec<u8>,  // Uint8Array
     /// Legend 정보
     pub legends: Vec<String>,
     /// 데이터 bounds
     pub bounds: DataBounds,
     /// 총 포인트 수
     pub point_count: usize,
-    /// 압축 여부
-    pub compressed: bool,
 }
 
 #[derive(serde::Serialize)]
@@ -174,13 +168,9 @@ pub async fn prepare_webgl_data(
         .flat_map(|f| f.to_le_bytes())
         .collect();
     
-    // 압축
-    let compressed_positions = compress_data(&positions_bytes)?;
-    let compressed_indices = compress_data(&color_indices_u8)?;
-    
     Ok(WebGLChartData {
-        positions: compressed_positions,
-        color_indices: compressed_indices,
+        positions: positions_bytes,
+        color_indices: color_indices_u8,
         legends: legend_list,
         bounds: DataBounds {
             x_min,
@@ -189,13 +179,5 @@ pub async fn prepare_webgl_data(
             y_max,
         },
         point_count: positions_f32.len() / 2,
-        compressed: true,
     })
-}
-
-/// 데이터 압축 헬퍼
-fn compress_data(data: &[u8]) -> Result<Vec<u8>, String> {
-    let mut encoder = GzEncoder::new(Vec::new(), Compression::fast());
-    encoder.write_all(data).map_err(|e| e.to_string())?;
-    encoder.finish().map_err(|e| e.to_string())
 }
