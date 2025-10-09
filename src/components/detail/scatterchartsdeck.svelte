@@ -47,6 +47,14 @@
   let legendshow = $state(true);
   let prevData: any = null;
   
+  // Y축 타입 판단 (latency/dtoc/ctod/ctoc: 소수점 3자리, cpu: -1~8 고정)
+  let isLatencyAxis = $derived(
+    ycolumn === 'dtoc' ||
+    ycolumn === 'ctod' ||
+    ycolumn === 'ctoc'
+  );
+  let isCpuAxis = $derived(yAxisLabel?.toLowerCase().includes('cpu') || ycolumn?.toLowerCase().includes('cpu'));
+  
   // 로딩 상태 관리
   let isInitializing = $state(false);
   let loadingProgress = $state(0);
@@ -481,6 +489,12 @@
       if (y > yMax) yMax = y;
     });
 
+    // ⚡ CPU 차트는 Y축을 -1~8로 고정
+    if (isCpuAxis) {
+      yMin = -1;
+      yMax = 8;
+    }
+
     return { xMin, xMax, yMin, yMax };
   }
 
@@ -651,11 +665,14 @@
       },
       getTooltip: ({object}: any) => {
         if (object) {
+          // Y축 포맷 결정: latency는 소수점 3자리, 나머지는 0자리
+          const yFormat = isLatencyAxis ? object.originalY.toFixed(3) : object.originalY.toFixed(0);
+          
           return {
             html: `<div style="background: rgba(0, 0, 0, 0.8); color: white; padding: 8px 12px; border-radius: 4px; font-size: 12px; line-height: 1.5;">
               <strong>${legendKey}: ${object.legend}</strong><br/>
               ${xAxisName}: ${object.originalX.toFixed(2)}<br/>
-              ${yAxisName}: ${object.originalY.toFixed(0)}
+              ${yAxisName}: ${yFormat}
             </div>`,
             style: {
               backgroundColor: 'transparent',
@@ -858,6 +875,12 @@
 
   // Y축 범위 설정 함수
   function openYAxisRangeDialog() {
+    // ⚡ CPU 차트는 Y축 범위 고정 (-1~8)
+    if (isCpuAxis) {
+      console.log('[deck.gl] CPU 차트는 Y축 범위가 -1~8로 고정되어 있습니다.');
+      return;
+    }
+    
     const bounds = calculateDataBounds(transformDataForDeck(data));
     inputYMin = bounds.yMin;
     inputYMax = bounds.yMax;
@@ -1416,7 +1439,7 @@
                     font-size="12" 
                     fill="#666"
                   >
-                    {tick.toFixed(0)}
+                    {isLatencyAxis ? tick.toFixed(3) : tick.toFixed(0)}
                   </text>
                 </g>
               {/each}
