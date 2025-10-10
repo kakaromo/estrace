@@ -7,6 +7,7 @@ pub mod patterns;
 mod types;
 mod ufs;
 mod utils;
+mod constants;
 
 use once_cell::sync::Lazy;
 use regex::Regex;

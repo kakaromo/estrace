@@ -21,6 +21,7 @@ use crate::trace::{Block, LatencySummary, TraceParseResult, BLOCK_CACHE, UFS, UF
 use crate::trace::filter::{filter_block_data, filter_ufs_data};
 use crate::trace::block::block_to_record_batch;
 use crate::trace::ufs::ufs_to_record_batch;
+use crate::trace::constants::{UFS_DEBUG_LBA, MAX_VALID_UFS_LBA};
 
 use super::{ACTIVE_BLOCK_PATTERN, ACTIVE_UFS_PATTERN};
 
@@ -1266,11 +1267,12 @@ pub fn parse_ufs_trace_with_caps(caps: &regex::Captures) -> Result<UFS, String> 
     let size: u32 = size.unsigned_abs() / 4096;
 
     // LBA 처리 - 터무니 없는 값(최대값) 체크
-    let lba_str = caps.name("lba").map(|m| m.as_str()).unwrap_or("0");
-    let lba = if lba_str == "18446744073709551615" || lba_str == "4294967295" {
-        0 // 최대값은 0으로 처리
+    let raw_lba: u64 = caps["lba"].parse().unwrap_or(0);
+    // Debug 또는 비정상적으로 큰 LBA 값은 0으로 처리
+    let lba = if raw_lba == UFS_DEBUG_LBA || raw_lba > MAX_VALID_UFS_LBA {
+        0
     } else {
-        lba_str.parse().unwrap_or(0)
+        raw_lba
     };
 
     let opcode = caps

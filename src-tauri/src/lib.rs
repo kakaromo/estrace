@@ -34,6 +34,29 @@ pub fn run() {
     trace::initialize_patterns();
 
     tauri::Builder::default()
+        .setup(|app| {
+            // Ctrl/Cmd + Shift + I로 개발자 도구 토글
+            #[cfg(desktop)]
+            {
+                use tauri::Manager;
+                let window = app.get_webview_window("main").unwrap();
+                
+                app.handle().plugin(
+                    tauri_plugin_global_shortcut::Builder::new()
+                        .with_shortcut("CmdOrCtrl+Shift+I")?
+                        .with_handler(move |_app, _shortcut, _event| {
+                            if window.is_devtools_open() {
+                                let _ = window.close_devtools();
+                            } else {
+                                let _ = window.open_devtools();
+                            }
+                        })
+                        .build(),
+                )?;
+            }
+            
+            Ok(())
+        })
         .enable_macos_default_menu(false)
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_shell::init())
