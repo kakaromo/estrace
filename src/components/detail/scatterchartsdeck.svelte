@@ -76,6 +76,9 @@
   let lastDataLength = 0;
   let lastHiddenLegendsSize = 0;
   
+  // ⚡ 범례 표시를 위한 반응형 플래그 (transformedDataCache 변경 감지용)
+  let hasLegendData = $state(false);
+  
   // 초기화 재시도 관련
   let initRetryCount = 0;
   let maxInitRetries = 5;
@@ -490,6 +493,9 @@
     
     // 범례 필터 적용
     applyLegendFilter();
+    
+    // ⚡ 범례 데이터 플래그 업데이트 (반응형)
+    hasLegendData = legendItemsCache.length > 0;
     
     const transformEnd = performance.now();
     console.log(`⚡ [Performance] transformDataForDeck: ${(transformEnd - transformStart).toFixed(2)}ms, 원본: ${dataLength}, 필터링됨: ${result.length}, 표시됨: ${filteredDataCache.length}`);
@@ -1557,16 +1563,17 @@
       </ContextMenu.Item>
     </ContextMenu.Content>
   </ContextMenu.Root>
+  </div>
   
-  <!-- Legend or Toggle Button -->
-  {#if transformedDataCache.length > 0}
+  <!-- Legend or Toggle Button (최상위 레벨) -->
+  {#if hasLegendData}
     {@const legendItems = getLegendItems()}
-    {#if Object.keys(legendItems).length > 0}
-      {#if legendshow}
+    {@const legendKeys = Object.keys(legendItems)}
+      {#if legendshow === true}
         <!-- Legend -->
         <div class="legend-container">
           <div class="legend-title">
-            {legendKey}
+            <span>{legendKey} ({legendKeys.length})</span>
             <button 
               class="legend-close-button"
               onclick={() => legendshow = false}
@@ -1576,7 +1583,8 @@
             </button>
           </div>
           <div class="legend-items">
-            {#each Object.entries(legendItems) as [legend, color]}
+            {#each legendKeys as legend}
+              {@const color = legendItems[legend]}
               <div 
                 class="legend-item" 
                 class:legend-item-hidden={hiddenLegends.has(legend)}
@@ -1600,6 +1608,7 @@
           class="legend-toggle-button"
           onclick={() => legendshow = true}
           title="Show Legend"
+          aria-label="Show Legend"
         >
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <rect x="3" y="3" width="7" height="7" rx="1"></rect>
@@ -1609,9 +1618,9 @@
           </svg>
         </button>
       {/if}
-    {/if}
+  {:else}
+    {console.log('[범례 체크 0] hasLegendData가 false')}
   {/if}
-  </div>
 </div>
 
 <!-- Title Dialog -->
@@ -1755,6 +1764,7 @@
     bottom: 0;
     width: 100%;
     height: 100%;
+    overflow: visible; /* 범례가 잘리지 않도록 */
   }
 
   .deck-container {
@@ -1777,27 +1787,28 @@
 
   .legend-container {
     position: absolute;
-    right: 10px;
-    top: 10px;
-    width: 180px;
-    max-height: 580px;
-    padding: 12px;
+    right: 20px;
+    top: 50px;
+    width: 140px;
+    max-height: 400px;
+    padding: 0;
     background: rgba(255, 255, 255, 0.95);
-    border: 1px solid #e0e0e0;
-    border-radius: 4px;
-    overflow-y: auto;
-    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
+    border: 1px solid rgba(0, 0, 0, 0.1);
+    border-radius: 8px;
+    overflow: hidden;
+    box-shadow: 0 2px 12px rgba(0, 0, 0, 0.1);
     pointer-events: auto;
-    z-index: 20;
+    z-index: 1000;
+    backdrop-filter: blur(10px);
   }
 
   .legend-title {
     font-weight: 600;
-    font-size: 14px;
-    margin-bottom: 12px;
-    padding-bottom: 8px;
-    border-bottom: 1px solid #e5e7eb;
-    color: #374151;
+    font-size: 11px;
+    padding: 6px 10px;
+    background: linear-gradient(to bottom, #f8f9fa, #e9ecef);
+    border-bottom: 1px solid rgba(0, 0, 0, 0.08);
+    color: #495057;
     display: flex;
     justify-content: space-between;
     align-items: center;
@@ -1807,78 +1818,104 @@
     background: none;
     border: none;
     color: #9ca3af;
-    font-size: 20px;
+    font-size: 16px;
     line-height: 1;
     cursor: pointer;
     padding: 0;
-    width: 20px;
-    height: 20px;
+    width: 16px;
+    height: 16px;
     display: flex;
     align-items: center;
     justify-content: center;
-    border-radius: 4px;
-    transition: all 0.2s;
+    border-radius: 3px;
+    transition: all 0.15s;
   }
 
   .legend-close-button:hover {
-    background-color: #f3f4f6;
+    background-color: rgba(0, 0, 0, 0.05);
     color: #374151;
   }
 
   .legend-toggle-button {
     position: absolute;
-    right: 10px;
-    top: 10px;
-    width: 40px;
-    height: 40px;
+    right: 20px;
+    top: 50px;
+    width: 32px;
+    height: 32px;
     background: rgba(255, 255, 255, 0.95);
-    border: 1px solid #e0e0e0;
-    border-radius: 4px;
+    border: 1px solid rgba(0, 0, 0, 0.1);
+    border-radius: 6px;
     cursor: pointer;
     display: flex;
     align-items: center;
     justify-content: center;
-    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
-    transition: all 0.2s;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+    transition: all 0.15s;
     pointer-events: auto;
-    z-index: 20;
+    z-index: 1000;
     color: #6b7280;
+    backdrop-filter: blur(10px);
   }
 
   .legend-toggle-button:hover {
-    background: white;
-    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.15);
+    background: rgba(255, 255, 255, 1);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
     color: #374151;
+    transform: scale(1.05);
   }
 
   .legend-items {
     display: flex;
     flex-direction: column;
-    gap: 8px;
+    gap: 0px;
+    padding: 4px;
+    overflow-y: auto;
+    max-height: 340px;
+  }
+  
+  .legend-items::-webkit-scrollbar {
+    width: 4px;
+  }
+
+  .legend-items::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  .legend-items::-webkit-scrollbar-thumb {
+    background: rgba(0, 0, 0, 0.2);
+    border-radius: 2px;
+  }
+
+  .legend-items::-webkit-scrollbar-thumb:hover {
+    background: rgba(0, 0, 0, 0.3);
   }
 
   .legend-item {
     display: flex;
     align-items: center;
-    gap: 8px;
-    font-size: 12px;
-    color: #6b7280;
+    gap: 5px;
+    font-size: 10px;
+    color: #495057;
     cursor: pointer;
-    padding: 4px;
-    border-radius: 4px;
-    transition: all 0.2s;
+    padding: 3px 5px;
+    border-radius: 5px;
+    transition: all 0.15s ease;
     user-select: none;
+    border: 1px solid transparent;
+    line-height: 1.5;
   }
 
   .legend-item:hover {
-    background-color: #f3f4f6;
+    background-color: rgba(0, 123, 255, 0.05);
+    border-color: rgba(0, 123, 255, 0.2);
+    transform: translateX(-2px);
   }
 
   .legend-item-hidden {
-    opacity: 0.4;
+    opacity: 0.35;
     text-decoration: line-through;
   }
-
+  
   .legend-item-hidden:hover {
     opacity: 0.6;
   }
@@ -1886,10 +1923,11 @@
   .legend-color {
     width: 12px;
     height: 12px;
-    border-radius: 50%;
+    border-radius: 10px;
     flex-shrink: 0;
-    border: 1px solid rgba(0, 0, 0, 0.1);
-    transition: opacity 0.2s;
+    border: 1px solid rgba(0, 0, 0, 0.15);
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
+    transition: opacity 0.15s;
   }
 
   .legend-item-hidden .legend-color {
@@ -1898,7 +1936,10 @@
 
   .legend-label {
     flex: 1;
-    word-break: break-word;
+    font-weight: 500;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
 
   .selection-box {
