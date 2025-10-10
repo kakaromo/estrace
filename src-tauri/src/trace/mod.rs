@@ -83,6 +83,11 @@ pub async fn readtrace(logname: String, maxrecords: Option<usize>) -> Result<Tra
 }
 
 #[tauri::command]
+pub async fn readtrace_to_files(logname: String, maxrecords: Option<usize>) -> Result<utils::TraceFilePaths, String> {
+    utils::readtrace_to_files(logname, maxrecords.unwrap_or(DEFAULT_PREVIEW_RECORDS)).await
+}
+
+#[tauri::command]
 pub async fn trace_lengths(logname: String) -> Result<TraceLengths, String> {
     utils::trace_lengths(logname).await
 }

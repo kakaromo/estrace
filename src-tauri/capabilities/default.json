@@ -6,6 +6,22 @@
     "main"
   ],
   "permissions": [
+    {
+      "identifier": "fs:allow-read-file",
+      "allow": [
+        {
+          "path": "**"
+        }
+      ]
+    },
+    {
+      "identifier": "fs:allow-remove",
+      "allow": [
+        {
+          "path": "**"
+        }
+      ]
+    },
     "core:default",
     "opener:default",
     "sql:default",
@@ -13,7 +29,6 @@
     "sql:allow-execute",
     "sql:allow-select",
     "sql:allow-close",
-    "sql:default",
     "dialog:default",
     "dialog:allow-ask",
     "dialog:allow-save",
@@ -26,7 +41,6 @@
     "os:default",
     "clipboard-manager:default",
     "clipboard-manager:allow-write-text",
-    "shell:default",
-    "opener:default"
+    "shell:default"
   ]
 }

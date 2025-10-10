@@ -47,6 +47,7 @@ pub fn run() {
             greet,
             trace::starttrace,
             trace::readtrace,
+            trace::readtrace_to_files,  // 파일 기반 데이터 전송
             trace::trace_lengths,
             trace::ufs_latencystats,
             trace::block_latencystats,
