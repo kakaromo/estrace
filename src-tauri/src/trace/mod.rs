@@ -7,6 +7,7 @@ pub mod patterns;
 mod types;
 mod ufs;
 mod utils;
+mod constants;
 
 use once_cell::sync::Lazy;
 use regex::Regex;
@@ -80,6 +81,11 @@ lazy_static! {
 #[tauri::command]
 pub async fn readtrace(logname: String, maxrecords: Option<usize>) -> Result<TraceDataBytes, String> {
     utils::readtrace(logname, maxrecords.unwrap_or(DEFAULT_PREVIEW_RECORDS)).await
+}
+
+#[tauri::command]
+pub async fn readtrace_to_files(logname: String, maxrecords: Option<usize>) -> Result<utils::TraceFilePaths, String> {
+    utils::readtrace_to_files(logname, maxrecords.unwrap_or(DEFAULT_PREVIEW_RECORDS)).await
 }
 
 #[tauri::command]
@@ -507,4 +513,11 @@ pub fn check_cancel_status() -> Result<bool, String> {
 #[tauri::command]
 pub async fn clear_all_cache() -> Result<String, String> {
     utils::clear_all_cache().await
+}
+
+// Tauri 명령 - 임시 Arrow 파일 정리
+#[tauri::command]
+pub async fn cleanup_temp_arrow_files(db_path: String, max_age_hours: u64) -> Result<usize, String> {
+    // utils에서 구현된 함수 호출
+    utils::cleanup_temp_arrow_files_impl(db_path, max_age_hours).await
 }

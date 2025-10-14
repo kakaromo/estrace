@@ -1,15 +1,17 @@
 <script lang="ts">
-    import { ScatterCharts } from '$components/detail';
+    import { ScatterChartsDeck } from '$components/detail';
     import * as Tabs from "$lib/components/ui/tabs/index.js";
     
     interface QDTabsProps {
         traceType: string;
-        data: any[];
+        data?: any[];      // 호환성용 (선택적)
+        table?: any;       // Arrow Table 객체
         legendKey: string;
     }
 
     let { 
         data = [],
+        table = null,
         traceType = '', 
         legendKey = 'cpu', 
     }: QDTabsProps = $props();
@@ -95,8 +97,9 @@
                     <Tabs.Content value={subTab} class="border-none p-0 pt-2 outline-none">
                         {#if getChartConfig(mainTab, subTab)}
                             {@const config = getChartConfig(mainTab, subTab)}
-                            <ScatterCharts 
+                            <ScatterChartsDeck 
                                 data={data}
+                                table={table}
                                 xAxisKey={config.xAxisKey}
                                 yAxisKey={config.yAxisKey}
                                 legendKey={config.legendKey}

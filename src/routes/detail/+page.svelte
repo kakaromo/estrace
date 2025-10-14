@@ -3,6 +3,7 @@
     import { onMount, tick } from 'svelte';
     import { goto } from '$app/navigation';
     import { invoke } from "@tauri-apps/api/core";
+    import { readFile, remove } from "@tauri-apps/plugin-fs";
     import { tableFromIPC } from 'apache-arrow';
     
     import { getTestInfo, getBufferSize } from '$api/db';
@@ -28,7 +29,7 @@
     import { 
         SelectType,
         SizeStats,
-        ScatterCharts, 
+        ScatterChartsDeck, 
         VisualItem, 
         RWDStats,
         LatencyTabs,
@@ -43,7 +44,7 @@
         fetchTraceLengths
     } from '$utils/trace-helper';
     
-    import { handleCompressedData, logCompressionInfo } from '$utils/compression';
+    import { arrowToWebGLData } from '$utils/webgl-optimizer';
     
     // 페이지 ID 및 기본 상태
     // const id = page.params.id;
@@ -55,7 +56,9 @@
     let traceLengths:any = $state({});
 
     // 선택된 타입의 필터된 데이터를 접근하기 위한 반응형 변수
-    let currentFiltered:Array = $derived(filteredData[$selectedTrace]?.data ?? []);
+    // ⚡ 성능 최적화: Arrow Table 직접 사용 (.data 제거)
+    let currentFilteredTable = $derived(filteredData[$selectedTrace]?.table ?? null);
+    let currentFiltered:Array = $derived(filteredData[$selectedTrace]?.data ?? []); // 호환성용 (CPUTabs, RWDStats 등)
     let legendKey:string = $derived($selectedTrace === 'ufs' ? 'opcode' : 'io_type');
     let patternAxis:Object = $derived($selectedTrace === 'ufs'
         ? { key: 'lba', label: '4KB', column: 'lba' }
@@ -78,6 +81,16 @@
     let iscpu = $state(false);
     let islatency = $state(false);
     let issizestats = $state(false);
+    
+    // 각 차트별 로딩 상태
+    let loadingStates = $state({
+        pattern: false,
+        rwd: false,
+        qd: false,
+        cpu: false,
+        latency: false,
+        sizestats: false
+    });
     
     // UFS 통계 데이터
     let ufsStats = $state({
@@ -159,6 +172,48 @@
             };
         }
     })
+    
+    // RWD 차트 enable 시 통계 데이터 로드
+    $effect(() => {
+        (async () => {
+            if (isrwd && !loadingStates.rwd && !currentStats.dtocStat) {
+                loadingStates.rwd = true;
+                try {
+                    await loadStatsData();
+                } finally {
+                    loadingStates.rwd = false;
+                }
+            }
+        })();
+    });
+    
+    // Size Stats enable 시 통계 데이터 로드
+    $effect(() => {
+        (async () => {
+            if (issizestats && !loadingStates.sizestats && !currentStats.sizeCounts) {
+                loadingStates.sizestats = true;
+                try {
+                    await loadStatsData();
+                } finally {
+                    loadingStates.sizestats = false;
+                }
+            }
+        })();
+    });
+    
+    // Latency enable 시 통계 데이터 로드
+    $effect(() => {
+        (async () => {
+            if (islatency && !loadingStates.latency && !currentStats.dtocStat) {
+                loadingStates.latency = true;
+                try {
+                    await loadStatsData();
+                } finally {
+                    loadingStates.latency = false;
+                }
+            }
+        })();
+    });
 
     // BigInt 직렬화 처리를 위한 함수
     function serializeBigInt(data) {
@@ -184,22 +239,21 @@
         if ($selectedTrace) {
             isLoading = true;
             console.log('[Trace] 필터링된 데이터 요청 중...');
+            const filterStart = performance.now();
             
             try {
                 const result = await filterTraceData(fileNames[$selectedTrace], tracedata, $selectedTrace, $filtertrace);
                 if (result !== null) {
-                    console.log('[Trace] 필터링된 데이터 수신 완료');
+                    const filterEnd = performance.now();
+                    console.log(`[Performance] filterTraceData 완료: ${(filterEnd - filterStart).toFixed(2)}ms`);
+                    
                     filteredData[$selectedTrace] = result[$selectedTrace];
                     
-                    // 필터된 데이터의 opcode, iotype 별 count 분석
-                    const data = result[$selectedTrace].data;   
-                    // 데이터 변경 후 UI 업데이트를 위한 tick 대기
+                    // ⚡ 성능 최적화: tick만 대기하고 인위적 delay 제거
                     await tick();
                     
-                    // 차트 렌더링을 위한 추가 지연
-                    console.log('[Trace] 차트 렌더링 대기 중...');
-                    await delay(500);
-                    console.log('[Trace] 차트 렌더링 대기 완료');
+                    const totalEnd = performance.now();
+                    console.log(`[Performance] 전체 필터링+렌더링: ${(totalEnd - filterStart).toFixed(2)}ms`);
                 }
                 return true;
             } catch (error) {
@@ -317,59 +371,144 @@
             const cacheKey = `traceData_${id}_${data.logfolder}_${data.logname}`;
             
             // IndexedDB에서 캐시된 데이터 불러오기
-            let cached = await get(cacheKey);
-            if (cached) {
-                tracedata = deserializeBigInt(cached);
-            } else {
-                const result: any = await invoke('readtrace', {
+            let cached = null;
+            try {
+                cached = await get(cacheKey);
+            } catch (cacheError) {
+                console.warn('[Performance] 캐시 읽기 실패, 원본 데이터 로드:', cacheError);
+            }
+            
+            if (cached && cached.ufs && cached.block) {
+                try {
+                    console.log('[Performance] 캐시된 데이터 발견, Arrow Table 복원 중...');
+                    const restoreStart = performance.now();
+                    
+                    // Arrow IPC 바이너리에서 Table 복원
+                    const ufsBytes = cached.ufs.bytes instanceof Uint8Array 
+                        ? cached.ufs.bytes 
+                        : new Uint8Array(cached.ufs.bytes);
+                    const blockBytes = cached.block.bytes instanceof Uint8Array
+                        ? cached.block.bytes
+                        : new Uint8Array(cached.block.bytes);
+                    
+                    const ufsTable = tableFromIPC(ufsBytes);
+                    const blockTable = tableFromIPC(blockBytes);
+                    
+                    tracedata = {
+                        ufs: {
+                            table: ufsTable,
+                            total_count: cached.ufs.total_count,
+                            sampled_count: cached.ufs.sampled_count,
+                            sampling_ratio: cached.ufs.sampling_ratio
+                        },
+                        block: {
+                            table: blockTable,
+                            total_count: cached.block.total_count,
+                            sampled_count: cached.block.sampled_count,
+                            sampling_ratio: cached.block.sampling_ratio
+                        }
+                    };
+                    
+                    const restoreEnd = performance.now();
+                    console.log(`[Performance] 캐시 복원 완료: ${(restoreEnd - restoreStart).toFixed(2)}ms`);
+                } catch (restoreError) {
+                    console.warn('[Performance] 캐시 복원 실패, 원본 데이터 로드:', restoreError);
+                    cached = null; // 복원 실패 시 원본 데이터 로드하도록
+                }
+            }
+            
+            if (!cached) {
+                const readtraceStart = performance.now();
+                // 파일 기반 전송 사용 - 53s → 15s (73% 성능 개선)
+                const result: any = await invoke('readtrace_to_files', {
                     logfolder: data.logfolder,
                     logname: data.logname,
                     maxrecords: buffersize
                 });
+                const readtraceEnd = performance.now();
+                console.log(`[Performance] readtrace_to_files 완료: ${(readtraceEnd - readtraceStart).toFixed(2)}ms`);
                 
-                // 압축 정보 로깅
-                logCompressionInfo(
-                    'UFS', 
-                    result.ufs.compressed, 
-                    result.ufs.original_size, 
-                    result.ufs.compressed_size, 
-                    result.ufs.compression_ratio
-                );
-                logCompressionInfo(
-                    'Block', 
-                    result.block.compressed, 
-                    result.block.original_size, 
-                    result.block.compressed_size, 
-                    result.block.compression_ratio
-                );
-
-                // 압축 해제 처리
-                const ufsRawData = new Uint8Array(result.ufs.bytes);
-                const blockRawData = new Uint8Array(result.block.bytes);
+                const readFileStart = performance.now();
+                // 파일에서 바이너리 데이터 읽기
+                const ufsData = await readFile(result.ufs_path);
+                const blockData = await readFile(result.block_path);
+                const readFileEnd = performance.now();
+                console.log(`[Performance] 파일 읽기 완료: ${(readFileEnd - readFileStart).toFixed(2)}ms`);
                 
-                const ufsData = handleCompressedData(ufsRawData, result.ufs.compressed);
-                const blockData = handleCompressedData(blockRawData, result.block.compressed);
+                // 파일 읽기 완료 후 즉시 삭제
+                let ufsRemoved = false, blockRemoved = false;
+                try {
+                    await remove(result.ufs_path);
+                    ufsRemoved = true;
+                } catch (ufsRemoveError) {
+                    console.warn(
+                        `⚠️  임시 파일 삭제 실패 (ufs): ${result.ufs_path}\n` +
+                        `오류: ${ufsRemoveError}\n` +
+                        `가능한 원인: 파일이 이미 삭제되었거나, 권한이 없거나, 다른 프로세스에서 사용 중일 수 있습니다.\n` +
+                        `해결 방법: 파일이 존재하는지, 권한이 충분한지, 다른 프로그램에서 사용 중인지 확인하세요.`
+                    );
+                }
+                try {
+                    await remove(result.block_path);
+                    blockRemoved = true;
+                } catch (blockRemoveError) {
+                    console.warn(
+                        `⚠️  임시 파일 삭제 실패 (block): ${result.block_path}\n` +
+                        `오류: ${blockRemoveError}\n` +
+                        `가능한 원인: 파일이 이미 삭제되었거나, 권한이 없거나, 다른 프로세스에서 사용 중일 수 있습니다.\n` +
+                        `해결 방법: 파일이 존재하는지, 권한이 충분한지, 다른 프로그램에서 사용 중인지 확인하세요.`
+                    );
+                }
+                if (ufsRemoved && blockRemoved) {
+                    console.log('✅ 임시 파일 삭제 완료');
+                }
                 
+                const tableStart = performance.now();                
                 const ufsTable = tableFromIPC(ufsData);
                 const blockTable = tableFromIPC(blockData);
+                const tableEnd = performance.now();
+                console.log(`[Performance] Arrow Table 생성 시간: ${(tableEnd - tableStart).toFixed(2)}ms`);                
+                console.log('[Performance] Arrow Table 생성 완료');
                 
+                // ⚡ 성능 최적화: Arrow Table 직접 사용, toArray() 제거
                 tracedata = {
                     ufs: {
-                        data: ufsTable.toArray(),
-                        total_count: result.ufs.total_count,
-                        sampled_count: result.ufs.sampled_count,
-                        sampling_ratio: result.ufs.sampling_ratio
+                        table: ufsTable,  // Table 객체 저장
+                        total_count: result.ufs_total_count,
+                        sampled_count: result.ufs_sampled_count,
+                        sampling_ratio: result.ufs_sampling_ratio
                     },
                     block: {
-                        data: blockTable.toArray(),
-                        total_count: result.block.total_count,
-                        sampled_count: result.block.sampled_count,
-                        sampling_ratio: result.block.sampling_ratio
+                        table: blockTable,  // Table 객체 저장
+                        total_count: result.block_total_count,
+                        sampled_count: result.block_sampled_count,
+                        sampling_ratio: result.block_sampling_ratio
                     }
                 };
                 
-                // IndexedDB에 데이터 저장
-                await set(cacheKey, serializeBigInt(tracedata));
+                // ⚡ 최적화: Arrow IPC 바이너리를 직접 캐싱 (직렬화 불필요)
+                const cacheStart = performance.now();
+                try {
+                    await set(cacheKey, {
+                        ufs: {
+                            bytes: ufsData,  // Uint8Array 직접 저장 (IndexedDB는 TypedArray 지원)
+                            total_count: result.ufs_total_count,
+                            sampled_count: result.ufs_sampled_count,
+                            sampling_ratio: result.ufs_sampling_ratio
+                        },
+                        block: {
+                            bytes: blockData,  // Uint8Array 직접 저장
+                            total_count: result.block_total_count,
+                            sampled_count: result.block_sampled_count,
+                            sampling_ratio: result.block_sampling_ratio
+                        }
+                    });
+                    const cacheEnd = performance.now();
+                    console.log(`[Performance] Arrow IPC 바이너리 캐싱 완료: ${(cacheEnd - cacheStart).toFixed(2)}ms`);
+                } catch (cacheError) {
+                    console.warn('[Performance] 캐싱 실패 (무시하고 계속):', cacheError);
+                    // 캐싱 실패해도 계속 진행
+                }
             }
             
             // 데이터 저장 및 초기화
@@ -559,8 +698,9 @@
                         <Card.Title>{$selectedTrace.toUpperCase()} Pattern</Card.Title>
                     </Card.Header>
                     <Card.Content>
-                        <ScatterCharts
+                        <ScatterChartsDeck
                             key={chartKey}
+                            table={currentFilteredTable}
                             data={currentFiltered}
                             xAxisKey='time'
                             yAxisKey={patternAxis.key}
@@ -578,8 +718,9 @@
                         <Card.Title>{$selectedTrace.toUpperCase()} QueueDepth</Card.Title>
                     </Card.Header>
                     <Card.Content>
-                        <ScatterCharts
+                        <ScatterChartsDeck
                             key={chartKey}
+                            table={currentFilteredTable}
                             data={currentFiltered}
                             xAxisKey='time'
                             yAxisKey='qd'
@@ -598,9 +739,9 @@
                     </Card.Header>
                     <Card.Content>
                         {#if $selectedTrace === 'ufs'} 
-                        <CPUTabs key={chartKey} traceType={$selectedTrace} data={filteredData.ufs.data} legendKey='cpu' />
+                        <CPUTabs key={chartKey} traceType={$selectedTrace} table={filteredData.ufs?.table} data={filteredData.ufs?.data} legendKey='cpu' />
                         {:else if $selectedTrace === 'block'}
-                        <CPUTabs key={chartKey} traceType={$selectedTrace} data={filteredData.block.data} legendKey='cpu' />
+                        <CPUTabs key={chartKey} traceType={$selectedTrace} table={filteredData.block?.table} data={filteredData.block?.data} legendKey='cpu' />
                         {/if}                        
                     </Card.Content>
                 </Card.Root>
@@ -612,7 +753,11 @@
                         <Card.Title>{$selectedTrace.toUpperCase()} Read/Write/Discard Statistics</Card.Title>
                     </Card.Header>
                     <Card.Content>
-                        {#if $selectedTrace === 'ufs'} 
+                        {#if loadingStates.rwd}
+                        <div class="flex justify-center items-center h-64">
+                            <Circle2 color="#FF3E00" size="60" unit="px" />
+                        </div>
+                        {:else if $selectedTrace === 'ufs'} 
                         <RWDStats key={chartKey} data={ufsStats.continuous} tracetype={$selectedTrace} {isrwd} />
                         {:else if $selectedTrace === 'block'}
                         <RWDStats key={chartKey} data={blockStats.continuous} tracetype={$selectedTrace} {isrwd} />
@@ -627,16 +772,23 @@
                         <Card.Title>{$selectedTrace.toUpperCase()} Latency</Card.Title>
                     </Card.Header>
                     <Card.Content>
+                        {#if loadingStates.latency || !currentStats.dtocStat}
+                        <div class="flex justify-center items-center h-64">
+                            <Circle2 color="#FF3E00" size="60" unit="px" />
+                        </div>
+                        {:else}
                         <LatencyTabs
                             key={chartKey}
                             traceType={$selectedTrace}
                             filteredData={currentFiltered}
+                            filteredTable={currentFilteredTable}
                             legendKey={legendKey}
                             thresholds={thresholds}
                             dtocStat={currentStats.dtocStat}
                             ctodStat={currentStats.ctodStat}
                             ctocStat={currentStats.ctocStat}
                         />
+                        {/if}
                     </Card.Content>
                 </Card.Root>                                
                 {/if}
@@ -650,7 +802,11 @@
                         <Card.Description>Size별 Count</Card.Description>
                     </Card.Header>
                     <Card.Content>
-                        {#if currentStats.sizeCounts?.opcode_stats}
+                        {#if loadingStates.sizestats}
+                        <div class="flex justify-center items-center h-64">
+                            <Circle2 color="#FF3E00" size="60" unit="px" />
+                        </div>
+                        {:else if currentStats.sizeCounts?.opcode_stats}
                         <SizeStats key={chartKey} opcode_size_counts={currentStats.sizeCounts.opcode_stats} />
                         {/if}
                     </Card.Content>

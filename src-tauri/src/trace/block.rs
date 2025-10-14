@@ -372,7 +372,7 @@ pub fn save_block_to_parquet(
     path.push(block_filename.clone());
 
     // chunk 크기 설정 (100,000 레코드씩 처리)
-    const CHUNK_SIZE: usize = 100_000;
+    const CHUNK_SIZE: usize = 400_000;
     let total_records = block_traces.len();
     
     if total_records == 0 {

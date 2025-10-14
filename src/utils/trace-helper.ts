@@ -2,7 +2,6 @@ import { invoke } from "@tauri-apps/api/core";
 import { tableFromIPC } from 'apache-arrow';
 import { compareTraceCount, traceSizeCount, traceSaimpleCount } from '$stores/trace';
 import { getBufferSize } from "$api/db";
-import { handleCompressedData, logCompressionInfo } from './compression';
 
 export async function fetchTraceLengths(logname: string) {
   return await invoke('trace_lengths', { logname });
@@ -61,112 +60,68 @@ export async function fetchBlockStats(fileName: string, filterParams: any) {
 
 /**
  * 필터링된 데이터를 반환하는 함수
+ * ⚡ N+1 문제 해결: 필터가 없으면 원본 데이터 재사용
  */
 export async function filterTraceData(logname: string, traceData: any, selectedTrace: string, filterParams: any) {
   const { from_time, to_time, from_lba, to_lba, zoom_column } = filterParams;
-  // console.log(filterParams);
+  
   if (selectedTrace === '') {
     return null;
   }
-  // if (traceData[selectedTrace].total_count === traceData[selectedTrace].sampled_count) {
-  //   // 필터가 설정되지 않았으면 원본 데이터 반환
-  //   if (from_time === 0 && to_time === 0) {
-  //     return traceData[selectedTrace];
-  //   }
-  //   // 필터 적용
-  //   const filteredData = traceData[selectedTrace].data.filter((item) => {
-  //     return item.time >= from_time &&
-  //           item.time <= to_time &&
-  //           item[zoom_column] >= from_lba &&
-  //           item[zoom_column] <= to_lba;
-  //   });
-  //   traceData[selectedTrace].data = filteredData;
-  //   return traceData[selectedTrace];
-    
-  // } else {
-  //   // 필터링된 데이터 반환
-  //   console.log('logname:', logname);
-  //   console.log('selectedTrace:', selectedTrace);
-  //   let buffersize = await getBufferSize();
-  //   const traceStr: string = await invoke('filter_trace', {
-  //     logname: logname,
-  //     tracetype: selectedTrace,
-  //     zoomColumn: zoom_column,
-  //     from_time: from_time,
-  //     to_time: to_time,
-  //     from_lba: from_lba,
-  //     to_lba: to_lba,
-  //     maxrecords: buffersize
-  //   });
-  //   const filteredData : any = JSON.parse(traceStr);
-  //   console.log('filteredData:', filteredData);
-  //   return filteredData;
-  // }
 
-  let buffersize = await getBufferSize();
-    // const traceStr: string = await invoke('filter_trace', {
-    //   logname: logname,
-    //   tracetype: selectedTrace,
-    //   zoomColumn: zoom_column,
-    //   fromTime: from_time,
-    //   toTime: to_time,
-    //   fromLba: from_lba,
-    //   toLba: to_lba,
-    //   maxrecords: buffersize
-    // });
+  // ⚡ 최적화: 필터가 설정되지 않았으면 원본 데이터 그대로 반환 (N+1 방지)
+  const hasNoFilter = (!from_time || from_time === 0) && 
+                      (!to_time || to_time === 0) && 
+                      (!from_lba || from_lba === 0) && 
+                      (!to_lba || to_lba === 0);
+  
+  if (hasNoFilter) {
+    console.log('[Performance] ⚡ 필터 없음 - 원본 데이터 재사용 (백엔드 호출 생략)');
+    return traceData;
+  }
 
-    const result: any = await invoke('filter_trace', {
-      logname: logname,
-      tracetype: selectedTrace,
-      zoomColumn: zoom_column,
-      timeFrom: from_time,
-      timeTo: to_time,
-      colFrom: from_lba,
-      colTo: to_lba,
-      maxrecords: buffersize
-    });
+  // 필터가 있을 때만 백엔드 호출
+  console.log('[Performance] 필터 적용 - 백엔드에서 데이터 가져오는 중...');
+  
+  const buffersize = await getBufferSize();
+  const result: any = await invoke('filter_trace', {
+    logname: logname,
+    tracetype: selectedTrace,
+    zoomColumn: zoom_column,
+    timeFrom: from_time,
+    timeTo: to_time,
+    colFrom: from_lba,
+    colTo: to_lba,
+    maxrecords: buffersize
+  });
 
-    // 압축 정보 로깅
-    logCompressionInfo(
-      'UFS', 
-      result.ufs.compressed, 
-      result.ufs.original_size, 
-      result.ufs.compressed_size, 
-      result.ufs.compression_ratio
-    );
-    logCompressionInfo(
-      'Block', 
-      result.block.compressed, 
-      result.block.original_size, 
-      result.block.compressed_size, 
-      result.block.compression_ratio
-    );
+  // Arrow IPC 데이터 직접 변환 (압축 제거됨)
+  const ufsData = new Uint8Array(result.ufs.bytes);
+  const blockData = new Uint8Array(result.block.bytes);
+  
+  const ufsTable = tableFromIPC(ufsData);
+  const blockTable = tableFromIPC(blockData);
+  
+  console.log('[Performance] filterTraceData 완료 - Arrow Table 직접 사용');
+  
+  const filteredTraceData = {
+    ufs: {
+      table: ufsTable,
+      data: null,
+      total_count: result.ufs.total_count,
+      sampled_count: result.ufs.sampled_count,
+      sampling_ratio: result.ufs.sampling_ratio
+    },
+    block: {
+      table: blockTable,
+      data: null,
+      total_count: result.block.total_count,
+      sampled_count: result.block.sampled_count,
+      sampling_ratio: result.block.sampling_ratio
+    }
+  };
 
-    // 압축 해제 처리
-    const ufsRawData = new Uint8Array(result.ufs.bytes);
-    const blockRawData = new Uint8Array(result.block.bytes);
-    
-    const ufsData = handleCompressedData(ufsRawData, result.ufs.compressed);
-    const blockData = handleCompressedData(blockRawData, result.block.compressed);
-    
-    const ufsTable = tableFromIPC(ufsData);
-    const blockTable = tableFromIPC(blockData);
-    const tracedata = {
-        ufs: {
-            data: ufsTable.toArray(),
-            total_count: result.ufs.total_count,
-            sampled_count: result.ufs.sampled_count,
-            sampling_ratio: result.ufs.sampling_ratio
-        },
-        block: {
-            data: blockTable.toArray(),
-            total_count: result.block.total_count,
-            sampled_count: result.block.sampled_count,
-            sampling_ratio: result.block.sampling_ratio
-        }
-    };
-
-    return tracedata;
+  return filteredTraceData;
 }
 
 function parseJsonResult(result: any) {

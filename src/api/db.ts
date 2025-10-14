@@ -176,7 +176,7 @@ export async function deleteMultipleTestInfo(ids: number[]) {
     await db.execute(`DELETE FROM testinfo WHERE id IN (${placeholders})`, ids);
 }
 
-export async function getBufferSize(buffersize: number) {
+export async function getBufferSize() {
     await open();
     const result:any[] = await db.select('SELECT * FROM buffersize  WHERE id = 1');
     return result[0].buffersize;

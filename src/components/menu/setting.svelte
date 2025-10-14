@@ -9,6 +9,7 @@
   import { setting } from "../../stores/setting";
   import { onMount } from 'svelte';
   import { getFolder, setFolder } from "../../api/db.js";
+  import { cleanupTempArrowFiles } from "../../api/cleanup";
 
   import { open } from '@tauri-apps/plugin-dialog';
   import { invoke } from '@tauri-apps/api/core';
@@ -108,6 +109,21 @@
       window.alert('캐시 초기화에 실패했습니다: ' + error);
     }
   }
+
+  // 임시 파일 정리 함수
+  async function cleanupTempFiles() {
+    try {
+      const count = await cleanupTempArrowFiles(24);
+      if (count > 0) {
+        window.alert(`✅ ${count}개의 임시 파일이 삭제되었습니다.`);
+      } else {
+        window.alert('ℹ️ 정리할 임시 파일이 없습니다.');
+      }
+    } catch (error) {
+      console.error('Temp file cleanup failed:', error);
+      window.alert('임시 파일 정리에 실패했습니다: ' + error);
+    }
+  }
 </script>
 
 <Dialog.Root bind:open={dialogopen}>
@@ -133,15 +149,22 @@
           <Input id="logfolder" bind:value={logfolder} class="col-span-3" onclick={handleFileOpen} />
         </div>
         
-        <!-- 캐시 초기화 섹션 -->
+        <!-- 캐시 및 파일 관리 섹션 -->
         <div class="grid grid-cols-4 items-center gap-4 pt-4 border-t">
-          <Label>Cache Management</Label>
-          <div class="col-span-3">
+          <Label>Data Management</Label>
+          <div class="col-span-3 space-y-2">
             <Button variant="outline" onclick={clearCache} class="w-full">
               캐시 초기화 (Clear Cache)
             </Button>
-            <p class="text-sm text-gray-500 mt-1">
+            <p class="text-sm text-gray-500">
               캐시를 초기화하여 최신 데이터를 다시 로드합니다.
+            </p>
+            
+            <Button variant="outline" onclick={cleanupTempFiles} class="w-full mt-2">
+              임시 파일 정리 (Clean Temp Files)
+            </Button>
+            <p class="text-sm text-gray-500">
+              24시간 이상 된 임시 Arrow 파일을 삭제합니다.
             </p>
           </div>
         </div>
