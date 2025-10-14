@@ -436,12 +436,31 @@
                 console.log(`[Performance] 파일 읽기 완료: ${(readFileEnd - readFileStart).toFixed(2)}ms`);
                 
                 // 파일 읽기 완료 후 즉시 삭제
+                let ufsRemoved = false, blockRemoved = false;
                 try {
                     await remove(result.ufs_path);
+                    ufsRemoved = true;
+                } catch (ufsRemoveError) {
+                    console.warn(
+                        `⚠️  임시 파일 삭제 실패 (ufs): ${result.ufs_path}\n` +
+                        `오류: ${ufsRemoveError}\n` +
+                        `가능한 원인: 파일이 이미 삭제되었거나, 권한이 없거나, 다른 프로세스에서 사용 중일 수 있습니다.\n` +
+                        `해결 방법: 파일이 존재하는지, 권한이 충분한지, 다른 프로그램에서 사용 중인지 확인하세요.`
+                    );
+                }
+                try {
                     await remove(result.block_path);
+                    blockRemoved = true;
+                } catch (blockRemoveError) {
+                    console.warn(
+                        `⚠️  임시 파일 삭제 실패 (block): ${result.block_path}\n` +
+                        `오류: ${blockRemoveError}\n` +
+                        `가능한 원인: 파일이 이미 삭제되었거나, 권한이 없거나, 다른 프로세스에서 사용 중일 수 있습니다.\n` +
+                        `해결 방법: 파일이 존재하는지, 권한이 충분한지, 다른 프로그램에서 사용 중인지 확인하세요.`
+                    );
+                }
+                if (ufsRemoved && blockRemoved) {
                     console.log('✅ 임시 파일 삭제 완료');
-                } catch (removeError) {
-                    console.warn('⚠️  임시 파일 삭제 실패:', removeError);
                 }
                 
                 const tableStart = performance.now();                

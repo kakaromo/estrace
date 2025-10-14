@@ -398,7 +398,9 @@
       const y = typeof yValue === 'bigint' ? Number(yValue) : yValue;
       
       // 유효하지 않은 좌표는 건너뜀
-      if (x !== x || y !== y) continue; // isNaN보다 빠름
+      // Note: x !== x는 NaN 체크를 위한 표준 JavaScript 패턴입니다.
+      // NaN은 자기 자신과 같지 않은 유일한 값이므로 isNaN()보다 빠르고 안전합니다.
+      if (x !== x || y !== y) continue;
       
       // ⚡ action 필터링 (문자열 연산 최소화)
       const action = item.action || item.command;

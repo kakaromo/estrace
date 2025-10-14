@@ -1,6 +1,6 @@
 use std::collections::{BTreeMap, HashMap};
 use std::fs::File;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::io::Write;
 
 use chrono::Local;
@@ -1550,4 +1550,142 @@ pub async fn clear_all_cache() -> Result<String, String> {
     
     println!("✅ 모든 캐시 초기화 완료");
     Ok("캐시가 성공적으로 초기화되었습니다.".to_string())
+}
+
+/// DB에 등록된 로그 폴더들의 임시 Arrow 파일을 정리하는 함수
+/// 
+/// test.db의 folder 테이블과 testinfo 테이블에서 로그 폴더 경로를 가져와
+/// 해당 폴더(및 하위 폴더)에 있는 오래된 임시 Arrow 파일들을 삭제합니다.
+/// 
+/// # Arguments
+/// * `db_path` - test.db 파일의 경로
+/// * `max_age_hours` - 삭제할 파일의 최대 나이 (시간 단위, 기본값: 24시간)
+/// 
+/// # Returns
+/// * `Ok(usize)` - 삭제된 파일 수
+/// * `Err(String)` - 에러 메시지
+pub async fn cleanup_temp_arrow_files_impl(db_path: String, max_age_hours: u64) -> Result<usize, String> {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    use std::fs;
+    use std::path::Path;
+    
+    println!("🧹 임시 파일 정리 시작 (DB: {})", db_path);
+    
+    let max_age_secs = max_age_hours * 3600;
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|e| e.to_string())?
+        .as_secs();
+    
+    let mut deleted_count = 0;
+    let mut folders_to_check = Vec::new();
+    
+    // SQLite 연결
+    let conn = rusqlite::Connection::open(&db_path)
+        .map_err(|e| format!("DB 연결 실패: {}", e))?;
+    
+    // 1. folder 테이블에서 기본 로그 폴더 경로 가져오기
+    {
+        let mut stmt = conn.prepare("SELECT path FROM folder WHERE id = 1")
+            .map_err(|e| format!("folder 테이블 쿼리 실패: {}", e))?;
+        
+        let paths: Result<Vec<String>, _> = stmt
+            .query_map([], |row| row.get(0))
+            .map_err(|e| format!("folder 데이터 읽기 실패: {}", e))?
+            .collect();
+        
+        if let Ok(paths) = paths {
+            folders_to_check.extend(paths);
+        }
+    }
+    
+    // 2. testinfo 테이블에서 모든 로그 폴더 경로 가져오기
+    {
+        let mut stmt = conn.prepare("SELECT DISTINCT logfolder FROM testinfo WHERE logfolder IS NOT NULL AND logfolder != ''")
+            .map_err(|e| format!("testinfo 테이블 쿼리 실패: {}", e))?;
+        
+        let paths: Result<Vec<String>, _> = stmt
+            .query_map([], |row| row.get(0))
+            .map_err(|e| format!("testinfo 데이터 읽기 실패: {}", e))?
+            .collect();
+        
+        if let Ok(paths) = paths {
+            folders_to_check.extend(paths);
+        }
+    }
+    
+    println!("📂 검색할 폴더 수: {}", folders_to_check.len());
+    
+    // 각 폴더를 순회하며 임시 파일 검색 및 삭제
+    for folder_path in folders_to_check {
+        let path = Path::new(&folder_path);
+        
+        if !path.exists() || !path.is_dir() {
+            continue;
+        }
+        
+        // 폴더 내 파일 검색 (재귀적으로 하위 폴더도 검색)
+        if let Ok(entries) = fs::read_dir(path) {
+            for entry in entries.flatten() {
+                let entry_path = entry.path();
+                
+                // 하위 디렉토리면 재귀 검색
+                if entry_path.is_dir() {
+                    if let Ok(sub_entries) = fs::read_dir(&entry_path) {
+                        for sub_entry in sub_entries.flatten() {
+                            deleted_count += check_and_delete_temp_file(&sub_entry.path(), now, max_age_secs)?;
+                        }
+                    }
+                } else {
+                    // 현재 디렉토리의 파일 검사
+                    deleted_count += check_and_delete_temp_file(&entry_path, now, max_age_secs)?;
+                }
+            }
+        }
+    }
+    
+    if deleted_count > 0 {
+        println!("✅ 임시 파일 정리 완료: {}개 삭제", deleted_count);
+    } else {
+        println!("ℹ️  정리할 임시 파일 없음");
+    }
+    
+    Ok(deleted_count)
+}
+
+/// 임시 파일인지 확인하고 오래된 파일이면 삭제
+fn check_and_delete_temp_file(path: &Path, now: u64, max_age_secs: u64) -> Result<usize, String> {
+    use std::fs;
+    
+    // 파일명 검사: estrace_temp_*.arrow 패턴
+    if let Some(filename) = path.file_name().and_then(|n| n.to_str()) {
+        if filename.starts_with("estrace_temp_") && filename.ends_with(".arrow") {
+            // 파일 메타데이터 확인
+            if let Ok(metadata) = fs::metadata(path) {
+                if let Ok(modified) = metadata.modified() {
+                    if let Ok(modified_duration) = modified.duration_since(std::time::UNIX_EPOCH) {
+                        let file_age_secs = now.saturating_sub(modified_duration.as_secs());
+                        
+                        // 오래된 파일 삭제
+                        if file_age_secs > max_age_secs {
+                            match fs::remove_file(path) {
+                                Ok(_) => {
+                                    println!("🗑️  삭제: {} ({}시간 전)", 
+                                        path.display(), 
+                                        file_age_secs / 3600
+                                    );
+                                    return Ok(1);
+                                }
+                                Err(e) => {
+                                    println!("⚠️  삭제 실패: {} - {}", path.display(), e);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
+    Ok(0)
 }

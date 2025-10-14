@@ -514,3 +514,10 @@ pub fn check_cancel_status() -> Result<bool, String> {
 pub async fn clear_all_cache() -> Result<String, String> {
     utils::clear_all_cache().await
 }
+
+// Tauri 명령 - 임시 Arrow 파일 정리
+#[tauri::command]
+pub async fn cleanup_temp_arrow_files(db_path: String, max_age_hours: u64) -> Result<usize, String> {
+    // utils에서 구현된 함수 호출
+    utils::cleanup_temp_arrow_files_impl(db_path, max_age_hours).await
+}

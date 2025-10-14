@@ -99,6 +99,7 @@ pub fn run() {
             trace::check_cancel_status,
             // Cache management
             trace::clear_all_cache,
+            trace::cleanup_temp_arrow_files,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

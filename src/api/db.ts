@@ -95,7 +95,7 @@ export async function initial() {
     
     const result:number[] = await db.select('SELECT * FROM buffersize');
     if(result.length === 0) {
-        await db.execute('INSERT OR REPLACE INTO buffersize (id, buffersize) VALUES (1, 50000000);');
+        await db.execute('INSERT OR REPLACE INTO buffersize (id, buffersize) VALUES (1, 500000);');
     }
 }
 

@@ -7,6 +7,7 @@
   import { Status, traceStatusStore } from '../stores/file.js';
   import { clear } from 'idb-keyval';
   import { syncPatterns } from '../api/pattern.js';
+  import { autoCleanupOnStartup } from '../api/cleanup.js';
 
   let name = $state("");
   let greetMsg = $state("");
@@ -34,6 +35,11 @@
       
       // Load test info
       await getAllTestInfo();
+      
+      // 자동으로 오래된 임시 파일 정리 (백그라운드에서 실행)
+      autoCleanupOnStartup().catch(err => {
+        console.warn('자동 임시 파일 정리 실패 (무시됨):', err);
+      });
     } catch (error) {
       console.error('Error during initialization:', error);
     } finally {
