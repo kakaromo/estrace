@@ -66,7 +66,10 @@
     const IO_TYPES = [
         {
             id: 'read',
-            key: (tracetype: string) => tracetype === 'ufs' ? '0x28' : 'R',
+            key: (tracetype: string) => {
+                if (tracetype === 'ufs' || tracetype === 'ufscustom') return '0x28';
+                return 'R';
+            },
             title: (tracetype: string) => `${tracetype.toUpperCase()} Read Continuity`,
             name: 'Read Continuity',
             colors: ['#4ade80', '#fb7185'],
@@ -74,7 +77,10 @@
         },
         {
             id: 'write',
-            key: (tracetype: string) => tracetype === 'ufs' ? '0x2a' : 'W',
+            key: (tracetype: string) => {
+                if (tracetype === 'ufs' || tracetype === 'ufscustom') return '0x2a';
+                return 'W';
+            },
             title: (tracetype: string) => `${tracetype.toUpperCase()} Write Continuity`,
             name: 'Write Continuity',
             colors: ['#60a5fa', '#f97316'],
@@ -82,7 +88,10 @@
         },
         {
             id: 'discard',
-            key: (tracetype: string) => tracetype === 'ufs' ? '0x42' : 'D',
+            key: (tracetype: string) => {
+                if (tracetype === 'ufs' || tracetype === 'ufscustom') return '0x42';
+                return 'D';
+            },
             title: (tracetype: string) => {
                 const label = tracetype === 'ufs' ? 'UNMAP' : 'Discard';
                 return `${tracetype.toUpperCase()} ${label} Continuity`;

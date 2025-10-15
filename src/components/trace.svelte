@@ -315,16 +315,26 @@
             let filename = "";
             let detectedLogType = "";
             
-            if (parsed.ufs_parquet_filename && parsed.block_parquet_filename) {
-                filename = parsed.ufs_parquet_filename + "," + parsed.block_parquet_filename;
-                detectedLogType = "ufs,block";
-            } else if (parsed.ufs_parquet_filename) {
-                filename = parsed.ufs_parquet_filename;
-                detectedLogType = "ufs";
-            } else if (parsed.block_parquet_filename) {
-                filename = parsed.block_parquet_filename;
-                detectedLogType = "block";
+            // 존재하는 파일들을 배열로 수집
+            const fileNames = [];
+            const logTypes = [];
+            
+            if (parsed.ufs_parquet_filename) {
+                fileNames.push(parsed.ufs_parquet_filename);
+                logTypes.push("ufs");
             }
+            if (parsed.block_parquet_filename) {
+                fileNames.push(parsed.block_parquet_filename);
+                logTypes.push("block");
+            }
+            if (parsed.ufscustom_parquet_filename) {
+                fileNames.push(parsed.ufscustom_parquet_filename);
+                logTypes.push("ufscustom");
+            }
+            
+            // 파일명과 로그 타입 조합
+            filename = fileNames.join(",");
+            detectedLogType = logTypes.join(",");
             
             // 자동으로 감지된 로그 타입 사용
             const finalLogType = detectedLogType;

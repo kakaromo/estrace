@@ -6,6 +6,7 @@ mod filter;
 pub mod patterns;
 mod types;
 mod ufs;
+mod ufscustom;
 mod utils;
 mod constants;
 
@@ -27,6 +28,8 @@ pub use types::*;
 pub(crate) static UFS_CACHE: Lazy<Mutex<HashMap<String, Vec<UFS>>>> =
     Lazy::new(|| Mutex::new(HashMap::new()));
 pub(crate) static BLOCK_CACHE: Lazy<Mutex<HashMap<String, Vec<Block>>>> =
+    Lazy::new(|| Mutex::new(HashMap::new()));
+pub(crate) static UFSCUSTOM_CACHE: Lazy<Mutex<HashMap<String, Vec<UFSCUSTOM>>>> =
     Lazy::new(|| Mutex::new(HashMap::new()));
 
 // Pattern caches
@@ -50,6 +53,15 @@ pub(crate) static ACTIVE_BLOCK_PATTERN: Lazy<RwLock<(String, Regex)>> = Lazy::ne
         "Default Block Pattern".to_string(),
         Regex::new(
             r"^\s*(?P<process>.*?)\s+\[(?P<cpu>\d+)\]\s+(?P<flags>.+?)\s+(?P<time>[\d\.]+):\s+(?P<action>\S+):\s+(?P<devmajor>\d+),(?P<devminor>\d+)\s+(?P<io_type>[A-Z]+)(?:\s+(?P<extra>\d+))?\s+\(\)\s+(?P<sector>\d+)\s+\+\s+(?P<size>\d+)(?:\s+\S+)?\s+\[(?P<comm>.*?)\]$"
+        ).unwrap()
+    ))
+});
+
+pub(crate) static ACTIVE_UFSCUSTOM_PATTERN: Lazy<RwLock<(String, Regex)>> = Lazy::new(|| {
+    RwLock::new((
+        "Default UFS Custom Pattern".to_string(),
+        Regex::new(
+            r"^(?P<opcode>0x[0-9a-f]+),(?P<lba>\d+),(?P<size>\d+),(?P<start_time>\d+(?:\.\d+)?),(?P<end_time>\d+(?:\.\d+)?)$"
         ).unwrap()
     ))
 });
@@ -280,6 +292,92 @@ pub async fn block_continuity_stats(
     col_to: Option<f64>,
 ) -> Result<Vec<u8>, String> {
     block::continuity_stats(logname, zoom_column, time_from, time_to, col_from, col_to).await
+}
+
+// UFSCUSTOM 통계 명령어들
+#[allow(clippy::too_many_arguments)]
+#[tauri::command]
+pub async fn ufscustom_latencystats(
+    logname: String,
+    column: String,
+    zoom_column: String,
+    time_from: Option<f64>,
+    time_to: Option<f64>,
+    col_from: Option<f64>,
+    col_to: Option<f64>,
+    thresholds: Vec<String>,
+) -> Result<Vec<u8>, String> {
+    use ufscustom::UfscustomLatencyStatsParams;
+    
+    ufscustom::latencystats(UfscustomLatencyStatsParams {
+        logname,
+        column,
+        zoom_column,
+        time_from,
+        time_to,
+        col_from,
+        col_to,
+        thresholds,
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn ufscustom_sizestats(
+    logname: String,
+    column: String,
+    zoom_column: String,
+    time_from: Option<f64>,
+    time_to: Option<f64>,
+    col_from: Option<f64>,
+    col_to: Option<f64>,
+) -> Result<Vec<u8>, String> {
+    use ufscustom::UfscustomSizeStatsParams;
+    
+    ufscustom::sizestats(UfscustomSizeStatsParams {
+        logname,
+        column,
+        zoom_column,
+        time_from,
+        time_to,
+        col_from,
+        col_to,
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn ufscustom_allstats(
+    logname: String,
+    zoom_column: String,
+    time_from: Option<f64>,
+    time_to: Option<f64>,
+    col_from: Option<f64>,
+    col_to: Option<f64>,
+    thresholds: Vec<String>,
+) -> Result<Vec<u8>, String> {
+    use ufscustom::UfscustomAllStatsParams;
+    
+    ufscustom::allstats(UfscustomAllStatsParams {
+        logname,
+        zoom_column,
+        time_from,
+        time_to,
+        col_from,
+        col_to,
+    }, thresholds).await
+}
+
+#[tauri::command]
+pub async fn ufscustom_continuity_stats(
+    logname: String,
+    zoom_column: String,
+    time_from: Option<f64>,
+    time_to: Option<f64>,
+    col_from: Option<f64>,
+    col_to: Option<f64>,
+) -> Result<Vec<u8>, String> {
+    ufscustom::continuity_stats(logname, zoom_column, time_from, time_to, col_from, col_to).await
 }
 
 #[tauri::command]
@@ -517,7 +615,7 @@ pub async fn clear_all_cache() -> Result<String, String> {
 
 // Tauri 명령 - 임시 Arrow 파일 정리
 #[tauri::command]
-pub async fn cleanup_temp_arrow_files(db_path: String, max_age_hours: u64) -> Result<usize, String> {
-    // utils에서 구현된 함수 호출
-    utils::cleanup_temp_arrow_files_impl(db_path, max_age_hours).await
+pub async fn cleanup_temp_arrow_files(max_age_hours: u64) -> Result<usize, String> {
+    // utils에서 구현된 함수 호출 (DB 경로는 자동으로 찾음)
+    utils::cleanup_temp_arrow_files_impl(max_age_hours).await
 }

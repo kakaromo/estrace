@@ -11,6 +11,8 @@ import { join } from '@tauri-apps/api/path';
 /**
  * 임시 Arrow 파일 정리
  * 
+ * DB에 등록된 trace 폴더들에서 temp로 시작하는 Arrow IPC 파일을 삭제합니다.
+ * 
  * @param maxAgeHours - 삭제할 파일의 최대 나이 (시간 단위, 기본값: 24시간)
  * @returns 삭제된 파일 수
  * 
@@ -28,14 +30,9 @@ import { join } from '@tauri-apps/api/path';
  */
 export async function cleanupTempArrowFiles(maxAgeHours: number = 24): Promise<number> {
     try {
-        // AppData 디렉토리에서 test.db 경로 가져오기
-        const appData = await appDataDir();
-        const dbPath = await join(appData, 'test.db');
-        
-        console.log(`🧹 임시 파일 정리 시작 (DB: ${dbPath})`);
+        console.log(`🧹 임시 파일 정리 시작 (최대 나이: ${maxAgeHours}시간)`);
         
         const deletedCount = await invoke<number>('cleanup_temp_arrow_files', {
-            dbPath,
             maxAgeHours
         });
         

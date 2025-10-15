@@ -16,14 +16,15 @@ use serde::Serialize;
 
 use crate::trace::block::{block_bottom_half_latency_process, save_block_to_parquet};
 use crate::trace::ufs::{save_ufs_to_parquet, ufs_bottom_half_latency_process};
-use crate::trace::{Block, LatencySummary, TraceParseResult, BLOCK_CACHE, UFS, UFS_CACHE, ProgressEvent, CANCEL_SIGNAL};
+use crate::trace::ufscustom::{save_ufscustom_to_parquet, ufscustom_bottom_half_latency_process, ufscustom_to_record_batch};
+use crate::trace::{Block, LatencySummary, TraceParseResult, BLOCK_CACHE, UFS, UFS_CACHE, UFSCUSTOM, UFSCUSTOM_CACHE, ProgressEvent, CANCEL_SIGNAL};
 
-use crate::trace::filter::{filter_block_data, filter_ufs_data};
+use crate::trace::filter::{filter_block_data, filter_ufs_data, filter_ufscustom_data};
 use crate::trace::block::block_to_record_batch;
 use crate::trace::ufs::ufs_to_record_batch;
 use crate::trace::constants::{UFS_DEBUG_LBA, MAX_VALID_UFS_LBA};
 
-use super::{ACTIVE_BLOCK_PATTERN, ACTIVE_UFS_PATTERN};
+use super::{ACTIVE_BLOCK_PATTERN, ACTIVE_UFS_PATTERN, ACTIVE_UFSCUSTOM_PATTERN};
 
 // 샘플링 결과를 담는 구조체
 #[derive(Serialize, Debug, Clone)]
@@ -117,6 +118,49 @@ pub fn sample_block(block_list: &[Block], max_records: usize) -> SamplingInfo<Bl
     }
 }
 
+pub fn sample_ufscustom(ufscustom_list: &[UFSCUSTOM], max_records: usize) -> SamplingInfo<UFSCUSTOM> {
+    let total_count = ufscustom_list.len();
+
+    if total_count <= max_records {
+        // 샘플링이 필요 없는 경우
+        SamplingInfo {
+            data: ufscustom_list.to_vec(),
+            total_count,
+            sampled_count: total_count,
+            sampling_ratio: 100.0,
+        }
+    } else {
+        // 랜덤 샘플링
+        use rand::seq::SliceRandom;
+        use rand::SeedableRng;
+        
+        println!("🔍 [RANDOM sampling] UFSCUSTOM 랜덤 샘플링: {}/{} 레코드", max_records, total_count);
+        
+        let mut rng = rand::rngs::StdRng::seed_from_u64(12345); // 고정 시드로 재현 가능한 결과
+        let mut indices: Vec<usize> = (0..total_count).collect();
+        indices.shuffle(&mut rng);
+        indices.truncate(max_records);
+        indices.sort(); // 시간 순서 유지를 위해 정렬
+        
+        let mut sampled_data = Vec::with_capacity(max_records);
+        for &index in &indices {
+            sampled_data.push(ufscustom_list[index].clone());
+        }
+        
+        let sampled_count = sampled_data.len();
+        let sampling_ratio = (sampled_count as f64 / total_count as f64) * 100.0;
+        
+        println!("  Random sampled: {} records, ratio: {:.2}%", sampled_count, sampling_ratio);
+        
+        SamplingInfo {
+            data: sampled_data,
+            total_count,
+            sampled_count,
+            sampling_ratio,
+        }
+    }
+}
+
 // Arrow IPC 바이트와 샘플링 메타데이터를 함께 보낼 구조체들
 #[derive(Serialize, Debug, Clone)]
 pub struct ArrowBytes {
@@ -131,12 +175,14 @@ pub struct ArrowBytes {
 pub struct TraceDataBytes {
     pub ufs: ArrowBytes,
     pub block: ArrowBytes,
+    pub ufscustom: ArrowBytes,
 }
 
 #[derive(Serialize, Debug, Clone)]
 pub struct TraceLengths {
     pub ufs: usize,
     pub block: usize,
+    pub ufscustom: usize,
 }
 
 // 파일 기반 전송을 위한 구조체
@@ -144,12 +190,16 @@ pub struct TraceLengths {
 pub struct TraceFilePaths {
     pub ufs_path: String,
     pub block_path: String,
+    pub ufscustom_path: String,
     pub ufs_total_count: usize,
     pub ufs_sampled_count: usize,
     pub ufs_sampling_ratio: f64,
     pub block_total_count: usize,
     pub block_sampled_count: usize,
     pub block_sampling_ratio: f64,
+    pub ufscustom_total_count: usize,
+    pub ufscustom_sampled_count: usize,
+    pub ufscustom_sampling_ratio: f64,
 }
 
 // 백분위수 계산을 위한 헬퍼 함수
@@ -323,25 +373,32 @@ pub async fn readtrace(logname: String, max_records: usize) -> Result<TraceDataB
     {
         let ufs_cache = UFS_CACHE.lock().map_err(|e| e.to_string())?;
         let block_cache = BLOCK_CACHE.lock().map_err(|e| e.to_string())?;
+        let ufscustom_cache = UFSCUSTOM_CACHE.lock().map_err(|e| e.to_string())?;
 
-        if ufs_cache.contains_key(&cache_key) || block_cache.contains_key(&cache_key) {
+        if ufs_cache.contains_key(&cache_key) || block_cache.contains_key(&cache_key) || ufscustom_cache.contains_key(&cache_key) {
             let empty_ufs_vec: Vec<UFS> = Vec::new();
             let empty_block_vec: Vec<Block> = Vec::new();
+            let empty_ufscustom_vec: Vec<UFSCUSTOM> = Vec::new();
 
             let ufs_data = ufs_cache.get(&cache_key).unwrap_or(&empty_ufs_vec);
             let block_data = block_cache.get(&cache_key).unwrap_or(&empty_block_vec);
+            let ufscustom_data = ufscustom_cache.get(&cache_key).unwrap_or(&empty_ufscustom_vec);
 
-            println!("🎯 [DEBUG] 캐시된 원본 데이터 사용: UFS={}, Block={}", ufs_data.len(), block_data.len());
+            println!("🎯 [DEBUG] 캐시된 원본 데이터 사용: UFS={}, Block={}, UFSCUSTOM={}", 
+                ufs_data.len(), block_data.len(), ufscustom_data.len());
             
             // 캐시된 원본 데이터를 샘플링해서 반환
             let ufs_sample_info = sample_ufs(&ufs_data, max_records);
             let block_sample_info = sample_block(&block_data, max_records);
+            let ufscustom_sample_info = sample_ufscustom(&ufscustom_data, max_records);
             
             let ufs_batch = crate::trace::ufs::ufs_to_record_batch(&ufs_sample_info.data)?;
             let block_batch = crate::trace::block::block_to_record_batch(&block_sample_info.data)?;
+            let ufscustom_batch = crate::trace::ufscustom::ufscustom_to_record_batch(&ufscustom_sample_info.data)?;
 
             let ufs_bytes = batch_to_ipc_bytes(&ufs_batch)?;
             let block_bytes = batch_to_ipc_bytes(&block_batch)?;
+            let ufscustom_bytes = batch_to_ipc_bytes(&ufscustom_batch)?;
 
             return Ok(TraceDataBytes {
                 ufs: ArrowBytes {
@@ -356,12 +413,19 @@ pub async fn readtrace(logname: String, max_records: usize) -> Result<TraceDataB
                     sampled_count: block_sample_info.sampled_count,
                     sampling_ratio: block_sample_info.sampling_ratio,
                 },
+                ufscustom: ArrowBytes {
+                    bytes: ufscustom_bytes,
+                    total_count: ufscustom_sample_info.total_count,
+                    sampled_count: ufscustom_sample_info.sampled_count,
+                    sampling_ratio: ufscustom_sample_info.sampling_ratio,
+                },
             });
         }
     }
 
     let mut ufs_vec: Vec<UFS> = Vec::new();
     let mut block_vec: Vec<Block> = Vec::new();
+    let mut ufscustom_vec: Vec<UFSCUSTOM> = Vec::new();
 
     // logname에 쉼표가 있으면 각각의 파일 경로로 분리, 없으면 하나의 경로로 처리
     let files: Vec<String> = if logname.contains(',') {
@@ -392,7 +456,113 @@ pub async fn readtrace(logname: String, max_records: usize) -> Result<TraceDataB
         if let Some(fname) = path.file_name().and_then(|s| s.to_str()) {
             println!("🔍 파일명 분석: '{}'", fname);
             
-            if fname.contains("ufs") && fname.ends_with(".parquet") {
+            // ⚠️ 중요: ufscustom을 먼저 체크해야 함 (ufs 체크가 먼저 오면 ufscustom도 매칭됨)
+            if fname.contains("ufscustom") && fname.ends_with(".parquet") {
+                println!("📊 UFSCUSTOM parquet 파일 처리 시작: '{}'", file);
+                // UFSCUSTOM parquet 파일 읽기
+                let read_options = ParquetReadOptions::default();
+                
+                let df = ctx
+                    .read_parquet(
+                        path.to_str().ok_or("Invalid path")?,
+                        read_options,
+                    )
+                    .await
+                    .map_err(|e| e.to_string())?;
+
+                let batches = df.collect().await.map_err(|e| e.to_string())?;
+                for batch in batches {
+                    let num_rows = batch.num_rows();
+                    let schema = batch.schema();
+
+                    // 컬럼 인덱스 추출
+                    let opcode_idx = schema.index_of("opcode").map_err(|e| e.to_string())?;
+                    let lba_idx = schema.index_of("lba").map_err(|e| e.to_string())?;
+                    let size_idx = schema.index_of("size").map_err(|e| e.to_string())?;
+                    let start_time_idx = schema.index_of("start_time").map_err(|e| e.to_string())?;
+                    let end_time_idx = schema.index_of("end_time").map_err(|e| e.to_string())?;
+                    let dtoc_idx = schema.index_of("dtoc").map_err(|e| e.to_string())?;
+                    let start_qd_idx = schema.index_of("start_qd").map_err(|e| e.to_string())?;
+                    let end_qd_idx = schema.index_of("end_qd").map_err(|e| e.to_string())?;
+                    let ctoc_idx = schema.index_of("ctoc").map_err(|e| e.to_string())?;
+                    let ctod_idx = schema.index_of("ctod").map_err(|e| e.to_string())?;
+                    let cont_idx = schema.index_of("continuous").map_err(|e| e.to_string())?;
+
+                    // 각 컬럼 배열 다운캐스팅
+                    let opcode_array = batch
+                        .column(opcode_idx)
+                        .as_any()
+                        .downcast_ref::<arrow::array::StringViewArray>()
+                        .ok_or("Failed to downcast 'opcode'")?;
+                    let lba_array = batch
+                        .column(lba_idx)
+                        .as_any()
+                        .downcast_ref::<arrow::array::UInt64Array>()
+                        .ok_or("Failed to downcast 'lba'")?;
+                    let size_array = batch
+                        .column(size_idx)
+                        .as_any()
+                        .downcast_ref::<arrow::array::UInt32Array>()
+                        .ok_or("Failed to downcast 'size'")?;
+                    let start_time_array = batch
+                        .column(start_time_idx)
+                        .as_any()
+                        .downcast_ref::<arrow::array::Float64Array>()
+                        .ok_or("Failed to downcast 'start_time'")?;
+                    let end_time_array = batch
+                        .column(end_time_idx)
+                        .as_any()
+                        .downcast_ref::<arrow::array::Float64Array>()
+                        .ok_or("Failed to downcast 'end_time'")?;
+                    let dtoc_array = batch
+                        .column(dtoc_idx)
+                        .as_any()
+                        .downcast_ref::<arrow::array::Float64Array>()
+                        .ok_or("Failed to downcast 'dtoc'")?;
+                    let start_qd_array = batch
+                        .column(start_qd_idx)
+                        .as_any()
+                        .downcast_ref::<arrow::array::UInt32Array>()
+                        .ok_or("Failed to downcast 'start_qd'")?;
+                    let end_qd_array = batch
+                        .column(end_qd_idx)
+                        .as_any()
+                        .downcast_ref::<arrow::array::UInt32Array>()
+                        .ok_or("Failed to downcast 'end_qd'")?;
+                    let ctoc_array = batch
+                        .column(ctoc_idx)
+                        .as_any()
+                        .downcast_ref::<arrow::array::Float64Array>()
+                        .ok_or("Failed to downcast 'ctoc'")?;
+                    let ctod_array = batch
+                        .column(ctod_idx)
+                        .as_any()
+                        .downcast_ref::<arrow::array::Float64Array>()
+                        .ok_or("Failed to downcast 'ctod'")?;
+                    let cont_array = batch
+                        .column(cont_idx)
+                        .as_any()
+                        .downcast_ref::<arrow::array::BooleanArray>()
+                        .ok_or("Failed to downcast 'continuous'")?;
+
+                    // 배열에서 값을 추출하여 UFSCUSTOM 객체 생성
+                    for row in 0..num_rows {
+                        ufscustom_vec.push(UFSCUSTOM {
+                            opcode: opcode_array.value(row).to_string(),
+                            lba: lba_array.value(row),
+                            size: size_array.value(row),
+                            start_time: start_time_array.value(row),
+                            end_time: end_time_array.value(row),
+                            dtoc: dtoc_array.value(row),
+                            start_qd: start_qd_array.value(row),
+                            end_qd: end_qd_array.value(row),
+                            ctoc: ctoc_array.value(row),
+                            ctod: ctod_array.value(row),
+                            continuous: cont_array.value(row),
+                        });
+                    }
+                }
+            } else if fname.contains("ufs") && fname.ends_with(".parquet") {
                 println!("📊 UFS parquet 파일 처리 시작: '{}'", file);
                 // UFS parquet 파일 읽기
                 let read_options = ParquetReadOptions::default();
@@ -677,16 +847,18 @@ pub async fn readtrace(logname: String, max_records: usize) -> Result<TraceDataB
         }
     }
 
-    println!("📋 데이터 로딩 완료: UFS={} 개, Block={} 개 레코드", ufs_vec.len(), block_vec.len());
+    println!("📋 데이터 로딩 완료: UFS={} 개, Block={} 개, UFSCUSTOM={} 개 레코드", ufs_vec.len(), block_vec.len(), ufscustom_vec.len());
 
     // 원본 데이터를 캐시에 저장
     {
         let mut ufs_cache = UFS_CACHE.lock().map_err(|e| e.to_string())?;
         let mut block_cache = BLOCK_CACHE.lock().map_err(|e| e.to_string())?;
+        let mut ufscustom_cache = UFSCUSTOM_CACHE.lock().map_err(|e| e.to_string())?;
         
         // 1. 복합 키로 저장 (기존)
         ufs_cache.insert(cache_key.clone(), ufs_vec.clone());
         block_cache.insert(cache_key.clone(), block_vec.clone());
+        ufscustom_cache.insert(cache_key.clone(), ufscustom_vec.clone());
         
         // 2. 개별 파일 키로도 저장 (통계 요청 시 사용)
         if cache_key.contains(',') {
@@ -701,6 +873,10 @@ pub async fn readtrace(logname: String, max_records: usize) -> Result<TraceDataB
                     block_cache.insert(file.to_string(), block_vec.clone());
                     println!("💾 개별 Block 키로도 저장: '{}' -> {} 개 레코드", file, block_vec.len());
                 }
+                if file.contains("_ufscustom.parquet") && !ufscustom_vec.is_empty() {
+                    ufscustom_cache.insert(file.to_string(), ufscustom_vec.clone());
+                    println!("💾 개별 UFSCUSTOM 키로도 저장: '{}' -> {} 개 레코드", file, ufscustom_vec.len());
+                }
             }
         } else {
             // 단일 키인 경우: 파일 타입에 따라 해당 캐시에만 저장
@@ -712,21 +888,28 @@ pub async fn readtrace(logname: String, max_records: usize) -> Result<TraceDataB
                 // Block 파일인 경우 Block 캐시에만 저장 (이미 위에서 저장했으므로 로그만)
                 println!("💾 단일 Block 파일 캐시 저장: '{}' -> {} 개 레코드", cache_key, block_vec.len());
             }
+            if cache_key.contains("_ufscustom.parquet") && !ufscustom_vec.is_empty() {
+                // UFSCUSTOM 파일인 경우 UFSCUSTOM 캐시에만 저장 (이미 위에서 저장했으므로 로그만)
+                println!("💾 단일 UFSCUSTOM 파일 캐시 저장: '{}' -> {} 개 레코드", cache_key, ufscustom_vec.len());
+            }
         }
         
-        println!("💾 원본 데이터를 캐시에 저장: UFS={}, Block={}", ufs_vec.len(), block_vec.len());
+        println!("💾 원본 데이터를 캐시에 저장: UFS={}, Block={}, UFSCUSTOM={}", ufs_vec.len(), block_vec.len(), ufscustom_vec.len());
     }
 
     // 샘플링을 수행
     let ufs_sample_info = sample_ufs(&ufs_vec, max_records);
     let block_sample_info = sample_block(&block_vec, max_records);
+    let ufscustom_sample_info = sample_ufscustom(&ufscustom_vec, max_records);
 
     // Arrow IPC 형식으로 직렬화하여 반환
     let ufs_batch = crate::trace::ufs::ufs_to_record_batch(&ufs_sample_info.data)?;
     let block_batch = crate::trace::block::block_to_record_batch(&block_sample_info.data)?;
+    let ufscustom_batch = crate::trace::ufscustom::ufscustom_to_record_batch(&ufscustom_sample_info.data)?;
 
     let ufs_bytes = batch_to_ipc_bytes(&ufs_batch)?;
     let block_bytes = batch_to_ipc_bytes(&block_batch)?;
+    let ufscustom_bytes = batch_to_ipc_bytes(&ufscustom_batch)?;
 
     println!("readtrace elapsed time: {:?}", starttime.elapsed());
     Ok(TraceDataBytes {
@@ -741,6 +924,12 @@ pub async fn readtrace(logname: String, max_records: usize) -> Result<TraceDataB
             total_count: block_sample_info.total_count,
             sampled_count: block_sample_info.sampled_count,
             sampling_ratio: block_sample_info.sampling_ratio,
+        },
+        ufscustom: ArrowBytes {
+            bytes: ufscustom_bytes,
+            total_count: ufscustom_sample_info.total_count,
+            sampled_count: ufscustom_sample_info.sampled_count,
+            sampling_ratio: ufscustom_sample_info.sampling_ratio,
         },
     })
 }
@@ -773,6 +962,7 @@ pub async fn readtrace_to_files(logname: String, max_records: usize) -> Result<T
     // 로그 디렉토리에 임시 파일 저장
     let ufs_path = log_dir.join(format!("estrace_temp_ufs_{}.arrow", timestamp));
     let block_path = log_dir.join(format!("estrace_temp_block_{}.arrow", timestamp));
+    let ufscustom_path = log_dir.join(format!("estrace_temp_ufscustom_{}.arrow", timestamp));
 
     // UFS 파일 저장
     let mut ufs_file = File::create(&ufs_path)
@@ -785,19 +975,29 @@ pub async fn readtrace_to_files(logname: String, max_records: usize) -> Result<T
         .map_err(|e| format!("Failed to create Block temp file: {}", e))?;
     block_file.write_all(&trace_data.block.bytes)
         .map_err(|e| format!("Failed to write Block data: {}", e))?;
+    
+    // UFSCUSTOM 파일 저장
+    let mut ufscustom_file = File::create(&ufscustom_path)
+        .map_err(|e| format!("Failed to create UFSCUSTOM temp file: {}", e))?;
+    ufscustom_file.write_all(&trace_data.ufscustom.bytes)
+        .map_err(|e| format!("Failed to write UFSCUSTOM data: {}", e))?;
 
     println!("readtrace_to_files elapsed time: {:?}", starttime.elapsed());
-    println!("📁 임시 파일 생성: UFS={:?}, Block={:?}", ufs_path, block_path);
+    println!("📁 임시 파일 생성: UFS={:?}, Block={:?}, UFSCUSTOM={:?}", ufs_path, block_path, ufscustom_path);
     
     Ok(TraceFilePaths {
         ufs_path: ufs_path.to_string_lossy().to_string(),
         block_path: block_path.to_string_lossy().to_string(),
+        ufscustom_path: ufscustom_path.to_string_lossy().to_string(),
         ufs_total_count: trace_data.ufs.total_count,
         ufs_sampled_count: trace_data.ufs.sampled_count,
         ufs_sampling_ratio: trace_data.ufs.sampling_ratio,
         block_total_count: trace_data.block.total_count,
         block_sampled_count: trace_data.block.sampled_count,
         block_sampling_ratio: trace_data.block.sampling_ratio,
+        ufscustom_total_count: trace_data.ufscustom.total_count,
+        ufscustom_sampled_count: trace_data.ufscustom.sampled_count,
+        ufscustom_sampling_ratio: trace_data.ufscustom.sampling_ratio,
     })
 }
 
@@ -817,6 +1017,7 @@ pub async fn trace_lengths(logname: String) -> Result<TraceLengths, String> {
 
     let mut ufs_len = 0;
     let mut block_len = 0;
+    let mut ufscustom_len = 0;
 
     // 각 파일의 타입을 파일명으로 감지
     for file in files {
@@ -824,10 +1025,12 @@ pub async fn trace_lengths(logname: String) -> Result<TraceLengths, String> {
             ufs_len = parquet_num_rows(&file)?;
         } else if file.contains("_block.parquet") {
             block_len = parquet_num_rows(&file)?;
+        } else if file.contains("_ufscustom.parquet") {
+            ufscustom_len = parquet_num_rows(&file)?;
         }
     }
 
-    Ok(TraceLengths { ufs: ufs_len, block: block_len })
+    Ok(TraceLengths { ufs: ufs_len, block: block_len, ufscustom: ufscustom_len })
 }
 
 // 로그 파일 파싱 및 parquet 저장 함수
@@ -907,9 +1110,10 @@ pub async fn starttrace(fname: String, logfolder: String, window: tauri::Window)
         
         println!("Chunk Size: {} 라인씩 처리", chunk_size);
 
-        let mut ufs_list = Vec::new();
-        let mut block_list = Vec::new();
-        let mut missing_lines = Vec::new();
+        let mut ufs_list: Vec<UFS> = Vec::new();
+        let mut block_list: Vec<Block> = Vec::new();
+        let mut ufscustom_list: Vec<UFSCUSTOM> = Vec::new();
+        let mut missing_lines: Vec<usize> = Vec::new();
 
         // 라인별 병렬 처리
         let lines: Vec<&str> = content.lines().collect();
@@ -925,6 +1129,11 @@ pub async fn starttrace(fname: String, logfolder: String, window: tauri::Window)
         let active_block_pattern = match ACTIVE_BLOCK_PATTERN.read() {
             Ok(pattern) => pattern,
             Err(e) => return Err(format!("Block 패턴 로드 실패: {}", e)),
+        };
+
+        let active_ufscustom_pattern = match ACTIVE_UFSCUSTOM_PATTERN.read() {
+            Ok(pattern) => pattern,
+            Err(e) => return Err(format!("UFSCUSTOM 패턴 로드 실패: {}", e)),
         };
 
         // 진행 상황 표시용 변수
@@ -987,20 +1196,28 @@ pub async fn starttrace(fname: String, logfolder: String, window: tauri::Window)
             let chunk_slice = &lines[chunk_start..chunk_end];
 
             // 청크 병렬 처리
-            let chunk_results: (Vec<UFS>, Vec<Block>, Vec<usize>) = chunk_slice
+            let chunk_results: (Vec<UFS>, Vec<Block>, Vec<UFSCUSTOM>, Vec<usize>) = chunk_slice
                 .par_iter()
                 .enumerate()
                 .map(|(i, &line)| {
                     let line_number = chunk_start + i + 1; // 실제 라인 번호 계산
                     if line.trim().is_empty() {
-                        return (Vec::new(), Vec::new(), vec![line_number]);
+                        return (Vec::new(), Vec::new(), Vec::new(), vec![line_number]);
+                    }
+
+                    // UFSCUSTOM 패턴으로 먼저 파싱 시도
+                    let ufscustom_caps = active_ufscustom_pattern.1.captures(line);
+                    if let Some(caps) = ufscustom_caps {
+                        if let Ok(ufscustom) = parse_ufscustom_trace_with_caps(&caps) {
+                            return (Vec::new(), Vec::new(), vec![ufscustom], Vec::new());
+                        }
                     }
 
                     // UFS 패턴으로 파싱 시도
                     let ufs_caps = active_ufs_pattern.1.captures(line);
                     if let Some(caps) = ufs_caps {
                         if let Ok(ufs) = parse_ufs_trace_with_caps(&caps) {
-                            return (vec![ufs], Vec::new(), Vec::new());
+                            return (vec![ufs], Vec::new(), Vec::new(), Vec::new());
                         }
                     }
 
@@ -1008,38 +1225,41 @@ pub async fn starttrace(fname: String, logfolder: String, window: tauri::Window)
                     let block_caps = active_block_pattern.1.captures(line);
                     if let Some(caps) = block_caps {
                         if let Ok(block) = parse_block_trace_with_caps(&caps) {
-                            return (Vec::new(), vec![block], Vec::new()); // 수정: Block 객체를 두 번째 벡터에 저장
+                            return (Vec::new(), vec![block], Vec::new(), Vec::new());
                         }
                     }
 
                     // 어떤 패턴과도 일치하지 않음
-                    (Vec::new(), Vec::new(), vec![line_number])
+                    (Vec::new(), Vec::new(), Vec::new(), vec![line_number])
                 })
                 .reduce(
                     || {
                         (
                             Vec::with_capacity(chunk_size / 4),  // 메모리 사용 최적화
                             Vec::with_capacity(chunk_size / 4),
+                            Vec::with_capacity(chunk_size / 4),
                             Vec::new(),
                         )
                     },
-                    |(mut acc_ufs, mut acc_block, mut acc_missing),
-                     (ufs_vec, block_vec, missing_vec)| {
+                    |(mut acc_ufs, mut acc_block, mut acc_ufscustom, mut acc_missing),
+                     (ufs_vec, block_vec, ufscustom_vec, missing_vec)| {
                         acc_ufs.extend(ufs_vec);
                         acc_block.extend(block_vec);
+                        acc_ufscustom.extend(ufscustom_vec);
                         acc_missing.extend(missing_vec);
-                        (acc_ufs, acc_block, acc_missing)
+                        (acc_ufs, acc_block, acc_ufscustom, acc_missing)
                     },
                 );
 
             // 결과를 메인 벡터에 추가
             ufs_list.extend(chunk_results.0);
             block_list.extend(chunk_results.1);
+            ufscustom_list.extend(chunk_results.2);
             
             // missing_lines가 너무 많으면 처음 1000개만 저장 (메모리 절약)
             if missing_lines.len() < 1000 {
-                missing_lines.extend(chunk_results.2);
-            } else if missing_lines.len() == 1000 && !chunk_results.2.is_empty() {
+                missing_lines.extend(chunk_results.3);
+            } else if missing_lines.len() == 1000 && !chunk_results.3.is_empty() {
                 missing_lines.push(0); // 표시용 센티널 값
             }
             
@@ -1047,12 +1267,13 @@ pub async fn starttrace(fname: String, logfolder: String, window: tauri::Window)
             if chunk_index % 10 == 0 {
                 let ufs_mem = (std::mem::size_of::<UFS>() * ufs_list.capacity()) as f64 / 1_048_576.0;
                 let block_mem = (std::mem::size_of::<Block>() * block_list.capacity()) as f64 / 1_048_576.0;
-                println!("메모리 사용량 - UFS: {:.1} MB, Block: {:.1} MB", ufs_mem, block_mem);
+                let ufscustom_mem = (std::mem::size_of::<UFSCUSTOM>() * ufscustom_list.capacity()) as f64 / 1_048_576.0;
+                println!("메모리 사용량 - UFS: {:.1} MB, Block: {:.1} MB, UFSCUSTOM: {:.1} MB", ufs_mem, block_mem, ufscustom_mem);
             }
         }
 
-        println!("파싱 완료: UFS 이벤트 {}, Block 이벤트 {}, 미인식 라인 {}",
-                 ufs_list.len(), block_list.len(), 
+        println!("파싱 완료: UFS 이벤트 {}, Block 이벤트 {}, UFSCUSTOM 이벤트 {}, 미인식 라인 {}",
+                 ufs_list.len(), block_list.len(), ufscustom_list.len(),
                  if missing_lines.len() > 1000 { 
                      "1000+".to_string() 
                  } else { 
@@ -1120,12 +1341,37 @@ pub async fn starttrace(fname: String, logfolder: String, window: tauri::Window)
         // 진행 상태 업데이트: Block 처리 완료
         let _ = window.emit("trace-progress", ProgressEvent {
             stage: "latency".to_string(),
+            progress: 60.0,
+            current: 60,
+            total: 100,
+            message: format!("Block latency 처리 완료 (소요시간: {:.1}초)", block_elapsed),
+            eta_seconds: 10.0,
+            processing_speed: if block_elapsed > 0.0 { processed_block_list.len() as f32 / block_elapsed } else { 0.0 },
+        });
+
+        // 작업 취소 확인
+        {
+            let cancel = CANCEL_SIGNAL.lock().map_err(|e| e.to_string())?;
+            if *cancel {
+                return Err("사용자에 의해 작업이 취소되었습니다.".to_string());
+            }
+        }
+        
+        // UFSCUSTOM latency 처리
+        println!("UFSCUSTOM latency 처리 시작...");
+        let ufscustom_start = std::time::Instant::now();
+        let processed_ufscustom_list = ufscustom_bottom_half_latency_process(ufscustom_list);
+        let ufscustom_elapsed = ufscustom_start.elapsed().as_secs_f32();
+        
+        // 진행 상태 업데이트: UFSCUSTOM 처리 완료
+        let _ = window.emit("trace-progress", ProgressEvent {
+            stage: "latency".to_string(),
             progress: 80.0,
             current: 80,
             total: 100,
-            message: format!("Block latency 처리 완료 (소요시간: {:.1}초)", block_elapsed),
+            message: format!("UFSCUSTOM latency 처리 완료 (소요시간: {:.1}초)", ufscustom_elapsed),
             eta_seconds: 10.0, // 파일 저장에 약 10초 소요 예상
-            processing_speed: if block_elapsed > 0.0 { processed_block_list.len() as f32 / block_elapsed } else { 0.0 },
+            processing_speed: if ufscustom_elapsed > 0.0 { processed_ufscustom_list.len() as f32 / ufscustom_elapsed } else { 0.0 },
         });
 
         // 공통 timestamp 생성
@@ -1194,11 +1440,11 @@ pub async fn starttrace(fname: String, logfolder: String, window: tauri::Window)
             // 진행 상태 업데이트: Block 파일 저장 중
             let _ = window.emit("trace-progress", ProgressEvent {
                 stage: "saving".to_string(),
-                progress: 95.0,
-                current: 95,
+                progress: 90.0,
+                current: 90,
                 total: 100,
                 message: format!("Block Parquet 저장 중 ({} 이벤트)...", processed_block_list.len()),
-                eta_seconds: 2.0,
+                eta_seconds: 3.0,
                 processing_speed: 0.0,
             });
             
@@ -1212,6 +1458,52 @@ pub async fn starttrace(fname: String, logfolder: String, window: tauri::Window)
         } else {
             String::new()
         };
+
+        // 작업 취소 확인
+        {
+            let cancel = CANCEL_SIGNAL.lock().map_err(|e| e.to_string())?;
+            if *cancel {
+                return Err("사용자에 의해 작업이 취소되었습니다.".to_string());
+            }
+        }
+        
+        // UFSCUSTOM trace 로그를 parquet 파일로 저장
+        let ufscustom_parquet_filename = if !processed_ufscustom_list.is_empty() {
+            println!("UFSCUSTOM Parquet 저장 중 ({} 이벤트)...", processed_ufscustom_list.len());
+            
+            // 진행 상태 업데이트: UFSCUSTOM 파일 저장 중
+            let _ = window.emit("trace-progress", ProgressEvent {
+                stage: "saving".to_string(),
+                progress: 95.0,
+                current: 95,
+                total: 100,
+                message: format!("UFSCUSTOM Parquet 저장 중 ({} 이벤트)...", processed_ufscustom_list.len()),
+                eta_seconds: 2.0,
+                processing_speed: 0.0,
+            });
+            
+            let log_basename = PathBuf::from(&fname)
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or(&fname)
+                .to_string();
+                
+            save_ufscustom_to_parquet(
+                &processed_ufscustom_list,
+                &logfolder,
+                &log_basename,
+            )?
+        } else {
+            String::new()
+        };
+        
+        // 작업 취소 확인
+        {
+            let cancel = CANCEL_SIGNAL.lock().map_err(|e| e.to_string())?;
+            if *cancel {
+                return Err("사용자에 의해 작업이 취소되었습니다.".to_string());
+            }
+        }
         
         println!("처리 완료!");
         let total_elapsed = start_time.elapsed().as_secs_f64();
@@ -1232,6 +1524,7 @@ pub async fn starttrace(fname: String, logfolder: String, window: tauri::Window)
             missing_lines,
             ufs_parquet_filename,
             block_parquet_filename,
+            ufscustom_parquet_filename,
         })
     })
     .await
@@ -1308,6 +1601,44 @@ pub fn parse_ufs_trace_with_caps(caps: &regex::Captures) -> Result<UFS, String> 
 }
 
 // Captures가 이미 있는 경우 Block 파싱 (중복 코드 방지)
+// UFSCUSTOM 파싱 함수
+pub fn parse_ufscustom_trace_with_caps(caps: &regex::Captures) -> Result<UFSCUSTOM, String> {
+    let opcode = caps.name("opcode").map_or("", |m| m.as_str()).to_string();
+    let lba: u64 = caps
+        .name("lba")
+        .and_then(|m| m.as_str().parse().ok())
+        .unwrap_or(0);
+    let size: u32 = caps
+        .name("size")
+        .and_then(|m| m.as_str().parse().ok())
+        .unwrap_or(0);
+    let start_time: f64 = caps
+        .name("start_time")
+        .and_then(|m| m.as_str().parse().ok())
+        .unwrap_or(0.0);
+    let end_time: f64 = caps
+        .name("end_time")
+        .and_then(|m| m.as_str().parse().ok())
+        .unwrap_or(0.0);
+
+    // dtoc 계산 (밀리초 단위)
+    let dtoc = (end_time - start_time) * 1000.0;
+
+    Ok(UFSCUSTOM {
+        opcode,
+        lba,
+        size,
+        start_time,
+        end_time,
+        dtoc,
+        start_qd: 0,
+        end_qd: 0,
+        ctoc: 0.0,
+        ctod: 0.0,
+        continuous: false,
+    })
+}
+
 pub fn parse_block_trace_with_caps(caps: &regex::Captures) -> Result<Block, String> {
     // Named captures 사용
     let time = caps
@@ -1453,6 +1784,12 @@ async fn filter_block_trace(
             sampled_count,
             sampling_ratio,
         },
+        ufscustom: ArrowBytes {
+            bytes: vec![],
+            total_count: 0,
+            sampled_count: 0,
+            sampling_ratio: 100.0,
+        },
     })
 }
 
@@ -1513,6 +1850,75 @@ async fn filter_ufs_trace(
             sampled_count: 0,
             sampling_ratio: 100.0,
         },
+        ufscustom: ArrowBytes {
+            bytes: vec![],
+            total_count: 0,
+            sampled_count: 0,
+            sampling_ratio: 100.0,
+        },
+    })
+}
+
+async fn filter_ufscustom_trace(
+    logname: &str,
+    zoom_column: &str,
+    time_from: Option<f64>,
+    time_to: Option<f64>,
+    col_from: Option<f64>,
+    col_to: Option<f64>,
+    max_records: usize,
+) -> Result<TraceDataBytes, String> {
+    println!("🎄 [DEBUG] filter_ufscustom_trace 호출: logname='{}', max_records={}", logname, max_records);
+    
+    // filter_ufscustom_data를 사용하여 필터링
+    let filtered_ufscustom = filter_ufscustom_data(logname, time_from, time_to, zoom_column, col_from, col_to)?;
+    
+    let total_count = filtered_ufscustom.len();
+    println!("📋 [DEBUG] UFSCUSTOM 필터링 후 총 레코드: {}", total_count);
+    
+    // 샘플링 수행
+    let sampling_info = if total_count > max_records {
+        println!("⚙️ [DEBUG] UFSCUSTOM 랜덤 샘플링 수행: {} -> {} 레코드", total_count, max_records);
+        sample_ufscustom(&filtered_ufscustom, max_records)
+    } else {
+        println!("✅ [DEBUG] UFSCUSTOM 샘플링 불필요: {} 레코드 그대로 사용", total_count);
+        SamplingInfo {
+            data: filtered_ufscustom,
+            total_count,
+            sampled_count: total_count,
+            sampling_ratio: 100.0,
+        }
+    };
+    
+    let limited_ufscustom = sampling_info.data;
+    let sampled_count = sampling_info.sampled_count;
+    let sampling_ratio = sampling_info.sampling_ratio;
+    
+    println!("📋 [DEBUG] UFSCUSTOM 샘플링 결과: sampled_count={}, sampling_ratio={:.1}%", sampled_count, sampling_ratio);
+    
+    // Arrow RecordBatch 변환 및 IPC 포맷으로 직렬화
+    let batch = ufscustom_to_record_batch(&limited_ufscustom)?;
+    let bytes = batch_to_ipc_bytes(&batch)?;
+    
+    Ok(TraceDataBytes {
+        ufs: ArrowBytes {
+            bytes: vec![],
+            total_count: 0,
+            sampled_count: 0,
+            sampling_ratio: 100.0,
+        },
+        block: ArrowBytes {
+            bytes: vec![],
+            total_count: 0,
+            sampled_count: 0,
+            sampling_ratio: 100.0,
+        },
+        ufscustom: ArrowBytes {
+            bytes,
+            total_count,
+            sampled_count,
+            sampling_ratio,
+        },
     })
 }
 
@@ -1522,6 +1928,9 @@ pub async fn filter_trace(params: FilterTraceParams) -> Result<TraceDataBytes, S
             .await
     } else if params.tracetype == "ufs" {
         filter_ufs_trace(&params.logname, &params.zoom_column, params.time_from, params.time_to, params.col_from, params.col_to, params.max_records)
+            .await
+    } else if params.tracetype == "ufscustom" {
+        filter_ufscustom_trace(&params.logname, &params.zoom_column, params.time_from, params.time_to, params.col_from, params.col_to, params.max_records)
             .await
     } else {
         Err(format!("Unknown trace type: {}", params.tracetype))
@@ -1558,18 +1967,24 @@ pub async fn clear_all_cache() -> Result<String, String> {
 /// 해당 폴더(및 하위 폴더)에 있는 오래된 임시 Arrow 파일들을 삭제합니다.
 /// 
 /// # Arguments
-/// * `db_path` - test.db 파일의 경로
 /// * `max_age_hours` - 삭제할 파일의 최대 나이 (시간 단위, 기본값: 24시간)
 /// 
 /// # Returns
 /// * `Ok(usize)` - 삭제된 파일 수
 /// * `Err(String)` - 에러 메시지
-pub async fn cleanup_temp_arrow_files_impl(db_path: String, max_age_hours: u64) -> Result<usize, String> {
+pub async fn cleanup_temp_arrow_files_impl(max_age_hours: u64) -> Result<usize, String> {
     use std::time::{SystemTime, UNIX_EPOCH};
     use std::fs;
     use std::path::Path;
     
-    println!("🧹 임시 파일 정리 시작 (DB: {})", db_path);
+    // DB 경로 자동 찾기 (홈 디렉토리의 test.db)
+    let home_dir = dirs::home_dir()
+        .ok_or_else(|| "홈 디렉토리를 찾을 수 없습니다".to_string())?;
+    let db_path = home_dir.join("test.db");
+    let db_path_str = db_path.to_str()
+        .ok_or_else(|| "DB 경로 변환 실패".to_string())?;
+    
+    println!("🧹 임시 파일 정리 시작 (DB: {})", db_path_str);
     
     let max_age_secs = max_age_hours * 3600;
     let now = SystemTime::now()

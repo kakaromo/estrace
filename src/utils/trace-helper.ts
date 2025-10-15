@@ -59,6 +59,28 @@ export async function fetchBlockStats(fileName: string, filterParams: any) {
 }
 
 /**
+ * UFSCUSTOM 관련 통계 데이터를 가져오는 함수
+ */
+export async function fetchUfscustomStats(fileName: string, filterParams: any) {
+  const { from_time, to_time, from_lba, to_lba, zoom_column } = filterParams;
+  try {
+    const result = await invoke('ufscustom_allstats', {
+      logname: fileName,
+      zoomColumn: zoom_column,
+      timeFrom: from_time,
+      timeTo: to_time,
+      colFrom: from_lba,
+      colTo: to_lba,
+      thresholds: THRESHOLDS
+    });
+    return validateAllStats(result);
+  } catch (error) {
+    console.error('Error fetching UFSCUSTOM stats:', error);
+    throw error;
+  }
+}
+
+/**
  * 필터링된 데이터를 반환하는 함수
  * ⚡ N+1 문제 해결: 필터가 없으면 원본 데이터 재사용
  */
@@ -98,9 +120,11 @@ export async function filterTraceData(logname: string, traceData: any, selectedT
   // Arrow IPC 데이터 직접 변환 (압축 제거됨)
   const ufsData = new Uint8Array(result.ufs.bytes);
   const blockData = new Uint8Array(result.block.bytes);
+  const ufscustomData = new Uint8Array(result.ufscustom.bytes);
   
   const ufsTable = tableFromIPC(ufsData);
   const blockTable = tableFromIPC(blockData);
+  const ufscustomTable = tableFromIPC(ufscustomData);
   
   console.log('[Performance] filterTraceData 완료 - Arrow Table 직접 사용');
   
@@ -118,6 +142,13 @@ export async function filterTraceData(logname: string, traceData: any, selectedT
       total_count: result.block.total_count,
       sampled_count: result.block.sampled_count,
       sampling_ratio: result.block.sampling_ratio
+    },
+    ufscustom: {
+      table: ufscustomTable,
+      data: null,
+      total_count: result.ufscustom.total_count,
+      sampled_count: result.ufscustom.sampled_count,
+      sampling_ratio: result.ufscustom.sampling_ratio
     }
   };
 

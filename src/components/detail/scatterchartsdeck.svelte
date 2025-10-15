@@ -330,7 +330,17 @@
   }
 
   // ⚡ 최적화: action 필터 로직을 별도 함수로 분리
-  function shouldIncludeItem(action: string): boolean {
+  function shouldIncludeItem(action: string | undefined): boolean {
+    // ⚠️ UFSCUSTOM은 action 필드가 없으므로 필터링하지 않음
+    // UFSCUSTOM 감지: xAxisKey가 'start_time' 또는 'end_time'이면 UFSCUSTOM
+    const isUFSCUSTOM = xAxisKey === 'start_time' || xAxisKey === 'end_time';
+    if (isUFSCUSTOM) {
+      return true; // UFSCUSTOM은 모든 데이터 포함
+    }
+    
+    // action이 없으면 제외 (UFS, Block만 해당)
+    if (!action) return false;
+    
     if (actionFilter) {
       if (actionFilter === 'd') {
         return action === 'send_req' || action === 'block_rq_issue';
@@ -382,9 +392,14 @@
     let processedCount = 0;
     
     // 미리 키 캐싱 (객체 속성 접근 최소화)
+    const isUFSCUSTOM = xAxisKey === 'start_time' || xAxisKey === 'end_time';
+    
     const xKey = xAxisKey;
-    const yKey = yAxisKey;
+    // ⚠️ UFSCUSTOM에서 yAxisKey가 'qd'이면 'end_qd'로 변경
+    const yKey = (isUFSCUSTOM && yAxisKey === 'qd') ? 'end_qd' : yAxisKey;
     const lKey = legendKey;
+
+    console.log(`[desk.gl] isUFSCUSTOM: ${isUFSCUSTOM}, yAxisKey: ${yAxisKey} -> yKey: ${yKey}`);
     
     for (let i = 0; i < dataLength; i++) {
       const item = rawData[i];
@@ -404,13 +419,16 @@
       
       // ⚡ action 필터링 (문자열 연산 최소화)
       const action = item.action || item.command;
-      if (!action || !shouldIncludeItem(action)) continue;
+      // ⚠️ shouldIncludeItem이 먼저 체크 (UFSCUSTOM은 action이 없어도 true 반환)
+      if (!shouldIncludeItem(action)) continue;
       
       // ⚡ 범례 문자열 변환 (한 번만)
       const legendStr = String(item[lKey]);
       const legendColor = getColorForLegend(legendStr);
       
       // ⚡ 변환 및 추가 (스프레드 연산자 제거 - 가장 느림)
+      // ⚠️ UFSCUSTOM은 end_qd 사용, 일반 trace는 qd 사용      
+      const qdValue = isUFSCUSTOM ? item.end_qd : item.qd;
       result.push({
         position: [x, y],
         originalX: x,
@@ -424,7 +442,7 @@
         lba: item.lba,
         sector: item.sector,
         cpu: item.cpu,
-        qd: item.qd,
+        qd: qdValue,
         size: item.size
       });
       

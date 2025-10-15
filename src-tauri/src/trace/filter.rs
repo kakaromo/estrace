@@ -1,4 +1,4 @@
-use crate::trace::{Block, BLOCK_CACHE, UFS, UFS_CACHE};
+use crate::trace::{Block, BLOCK_CACHE, UFS, UFS_CACHE, UFSCUSTOM, UFSCUSTOM_CACHE};
 use rayon::prelude::*;
 
 // 공통 필터링 로직 구현
@@ -289,5 +289,140 @@ pub fn filter_block_data(
     };
 
     println!("✅ [Performance] Block 필터링 완료: {} -> {} 레코드", data_size, filtered.len());
+    Ok(filtered)
+}
+
+// UFSCUSTOM 데이터 필터링 함수
+pub fn filter_ufscustom_data(
+    logname: &str,
+    time_from: Option<f64>,
+    time_to: Option<f64>,
+    zoom_column: &str,
+    col_from: Option<f64>,
+    col_to: Option<f64>,
+) -> Result<Vec<UFSCUSTOM>, String> {
+    println!("🎯 [DEBUG] filter_ufscustom_data 호출: logname='{}'", logname);
+    
+    // 캐시에서 데이터 불러오기 (원본 데이터 우선)
+    let cached_ufscustom_list = {
+        let cache = UFSCUSTOM_CACHE.lock().map_err(|e| e.to_string())?;
+        
+        // 디버깅: 캐시에 있는 모든 키 출력
+        let available_keys: Vec<String> = cache.keys().cloned().collect();
+        println!("🔍 [DEBUG] 캐시에 있는 UFSCUSTOM 키들: {:?}", available_keys);
+        
+        // 1. 먼저 정확한 키로 시도
+        if let Some(data) = cache.get(logname) {
+            println!("🎯 [DEBUG] 정확한 키 '{}' 매치: {} 개 레코드", logname, data.len());
+            data.clone()
+        }
+        // 2. 개별 파일 키가 없다면, 복합 키에서 찾기
+        else {
+            let mut found_data: Option<Vec<UFSCUSTOM>> = None;
+            
+            // 모든 캐시 키를 확인하여 복합 키 찾기
+            for (cache_key, data) in cache.iter() {
+                // 콤마로 구분된 복합 키인지 확인
+                if cache_key.contains(',') {
+                    let files: Vec<&str> = cache_key.split(',').map(|s| s.trim()).collect();
+                    // logname이 복합 키의 일부인지 확인
+                    if files.iter().any(|&file| file == logname) {
+                        println!("🎯 [DEBUG] 복합 키 '{}' 에서 '{}' 찾음: {} 개 레코드", cache_key, logname, data.len());
+                        found_data = Some(data.clone());
+                        break;
+                    }
+                }
+            }
+            
+            // 3. 캐시에 없으면 자동으로 readtrace 호출하여 데이터 로드
+            if found_data.is_none() {
+                drop(cache); // 락 해제
+                println!("⚡ [DEBUG] UFSCUSTOM 캐시 없음, 자동 로드 시도: '{}'", logname);
+                return Err(format!("UFSCUSTOM 캐시에 '{}' 데이터가 없습니다.", logname));
+            }
+            
+            found_data.unwrap()
+        }
+    };
+
+    let data_size = cached_ufscustom_list.len();
+    println!("📊 [Performance] UFSCUSTOM 필터링 시작: {} 레코드", data_size);
+    
+    let use_parallel = data_size > 10000;
+    
+    // 1. 시간 기반 필터링
+    let time_filtered: Vec<UFSCUSTOM> = if let (Some(t_from), Some(t_to)) = (time_from, time_to) {
+        // ⚠️ 중요: 0.0, 0.0은 필터링 없음을 의미 (UFS, Block과 동일한 로직)
+        if t_from == 0.0 && t_to == 0.0 {
+            cached_ufscustom_list
+        } else {
+            if use_parallel {
+                println!("⚡ [Performance] UFSCUSTOM 병렬 시간 필터링: {} - {}", t_from, t_to);
+                cached_ufscustom_list
+                    .into_par_iter()
+                    .filter(|ufscustom| ufscustom.start_time >= t_from && ufscustom.start_time <= t_to)
+                    .collect()
+            } else {
+                cached_ufscustom_list
+                    .into_iter()
+                    .filter(|ufscustom| ufscustom.start_time >= t_from && ufscustom.start_time <= t_to)
+                    .collect()
+            }
+        }
+    } else {
+        cached_ufscustom_list
+    };
+
+    println!("📊 [Performance] UFSCUSTOM 시간 필터링 후: {} 레코드", time_filtered.len());
+
+    // 2. 컬럼 기반 필터링 (zoom_column)
+    let filtered: Vec<UFSCUSTOM> = if let (Some(v_from), Some(v_to)) = (col_from, col_to) {
+        // ⚠️ 중요: 0.0, 0.0은 필터링 없음을 의미 (UFS, Block과 동일한 로직)
+        if v_from == 0.0 && v_to == 0.0 {
+            time_filtered
+        } else {
+            let filtered_size = time_filtered.len();
+            if use_parallel && filtered_size > 10000 {
+                println!("⚡ [Performance] UFSCUSTOM 병렬 필드 필터링 ({}): {} 레코드", zoom_column, filtered_size);
+                time_filtered
+                    .into_par_iter()
+                    .filter(|ufscustom| {
+                        let value: f64 = match zoom_column {
+                            "lba" => ufscustom.lba as f64,
+                            "size" => ufscustom.size as f64,
+                            "dtoc" => ufscustom.dtoc,
+                            "ctoc" => ufscustom.ctoc,
+                            "ctod" => ufscustom.ctod,
+                            "start_qd" => ufscustom.start_qd as f64,
+                            "end_qd" => ufscustom.end_qd as f64,
+                            _ => return false, // 지원하지 않는 컬럼
+                        };
+                        value >= v_from && value <= v_to
+                    })
+                    .collect()
+            } else {
+                time_filtered
+                    .into_iter()
+                    .filter(|ufscustom| {
+                        let value: f64 = match zoom_column {
+                            "lba" => ufscustom.lba as f64,
+                            "size" => ufscustom.size as f64,
+                            "dtoc" => ufscustom.dtoc,
+                            "ctoc" => ufscustom.ctoc,
+                            "ctod" => ufscustom.ctod,
+                            "start_qd" => ufscustom.start_qd as f64,
+                            "end_qd" => ufscustom.end_qd as f64,
+                            _ => return false, // 지원하지 않는 컬럼
+                        };
+                        value >= v_from && value <= v_to
+                    })
+                    .collect()
+            }
+        }
+    } else {
+        time_filtered
+    };
+
+    println!("✅ [Performance] UFSCUSTOM 필터링 완료: {} -> {} 레코드", data_size, filtered.len());
     Ok(filtered)
 }

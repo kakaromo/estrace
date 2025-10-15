@@ -1,4 +1,4 @@
-use serde::Serialize;
+use serde::{Serialize, Deserialize};
 use std::collections::{BTreeMap, HashMap};
 
 // UFS는 Universal Flash Storage의 약어이므로 UFs로 변경하지 않고 원래 이름 유지
@@ -20,6 +20,24 @@ pub struct UFS {
     pub ctoc: f64, // Complete to Complete latency
     pub ctod: f64, // Complete to Device latency
     pub continuous: bool,
+}
+
+// UFS는 Universal Flash Storage의 약어이므로 UFs로 변경하지 않고 원래 이름 유지
+#[allow(clippy::upper_case_acronyms)]
+#[derive(Serialize, Debug, Clone)]
+pub struct UFSCUSTOM {
+    pub opcode: String,
+    pub lba: u64,
+    pub size: u32,
+    pub start_time: f64,
+    pub end_time: f64,
+    pub dtoc: f64,
+    // 새로 추가할 필드들
+    pub start_qd: u32,     // Queue Depth at request start
+    pub end_qd: u32,       // Queue Depth at request end
+    pub ctoc: f64,         // Complete to Complete latency (ms)
+    pub ctod: f64,         // Complete to Dispatch latency (ms)
+    pub continuous: bool,  // 연속적인 요청 여부
 }
 
 #[derive(Serialize, Debug, Clone)]
@@ -75,9 +93,10 @@ pub struct TraceParseResult {
     pub missing_lines: Vec<usize>,
     pub ufs_parquet_filename: String,
     pub block_parquet_filename: String,
+    pub ufscustom_parquet_filename: String,
 }
 
-#[derive(Serialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct LatencySummary {
     pub sum: f64,
     pub min: f64,
@@ -88,25 +107,25 @@ pub struct LatencySummary {
     pub percentiles: HashMap<String, f64>,
 }
 
-#[derive(Serialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct LatencyStats {
     pub latency_counts: BTreeMap<String, BTreeMap<String, usize>>,
     pub summary: Option<BTreeMap<String, LatencySummary>>,
 }
 
-#[derive(Serialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct SizeStats {
     pub opcode_stats: BTreeMap<String, BTreeMap<u32, usize>>,
     pub total_counts: BTreeMap<String, usize>,
 }
 
-#[derive(Serialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct ContinuityStats {
     pub op_stats: BTreeMap<String, ContinuityCount>,
     pub total: TotalContinuity,
 }
 
-#[derive(Serialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct ContinuityCount {
     pub continuous: usize,     // 연속적인 요청 수
     pub non_continuous: usize, // 비연속적인 요청 수
@@ -116,7 +135,7 @@ pub struct ContinuityCount {
     pub bytes_ratio: f64,      // 연속 바이트 비율
 }
 
-#[derive(Serialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct TotalContinuity {
     pub total_requests: usize,      // 전체 요청 수
     pub continuous_requests: usize, // 연속적인 요청 수
@@ -126,7 +145,7 @@ pub struct TotalContinuity {
     pub bytes_ratio: f64,           // 연속 바이트 비율
 }
 
-#[derive(Serialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct TraceStats {
     pub dtoc_stat: LatencyStats,
     pub ctod_stat: LatencyStats,

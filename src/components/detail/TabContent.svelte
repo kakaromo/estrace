@@ -23,6 +23,16 @@
         statData = {}
      } : TabContentProps = $props();
 
+    // UFSCUSTOM의 경우 시간 필드를 동적으로 결정
+    // - 기본: start_time (dtoc, ctod)
+    // - ctoc: end_time
+    // - 일반 trace (ufs, block): time
+    const timeField = $derived(
+        traceType === 'ufscustom' 
+            ? (columnType.toLowerCase() === 'ctoc' ? 'end_time' : 'start_time')
+            : 'time'
+    );
+
 </script>
 
 <Card.Root>
@@ -31,7 +41,7 @@
         <ScatterChartsDeck 
             data={data}
             table={table}
-            xAxisKey='time' 
+            xAxisKey={timeField}
             yAxisKey={columnType.toLowerCase()} 
             {legendKey} 
             yAxisLabel='ms' 

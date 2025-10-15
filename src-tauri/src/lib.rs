@@ -80,6 +80,10 @@ pub fn run() {
             trace::block_allstats,
             trace::ufs_continuity_stats,
             trace::block_continuity_stats,
+            trace::ufscustom_latencystats,
+            trace::ufscustom_sizestats,
+            trace::ufscustom_allstats,
+            trace::ufscustom_continuity_stats,
             trace::export_to_csv,
             trace::filter_trace,
             // Pattern management commands

@@ -12,8 +12,20 @@
         iscpu: boolean;
         islatency: boolean;
         issizestats: boolean;
+        traceType?: string;  // 추가: trace 타입 확인용
     }
-    let { ispattern = $bindable(), isrwd = $bindable(), isqd = $bindable(), iscpu = $bindable(), islatency = $bindable(), issizestats = $bindable() }:VisualItemProps = $props();       
+    let { 
+        ispattern = $bindable(), 
+        isrwd = $bindable(), 
+        isqd = $bindable(), 
+        iscpu = $bindable(), 
+        islatency = $bindable(), 
+        issizestats = $bindable(),
+        traceType = ''
+    }:VisualItemProps = $props();
+    
+    // UFSCUSTOM은 CPU 정보가 없음
+    const isCpuDisabled = $derived(traceType === 'ufscustom');
 </script>
 
 <Sheet.Root>
@@ -40,8 +52,10 @@
             <Label for="qd">QueueDepth</Label>
         </div>
         <div class="flex items-center space-x-2 pb-4">
-            <Checkbox id="cpu" bind:checked={iscpu}/>
-            <Label for="cpu">CPU</Label>
+            <Checkbox id="cpu" bind:checked={iscpu} disabled={isCpuDisabled}/>
+            <Label for="cpu" class={isCpuDisabled ? 'opacity-50 cursor-not-allowed' : ''}>
+                CPU {isCpuDisabled ? '(not available)' : ''}
+            </Label>
         </div>
         <div class="flex items-center space-x-2 pb-4">
             <Checkbox id="latency" bind:checked={islatency}/>

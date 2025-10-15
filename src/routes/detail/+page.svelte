@@ -39,6 +39,7 @@
     import { 
         fetchUfsStats, 
         fetchBlockStats, 
+        fetchUfscustomStats,
         filterTraceData, 
         THRESHOLDS as thresholds,
         fetchTraceLengths
@@ -59,11 +60,17 @@
     // ⚡ 성능 최적화: Arrow Table 직접 사용 (.data 제거)
     let currentFilteredTable = $derived(filteredData[$selectedTrace]?.table ?? null);
     let currentFiltered:Array = $derived(filteredData[$selectedTrace]?.data ?? []); // 호환성용 (CPUTabs, RWDStats 등)
-    let legendKey:string = $derived($selectedTrace === 'ufs' ? 'opcode' : 'io_type');
-    let patternAxis:Object = $derived($selectedTrace === 'ufs'
+    let legendKey:string = $derived($selectedTrace === 'ufs' || $selectedTrace === 'ufscustom' ? 'opcode' : 'io_type');
+    let patternAxis:Object = $derived($selectedTrace === 'ufs' || $selectedTrace === 'ufscustom'
         ? { key: 'lba', label: '4KB', column: 'lba' }
         : { key: 'sector', label: 'sector', column: 'sector' });
-    let currentStats:Object = $derived($selectedTrace === 'ufs' ? ufsStats : blockStats);
+    // UFSCUSTOM은 start_time 사용, 일반 trace는 time 사용
+    let timeField:string = $derived($selectedTrace === 'ufscustom' ? 'start_time' : 'time');
+    let currentStats:Object = $derived(
+        $selectedTrace === 'ufs' ? ufsStats : 
+        $selectedTrace === 'ufscustom' ? ufscustomStats : 
+        blockStats
+    );
     let isLoading:boolean = $state(false);
 
     // Retry 관련 상태 추가
@@ -110,18 +117,29 @@
         continuous: null,
     });
 
+    // UFSCUSTOM 통계 데이터
+    let ufscustomStats = $state({
+        dtocStat: null,
+        ctodStat: null,
+        ctocStat: null,
+        sizeCounts: null,
+        continuous: null,
+    });
+
     // 파일 내보내기 상태
     let isExporting = $state(false);
     let showExportDialog = $state(false);
     let exportResult = $state('');
     let parquetFiles = $state({
         ufs: '',
-        block: ''
+        block: '',
+        ufscustom: ''
     });
 
     let fileNames = $state({
         ufs: '',
-        block: ''
+        block: '',
+        ufscustom: ''
     });
 
     let buffersize = $state(0);
@@ -164,12 +182,17 @@
         // selectedTrace가 변경될 때만 filtertrace 초기화
         if ($selectedTrace) {
             $filtertrace = {
-                zoom_column: $selectedTrace === 'ufs' ? 'lba' : 'sector',
+                zoom_column: ($selectedTrace === 'ufs' || $selectedTrace === 'ufscustom') ? 'lba' : 'sector',
                 from_time: 0.0,
                 to_time: 0.0,
                 from_lba: 0.0,
                 to_lba: 0.0,
             };
+            
+            // UFSCUSTOM 선택 시 CPU 차트 비활성화 (CPU 정보 없음)
+            if ($selectedTrace === 'ufscustom' && iscpu) {
+                iscpu = false;
+            }
         }
     })
     
@@ -276,6 +299,9 @@
             } else if ($selectedTrace === 'block') {
                 const stats = await fetchBlockStats(fileNames.block, $filtertrace);
                 blockStats = stats;
+            } else if ($selectedTrace === 'ufscustom') {
+                const stats = await fetchUfscustomStats(fileNames.ufscustom, $filtertrace);
+                ufscustomStats = stats;
             }
         } catch (error) {
             console.error('[Trace] 통계 데이터 로드 중 오류 발생:', error);
@@ -330,15 +356,27 @@
                 parquetFiles.block = names[0];
                 fileNames.ufs = '';
                 parquetFiles.ufs = '';
+                fileNames.ufscustom = '';
+                parquetFiles.ufscustom = '';
             } else if (data.logtype === 'ufs') {
                 // ufs만 있는 경우
                 fileNames.ufs = names[0];
                 parquetFiles.ufs = names[0];
                 fileNames.block = '';
                 parquetFiles.block = '';
+                fileNames.ufscustom = '';
+                parquetFiles.ufscustom = '';
+            } else if (data.logtype === 'ufscustom') {
+                // ufscustom만 있는 경우
+                fileNames.ufscustom = names[0];
+                parquetFiles.ufscustom = names[0];
+                fileNames.ufs = '';
+                parquetFiles.ufs = '';
+                fileNames.block = '';
+                parquetFiles.block = '';
             } else if (data.logtype === 'both' || names.length > 1) {
-                // 둘 다 있는 경우
-                console.log('Processing both UFS and Block files');
+                // 여러 개 있는 경우
+                console.log('Processing multiple trace files');
                 if (names.length > 0) {
                     fileNames.ufs = names[0];
                     parquetFiles.ufs = names[0];
@@ -348,13 +386,20 @@
                     fileNames.block = names[1];
                     parquetFiles.block = names[1];
                 }
+                
+                if (names.length > 2) {
+                    fileNames.ufscustom = names[2];
+                    parquetFiles.ufscustom = names[2];
+                }
             } else {
                 // 기타 경우
-                console.log('Unknown logtype, using first name for both');
+                console.log('Unknown logtype, using first name for all');
                 fileNames.ufs = names[0] || '';
                 parquetFiles.ufs = names[0] || '';
                 fileNames.block = names[0] || '';
                 parquetFiles.block = names[0] || '';
+                fileNames.ufscustom = names[0] || '';
+                parquetFiles.ufscustom = names[0] || '';
             }
             
             console.log('setParquetFilePaths - final fileNames:', fileNames);
@@ -378,7 +423,7 @@
                 console.warn('[Performance] 캐시 읽기 실패, 원본 데이터 로드:', cacheError);
             }
             
-            if (cached && cached.ufs && cached.block) {
+            if (cached && cached.ufs && cached.block && cached.ufscustom) {
                 try {
                     console.log('[Performance] 캐시된 데이터 발견, Arrow Table 복원 중...');
                     const restoreStart = performance.now();
@@ -390,9 +435,13 @@
                     const blockBytes = cached.block.bytes instanceof Uint8Array
                         ? cached.block.bytes
                         : new Uint8Array(cached.block.bytes);
+                    const ufscustomBytes = cached.ufscustom.bytes instanceof Uint8Array
+                        ? cached.ufscustom.bytes
+                        : new Uint8Array(cached.ufscustom.bytes);
                     
                     const ufsTable = tableFromIPC(ufsBytes);
                     const blockTable = tableFromIPC(blockBytes);
+                    const ufscustomTable = tableFromIPC(ufscustomBytes);
                     
                     tracedata = {
                         ufs: {
@@ -406,6 +455,12 @@
                             total_count: cached.block.total_count,
                             sampled_count: cached.block.sampled_count,
                             sampling_ratio: cached.block.sampling_ratio
+                        },
+                        ufscustom: {
+                            table: ufscustomTable,
+                            total_count: cached.ufscustom.total_count,
+                            sampled_count: cached.ufscustom.sampled_count,
+                            sampling_ratio: cached.ufscustom.sampling_ratio
                         }
                     };
                     
@@ -432,11 +487,12 @@
                 // 파일에서 바이너리 데이터 읽기
                 const ufsData = await readFile(result.ufs_path);
                 const blockData = await readFile(result.block_path);
+                const ufscustomData = await readFile(result.ufscustom_path);
                 const readFileEnd = performance.now();
                 console.log(`[Performance] 파일 읽기 완료: ${(readFileEnd - readFileStart).toFixed(2)}ms`);
                 
                 // 파일 읽기 완료 후 즉시 삭제
-                let ufsRemoved = false, blockRemoved = false;
+                let ufsRemoved = false, blockRemoved = false, ufscustomRemoved = false;
                 try {
                     await remove(result.ufs_path);
                     ufsRemoved = true;
@@ -459,13 +515,25 @@
                         `해결 방법: 파일이 존재하는지, 권한이 충분한지, 다른 프로그램에서 사용 중인지 확인하세요.`
                     );
                 }
-                if (ufsRemoved && blockRemoved) {
+                try {
+                    await remove(result.ufscustom_path);
+                    ufscustomRemoved = true;
+                } catch (ufscustomRemoveError) {
+                    console.warn(
+                        `⚠️  임시 파일 삭제 실패 (ufscustom): ${result.ufscustom_path}\n` +
+                        `오류: ${ufscustomRemoveError}\n` +
+                        `가능한 원인: 파일이 이미 삭제되었거나, 권한이 없거나, 다른 프로세스에서 사용 중일 수 있습니다.\n` +
+                        `해결 방법: 파일이 존재하는지, 권한이 충분한지, 다른 프로그램에서 사용 중인지 확인하세요.`
+                    );
+                }
+                if (ufsRemoved && blockRemoved && ufscustomRemoved) {
                     console.log('✅ 임시 파일 삭제 완료');
                 }
                 
                 const tableStart = performance.now();                
                 const ufsTable = tableFromIPC(ufsData);
                 const blockTable = tableFromIPC(blockData);
+                const ufscustomTable = tableFromIPC(ufscustomData);
                 const tableEnd = performance.now();
                 console.log(`[Performance] Arrow Table 생성 시간: ${(tableEnd - tableStart).toFixed(2)}ms`);                
                 console.log('[Performance] Arrow Table 생성 완료');
@@ -483,6 +551,12 @@
                         total_count: result.block_total_count,
                         sampled_count: result.block_sampled_count,
                         sampling_ratio: result.block_sampling_ratio
+                    },
+                    ufscustom: {
+                        table: ufscustomTable,  // Table 객체 저장
+                        total_count: result.ufscustom_total_count,
+                        sampled_count: result.ufscustom_sampled_count,
+                        sampling_ratio: result.ufscustom_sampling_ratio
                     }
                 };
                 
@@ -501,6 +575,12 @@
                             total_count: result.block_total_count,
                             sampled_count: result.block_sampled_count,
                             sampling_ratio: result.block_sampling_ratio
+                        },
+                        ufscustom: {
+                            bytes: ufscustomData,  // Uint8Array 직접 저장
+                            total_count: result.ufscustom_total_count,
+                            sampled_count: result.ufscustom_sampled_count,
+                            sampling_ratio: result.ufscustom_sampling_ratio
                         }
                     });
                     const cacheEnd = performance.now();
@@ -689,7 +769,15 @@
     </header>    
     <main class="mx-auto p-6">
         {#if $selectedTrace != '' && filteredData}
-        <VisualItem bind:ispattern bind:isrwd bind:isqd bind:iscpu bind:islatency bind:issizestats />                 
+        <VisualItem 
+            bind:ispattern 
+            bind:isrwd 
+            bind:isqd 
+            bind:iscpu 
+            bind:islatency 
+            bind:issizestats 
+            traceType={$selectedTrace}
+        />                 
         <div class="grid grid-cols-2 gap-4">
             <div class="col-span-2">
                 {#if ispattern}
@@ -702,7 +790,7 @@
                             key={chartKey}
                             table={currentFilteredTable}
                             data={currentFiltered}
-                            xAxisKey='time'
+                            xAxisKey={timeField}
                             yAxisKey={patternAxis.key}
                             legendKey={legendKey}
                             yAxisLabel={patternAxis.label}
@@ -722,7 +810,7 @@
                             key={chartKey}
                             table={currentFilteredTable}
                             data={currentFiltered}
-                            xAxisKey='time'
+                            xAxisKey={timeField}
                             yAxisKey='qd'
                             legendKey={legendKey}
                             yAxisLabel='qd'
@@ -742,6 +830,8 @@
                         <CPUTabs key={chartKey} traceType={$selectedTrace} table={filteredData.ufs?.table} data={filteredData.ufs?.data} legendKey='cpu' />
                         {:else if $selectedTrace === 'block'}
                         <CPUTabs key={chartKey} traceType={$selectedTrace} table={filteredData.block?.table} data={filteredData.block?.data} legendKey='cpu' />
+                        {:else if $selectedTrace === 'ufscustom'}
+                        <CPUTabs key={chartKey} traceType={$selectedTrace} table={filteredData.ufscustom?.table} data={filteredData.ufscustom?.data} legendKey='cpu' />
                         {/if}                        
                     </Card.Content>
                 </Card.Root>
@@ -761,6 +851,8 @@
                         <RWDStats key={chartKey} data={ufsStats.continuous} tracetype={$selectedTrace} {isrwd} />
                         {:else if $selectedTrace === 'block'}
                         <RWDStats key={chartKey} data={blockStats.continuous} tracetype={$selectedTrace} {isrwd} />
+                        {:else if $selectedTrace === 'ufscustom'}
+                        <RWDStats key={chartKey} data={ufscustomStats.continuous} tracetype={$selectedTrace} {isrwd} />
                         {/if}
                     </Card.Content>
                 </Card.Root>                
