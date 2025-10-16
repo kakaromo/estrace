@@ -471,17 +471,24 @@
             // 파싱 결과의 파일 경로들을 합쳐서 logname으로 저장
             let logname = "";
             let detectedLogType = "";
+            const fileNames: string[] = [];
+            const logTypes: string[] = [];
             
-            if (parsedResult.ufs_parquet_filename && parsedResult.block_parquet_filename) {
-                logname = parsedResult.ufs_parquet_filename + "," + parsedResult.block_parquet_filename;
-                detectedLogType = "ufs,block";
-            } else if (parsedResult.ufs_parquet_filename) {
-                logname = parsedResult.ufs_parquet_filename;
-                detectedLogType = "ufs";
-            } else if (parsedResult.block_parquet_filename) {
-                logname = parsedResult.block_parquet_filename;
-                detectedLogType = "block";
+            if (parsedResult.ufs_parquet_filename) {
+                fileNames.push(parsedResult.ufs_parquet_filename);
+                logTypes.push("ufs");
             }
+            if (parsedResult.block_parquet_filename) {
+                fileNames.push(parsedResult.block_parquet_filename);
+                logTypes.push("block");
+            }
+            if (parsedResult.ufscustom_parquet_filename) {
+                fileNames.push(parsedResult.ufscustom_parquet_filename);
+                logTypes.push("ufscustom");
+            }
+            
+            logname = fileNames.join(",");
+            detectedLogType = logTypes.join(",");
             
             // DB 업데이트 (로그 타입도 함께 업데이트)
             await updateReparseResult(id, logname, detectedLogType);

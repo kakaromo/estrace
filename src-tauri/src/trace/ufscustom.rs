@@ -7,6 +7,7 @@ use arrow::array::{ArrayRef, BooleanArray, Float64Array, StringArray, UInt32Arra
 use arrow::datatypes::{DataType, Field, Schema};
 use arrow::record_batch::RecordBatch;
 use parquet::arrow::ArrowWriter;
+use tauri::Emitter;
 
 
 use crate::trace::filter::{filter_ufscustom_data};
@@ -180,17 +181,17 @@ pub fn ufscustom_to_record_batch(ufscustom_list: &[UFSCUSTOM]) -> Result<RecordB
         ]));
         
         let arrays: Vec<ArrayRef> = vec![
-            Arc::new(StringArray::from(Vec::<String>::new())),
-            Arc::new(UInt64Array::from(Vec::<u64>::new())),
-            Arc::new(UInt32Array::from(Vec::<u32>::new())),
-            Arc::new(Float64Array::from(Vec::<f64>::new())),
-            Arc::new(Float64Array::from(Vec::<f64>::new())),
-            Arc::new(Float64Array::from(Vec::<f64>::new())),
-            Arc::new(UInt32Array::from(Vec::<u32>::new())),
-            Arc::new(UInt32Array::from(Vec::<u32>::new())),
-            Arc::new(Float64Array::from(Vec::<f64>::new())),
-            Arc::new(Float64Array::from(Vec::<f64>::new())),
-            Arc::new(BooleanArray::from(Vec::<bool>::new())),
+            Arc::new(StringArray::from(Vec::<String>::new())),  // opcode
+            Arc::new(UInt64Array::from(Vec::<u64>::new())),     // lba
+            Arc::new(UInt32Array::from(Vec::<u32>::new())),     // size
+            Arc::new(Float64Array::from(Vec::<f64>::new())),    // start_time
+            Arc::new(Float64Array::from(Vec::<f64>::new())),    // end_time
+            Arc::new(UInt32Array::from(Vec::<u32>::new())),     // start_qd
+            Arc::new(UInt32Array::from(Vec::<u32>::new())),     // end_qd
+            Arc::new(Float64Array::from(Vec::<f64>::new())),    // dtoc
+            Arc::new(Float64Array::from(Vec::<f64>::new())),    // ctoc
+            Arc::new(Float64Array::from(Vec::<f64>::new())),    // ctod
+            Arc::new(BooleanArray::from(Vec::<bool>::new())),   // continuous
         ];
         
         return RecordBatch::try_new(schema, arrays).map_err(|e| e.to_string());
@@ -258,77 +259,103 @@ pub fn ufscustom_to_record_batch(ufscustom_list: &[UFSCUSTOM]) -> Result<RecordB
     RecordBatch::try_new(schema, arrays).map_err(|e| e.to_string())
 }
 
-// UFSCUSTOM을 Parquet 파일로 저장하는 함수
+// UFSCUSTOM을 Parquet 파일로 저장하는 함수 - chunk 단위로 분할하여 OOM 방지
 pub fn save_ufscustom_to_parquet(
     ufscustom_list: &[UFSCUSTOM],
-    logfolder: &str,
-    log_basename: &str,
+    logfolder: String,
+    fname: String,
+    timestamp: &str,
+    window: Option<&tauri::Window>,
 ) -> Result<String, String> {
-    // logfolder 내에 log_basename 폴더 생성 (ufs, block과 동일한 구조)
+    // logfolder 내에 stem 폴더 생성
+    let stem = PathBuf::from(&fname)
+        .file_stem()
+        .ok_or("Invalid filename")?
+        .to_string_lossy()
+        .to_string();
+
     let mut folder_path = PathBuf::from(logfolder);
-    folder_path.push(log_basename);
-    create_dir_all(&folder_path).map_err(|e| {
-        format!("UFSCUSTOM Parquet 디렉토리 생성 실패: {}", e)
-    })?;
+    folder_path.push(&stem);
+    create_dir_all(&folder_path).map_err(|e| e.to_string())?;
 
-    // 출력 파일 경로 (폴더 내에 저장)
-    let output_path = folder_path.join(format!("{}_ufscustom.parquet", log_basename));
-    
-    let output_path_str = output_path
-        .to_str()
-        .ok_or_else(|| "잘못된 경로".to_string())?;
+    let ufscustom_filename = format!("{}_ufscustom.parquet", timestamp);
+    let mut path = folder_path;
+    path.push(&ufscustom_filename);
 
-    println!("UFSCUSTOM Parquet 저장 시작: {} (레코드 수: {})", output_path_str, ufscustom_list.len());
-
-    // 스키마 정의
-    let schema = Arc::new(Schema::new(vec![
-        Field::new("opcode", DataType::Utf8, false),
-        Field::new("lba", DataType::UInt64, false),
-        Field::new("size", DataType::UInt32, false),
-        Field::new("start_time", DataType::Float64, false),
-        Field::new("end_time", DataType::Float64, false),
-        Field::new("start_qd", DataType::UInt32, false),
-        Field::new("end_qd", DataType::UInt32, false),
-        Field::new("dtoc", DataType::Float64, false),
-        Field::new("ctoc", DataType::Float64, false),
-        Field::new("ctod", DataType::Float64, false),
-        Field::new("continuous", DataType::Boolean, false),
-    ]));
-
-    // Parquet 파일 생성
-    let file = File::create(&output_path).map_err(|e| {
-        format!("UFSCUSTOM Parquet 파일 생성 실패: {}", e)
-    })?;
-
-    let props = parquet::file::properties::WriterProperties::builder()
-        .set_compression(parquet::basic::Compression::SNAPPY)
-        .build();
-
-    let mut writer = ArrowWriter::try_new(file, schema.clone(), Some(props))
-        .map_err(|e| format!("UFSCUSTOM Parquet Writer 생성 실패: {}", e))?;
-
-    // 배치 크기 설정
-    let batch_size = 100_000;
+    // chunk 크기 설정 (400,000 레코드씩 처리)
+    const CHUNK_SIZE: usize = 400_000;
     let total_records = ufscustom_list.len();
     
-    for (batch_idx, chunk) in ufscustom_list.chunks(batch_size).enumerate() {
-        let batch = ufscustom_to_record_batch(chunk)?;
-        writer.write(&batch).map_err(|e| {
-            format!("UFSCUSTOM RecordBatch 쓰기 실패 (배치 {}): {}", batch_idx, e)
-        })?;
-        
-        let processed = ((batch_idx + 1) * batch_size).min(total_records);
-        let progress = (processed * 100) / total_records;
-        println!("  UFSCUSTOM Parquet 저장 진행률: {}% ({}/{})", progress, processed, total_records);
+    if total_records == 0 {
+        return Err("저장할 데이터가 없습니다.".to_string());
     }
+    
+    println!("UFSCUSTOM 데이터 저장 시작: {} 레코드를 {} 레코드씩 Chunk로 처리", total_records, CHUNK_SIZE);
+    
+    let total_chunks = (total_records + CHUNK_SIZE - 1) / CHUNK_SIZE;
+    
+    // 첫 번째 Chunk로 스키마 생성
+    let first_chunk = if total_records > CHUNK_SIZE {
+        &ufscustom_list[0..CHUNK_SIZE]
+    } else {
+        ufscustom_list
+    };
+    
+    let first_batch = ufscustom_to_record_batch(first_chunk)?;
+    let schema = first_batch.schema();
+    let file = File::create(&path).map_err(|e| e.to_string())?;
+    let mut writer = ArrowWriter::try_new(file, schema.clone(), None).map_err(|e| e.to_string())?;
+    
+    // 첫 번째 Chunk 쓰기
+    writer.write(&first_batch).map_err(|e| e.to_string())?;
+    println!("UFSCUSTOM Chunk 1/{} 저장 완료", total_chunks);
+    
+    // 진행률 업데이트 (첫 번째 Chunk)
+    if let Some(w) = window {
+        let progress = 85.0 + (1.0 / total_chunks as f64) * 10.0; // 85%에서 95% 사이
+        let _ = w.emit("trace-progress", crate::trace::ProgressEvent {
+            stage: "saving".to_string(),
+            progress: progress as f32,
+            current: (85 + ((1 * 10) / total_chunks)) as u64,
+            total: 100,
+            message: format!("UFSCUSTOM Parquet 저장 중: {}/{} Chunk", 1, total_chunks),
+            eta_seconds: (total_chunks - 1) as f32 * 0.5,
+            processing_speed: 0.0,
+        });
+    }
+    
+    // 나머지 Chunk들 처리
+    let mut chunk_num = 2;
+    for chunk_start in (CHUNK_SIZE..total_records).step_by(CHUNK_SIZE) {
+        let chunk_end = std::cmp::min(chunk_start + CHUNK_SIZE, total_records);
+        let chunk = &ufscustom_list[chunk_start..chunk_end];
+        
+        let batch = ufscustom_to_record_batch(chunk)?;
+        writer.write(&batch).map_err(|e| e.to_string())?;
+        
+        println!("UFSCUSTOM Chunk {}/{} 저장 완료", chunk_num, total_chunks);
+        
+        // 진행률 업데이트
+        if let Some(w) = window {
+            let progress = 85.0 + (chunk_num as f64 / total_chunks as f64) * 10.0;
+            let _ = w.emit("trace-progress", crate::trace::ProgressEvent {
+                stage: "saving".to_string(),
+                progress: progress as f32,
+                current: (85 + ((chunk_num * 10) / total_chunks)) as u64,
+                total: 100,
+                message: format!("UFSCUSTOM Parquet 저장 중: {}/{} Chunk", chunk_num, total_chunks),
+                eta_seconds: (total_chunks - chunk_num) as f32 * 0.5,
+                processing_speed: 0.0,
+            });
+        }
+        
+        chunk_num += 1;
+    }
+    
+    writer.close().map_err(|e| e.to_string())?;
+    println!("UFSCUSTOM Parquet 파일 저장 완료: {}", path.to_string_lossy());
 
-    writer.close().map_err(|e| {
-        format!("UFSCUSTOM Parquet Writer 종료 실패: {}", e)
-    })?;
-
-    println!("UFSCUSTOM Parquet 저장 완료: {}", output_path_str);
-
-    Ok(output_path.to_string_lossy().to_string())
+    Ok(path.to_string_lossy().to_string())
 }
 
 // UFSCUSTOM 레이턴시 통계 분석을 위한 매개변수 구조체

@@ -669,6 +669,34 @@
     onMount(async () => {
         try {
             isLoading = true;
+            
+            // 🔧 UFSCUSTOM 업데이트로 인한 스키마 변경 - 오래된 캐시 자동 삭제
+            // Cache version: v2 (2025-10-16) - 올바른 스키마의 빈 RecordBatch 포함
+            const CACHE_VERSION = 'v2';
+            const CACHE_VERSION_KEY = 'traceDataCacheVersion';
+            
+            try {
+                const currentVersion = localStorage.getItem(CACHE_VERSION_KEY);
+                if (currentVersion !== CACHE_VERSION) {
+                    console.log(`[Cache] 캐시 버전 불일치 (현재: ${currentVersion}, 필요: ${CACHE_VERSION}) - 전체 캐시 삭제`);
+                    
+                    // IndexedDB 전체 삭제
+                    const databases = await indexedDB.databases();
+                    for (const db of databases) {
+                        if (db.name === 'traceDataCache') {
+                            console.log('[Cache] IndexedDB 삭제:', db.name);
+                            indexedDB.deleteDatabase(db.name);
+                        }
+                    }
+                    
+                    // 버전 업데이트
+                    localStorage.setItem(CACHE_VERSION_KEY, CACHE_VERSION);
+                    console.log('[Cache] 캐시 버전 업데이트 완료');
+                }
+            } catch (cacheError) {
+                console.warn('[Cache] 캐시 정리 중 오류:', cacheError);
+            }
+            
             // 테스트 정보 가져오기
             data = await getTestInfo(id);
             buffersize = await getBufferSize();

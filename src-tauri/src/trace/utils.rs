@@ -1,7 +1,7 @@
 use std::collections::{BTreeMap, HashMap};
 use std::fs::File;
 use std::path::{Path, PathBuf};
-use std::io::Write;
+use std::io::{Write, Read};
 
 use chrono::Local;
 use datafusion::prelude::*;
@@ -11,6 +11,8 @@ use tauri::async_runtime::spawn_blocking;
 use tauri::Emitter;
 use arrow::ipc::writer::StreamWriter;
 use parquet::file::reader::{FileReader, SerializedFileReader};
+use encoding_rs_io::DecodeReaderBytesBuilder;
+use chardetng::EncodingDetector;
 
 use serde::Serialize;
 
@@ -317,6 +319,83 @@ fn batch_to_ipc_bytes(batch: &arrow::record_batch::RecordBatch) -> Result<Vec<u8
              ipc_time.as_millis());
     
     Ok(buf)
+}
+
+// 파일 인코딩을 자동 감지하고 UTF-8로 변환하는 함수
+fn read_file_with_encoding_detection(path: &Path) -> Result<String, String> {
+    let mut file = File::open(path).map_err(|e| e.to_string())?;
+    
+    // 파일의 일부를 읽어서 인코딩 감지 (최대 8KB)
+    let mut buffer = vec![0u8; 8192];
+    let bytes_read = file.read(&mut buffer).map_err(|e| e.to_string())?;
+    buffer.truncate(bytes_read);
+    
+    // chardetng를 사용한 인코딩 감지
+    let mut detector = EncodingDetector::new();
+    detector.feed(&buffer, false);
+    let encoding = detector.guess(None, true);
+    
+    println!("🔍 감지된 파일 인코딩: {}", encoding.name());
+    
+    // 파일을 처음부터 다시 읽기
+    let file = File::open(path).map_err(|e| e.to_string())?;
+    
+    // UTF-8인 경우 직접 읽기
+    if encoding == encoding_rs::UTF_8 {
+        let mut content = String::new();
+        let mut reader = std::io::BufReader::new(file);
+        reader.read_to_string(&mut content).map_err(|e| {
+            // UTF-8이 아닐 수 있으므로 fallback
+            format!("UTF-8 읽기 실패, 다른 인코딩으로 시도: {}", e)
+        })?;
+        return Ok(content);
+    }
+    
+    // 다른 인코딩인 경우 변환하여 읽기
+    let mut decoder = DecodeReaderBytesBuilder::new()
+        .encoding(Some(encoding))
+        .build(file);
+    
+    let mut content = String::new();
+    decoder.read_to_string(&mut content).map_err(|e| {
+        format!("인코딩 변환 실패 ({}): {}", encoding.name(), e)
+    })?;
+    
+    println!("✅ 파일 인코딩 변환 완료: {} → UTF-8 ({} bytes)", encoding.name(), content.len());
+    
+    Ok(content)
+}
+
+// 메모리 맵을 사용하여 파일을 읽고 인코딩을 변환하는 함수
+fn read_mmap_with_encoding_detection(mmap: &Mmap) -> Result<String, String> {
+    // 파일의 일부를 읽어서 인코딩 감지 (최대 8KB)
+    let sample_size = 8192.min(mmap.len());
+    let buffer = &mmap[..sample_size];
+    
+    // chardetng를 사용한 인코딩 감지
+    let mut detector = EncodingDetector::new();
+    detector.feed(buffer, false);
+    let encoding = detector.guess(None, true);
+    
+    println!("🔍 감지된 파일 인코딩 (mmap): {}", encoding.name());
+    
+    // UTF-8인 경우 직접 변환
+    if encoding == encoding_rs::UTF_8 {
+        return std::str::from_utf8(&mmap)
+            .map(|s| s.to_string())
+            .map_err(|e| format!("UTF-8 변환 실패: {}", e));
+    }
+    
+    // 다른 인코딩인 경우 변환
+    let (cow, _, had_errors) = encoding.decode(&mmap);
+    
+    if had_errors {
+        println!("⚠️  인코딩 변환 중 일부 오류 발생 (손실 가능)");
+    }
+    
+    println!("✅ 파일 인코딩 변환 완료: {} → UTF-8 ({} bytes)", encoding.name(), cow.len());
+    
+    Ok(cow.into_owned())
 }
 
 // 구간 키 생성 함수 - latencystats에서 중복 사용
@@ -1066,7 +1145,6 @@ pub async fn starttrace(fname: String, logfolder: String, window: tauri::Window)
             let file = File::open(&fname).map_err(|e| e.to_string())?;
             let mut sample_buffer = vec![0; sample_size.min(file_size as usize)];
             let mut reader = std::io::BufReader::new(file);
-            use std::io::Read;
             let read_bytes = reader.read(&mut sample_buffer).map_err(|e| e.to_string())?;
             
             // 샘플에서 라인 수 계산
@@ -1085,18 +1163,15 @@ pub async fn starttrace(fname: String, logfolder: String, window: tauri::Window)
                 processing_speed: 0.0,
             });
             
-            // 전체 파일 읽기
-            std::fs::read_to_string(&fname).map_err(|e| e.to_string())?
+            // 전체 파일 읽기 (인코딩 자동 감지 및 변환)
+            read_file_with_encoding_detection(Path::new(&fname))?
         } else {
-            // 1GB 미만은 메모리 맵 사용
+            // 5GB 미만은 메모리 맵 사용
             let file = File::open(&fname).map_err(|e| e.to_string())?;
             let mmap = unsafe { Mmap::map(&file).map_err(|e| e.to_string())? };
             
-            // 파일 내용 UTF-8로 변환
-            match std::str::from_utf8(&mmap) {
-                Ok(c) => c.to_string(),
-                Err(e) => return Err(format!("File is not valid UTF-8: {}", e)),
-            }
+            // 파일 내용을 인코딩 자동 감지하여 UTF-8로 변환
+            read_mmap_with_encoding_detection(&mmap)?
         };
 
         // 청크 크기 최적화: 파일 크기에 따라 조정
@@ -1482,16 +1557,12 @@ pub async fn starttrace(fname: String, logfolder: String, window: tauri::Window)
                 processing_speed: 0.0,
             });
             
-            let log_basename = PathBuf::from(&fname)
-                .file_stem()
-                .and_then(|s| s.to_str())
-                .unwrap_or(&fname)
-                .to_string();
-                
             save_ufscustom_to_parquet(
                 &processed_ufscustom_list,
-                &logfolder,
-                &log_basename,
+                logfolder.clone(),
+                fname.clone(),
+                &timestamp,
+                Some(&window),
             )?
         } else {
             String::new()
