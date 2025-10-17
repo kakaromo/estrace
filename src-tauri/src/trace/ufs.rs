@@ -66,12 +66,16 @@ pub fn ufs_bottom_half_latency_process(mut ufs_list: Vec<UFS>) -> Vec<UFS> {
     let start_time = std::time::Instant::now();
     println!("UFS Latency 처리 시작 (이벤트 수: {})", ufs_list.len());
     
-    // time 기준으로 오름차순 정렬
+    // time 기준으로 오름차순 정렬 (unstable sort로 성능 향상)
     println!("  UFS 데이터 시간순 정렬 중...");
-    ufs_list.sort_by(|a, b| a.time.partial_cmp(&b.time).unwrap_or(std::cmp::Ordering::Equal));
+    let sort_start = std::time::Instant::now();
+    ufs_list.sort_unstable_by(|a, b| {
+        a.time.partial_cmp(&b.time).unwrap_or(std::cmp::Ordering::Equal)
+    });
+    println!("  정렬 완료: {:.2}초", sort_start.elapsed().as_secs_f64());
 
-    // 메모리 효율성을 위한 용량 최적화
-    let estimated_capacity = ufs_list.len() / 10;
+    // 메모리 효율성을 위한 용량 최적화 (더 정확한 추정)
+    let estimated_capacity = (ufs_list.len() / 4).max(1024);
     let mut req_times: HashMap<(u32, String), f64> = HashMap::with_capacity(estimated_capacity);
     
     let mut current_qd: u32 = 0;
@@ -83,72 +87,71 @@ pub fn ufs_bottom_half_latency_process(mut ufs_list: Vec<UFS>) -> Vec<UFS> {
     // 이전 send_req의 정보를 저장할 변수들
     let mut prev_send_req: Option<(u64, u32, String)> = None; // (lba, size, opcode)
 
-    // 프로그레스 카운터
+    // 프로그레스 카운터 최적화
     let total_events = ufs_list.len();
-    let report_interval = (total_events / 10).max(1); // 10% 간격으로 진행 상황 보고
-    let mut last_reported = 0;
+    let report_threshold = total_events / 20; // 5% 간격 (더 적은 출력)
     
     println!("  UFS Latency 및 연속성 계산 중...");
+    let processing_start = std::time::Instant::now();
 
     for (idx, ufs) in ufs_list.iter_mut().enumerate() {
-        // 진행 상황 보고 (10% 간격)
-        if idx >= last_reported + report_interval {
+        // 진행 상황 보고 (5% 간격, 모듈로 연산 사용)
+        if report_threshold > 0 && idx % report_threshold == 0 && idx > 0 {
             let progress = (idx * 100) / total_events;
-            println!("  UFS 처리 진행률: {}% ({}/{})", progress, idx, total_events);
-            last_reported = idx;
+            let elapsed = processing_start.elapsed().as_secs_f64();
+            let rate = idx as f64 / elapsed;
+            println!("  UFS 처리 진행률: {}% ({}/{}, {:.0} events/sec)", 
+                     progress, idx, total_events, rate);
         }
 
-        match ufs.action.as_str() {
-            "send_req" => {
-                // 연속성 체크: 이전 send_req가 있는 경우
-                if let Some((prev_lba, prev_size, prev_opcode)) = prev_send_req {
-                    let prev_end_addr = prev_lba + prev_size as u64;
-                    // 현재 요청의 시작 주소가 이전 요청의 끝 주소와 같고, opcode가 같은 경우
-                    ufs.continuous = ufs.lba == prev_end_addr && ufs.opcode == prev_opcode;
-                } else {
-                    ufs.continuous = false;
-                }
-
-                // 현재 send_req 정보 저장
-                prev_send_req = Some((ufs.lba, ufs.size, ufs.opcode.clone()));
-
-                req_times.insert((ufs.tag, ufs.opcode.clone()), ufs.time);
-                current_qd += 1;
-                if current_qd == 1 {
-                    if let Some(t) = last_complete_qd0_time {
-                        ufs.ctod = (ufs.time - t) * MILLISECONDS as f64;
-                    }
-                    first_c = true;
-                    first_complete_time = ufs.time;
-                }
-            }
-            "complete_rsp" => {
-                // complete_rsp는 continuous 체크하지 않음
-                ufs.continuous = false;
-
-                current_qd = current_qd.saturating_sub(1);
-                if let Some(send_time) = req_times.remove(&(ufs.tag, ufs.opcode.clone())) {
-                    ufs.dtoc = (ufs.time - send_time) * MILLISECONDS as f64;
-                }
-                match first_c {
-                    true => {
-                        ufs.ctoc = (ufs.time - first_complete_time) * MILLISECONDS as f64;
-                        first_c = false;
-                    }
-                    false => {
-                        if let Some(t) = last_complete_time {
-                            ufs.ctoc = (ufs.time - t) * MILLISECONDS as f64;
-                        }
-                    }
-                }
-                if current_qd == 0 {
-                    last_complete_qd0_time = Some(ufs.time);
-                }
-                last_complete_time = Some(ufs.time);
-            }
-            _ => {
+        // 성능 최적화: 문자열 비교를 바이트 비교로 대체
+        let action_bytes = ufs.action.as_bytes();
+        
+        if action_bytes == b"send_req" {
+            // 연속성 체크: 이전 send_req가 있는 경우
+            if let Some((prev_lba, prev_size, ref prev_opcode)) = prev_send_req {
+                let prev_end_addr = prev_lba + prev_size as u64;
+                // 현재 요청의 시작 주소가 이전 요청의 끝 주소와 같고, opcode가 같은 경우
+                ufs.continuous = ufs.lba == prev_end_addr && ufs.opcode == *prev_opcode;
+            } else {
                 ufs.continuous = false;
             }
+
+            // 현재 send_req 정보 저장 (clone 최소화)
+            prev_send_req = Some((ufs.lba, ufs.size, ufs.opcode.clone()));
+
+            req_times.insert((ufs.tag, ufs.opcode.clone()), ufs.time);
+            current_qd += 1;
+            if current_qd == 1 {
+                if let Some(t) = last_complete_qd0_time {
+                    ufs.ctod = (ufs.time - t) * MILLISECONDS as f64;
+                }
+                first_c = true;
+                first_complete_time = ufs.time;
+            }
+        } else if action_bytes == b"complete_rsp" {
+            // complete_rsp는 continuous 체크하지 않음
+            ufs.continuous = false;
+
+            current_qd = current_qd.saturating_sub(1);
+            if let Some(send_time) = req_times.remove(&(ufs.tag, ufs.opcode.clone())) {
+                ufs.dtoc = (ufs.time - send_time) * MILLISECONDS as f64;
+            }
+            
+            // 조건 분기 최적화
+            if first_c {
+                ufs.ctoc = (ufs.time - first_complete_time) * MILLISECONDS as f64;
+                first_c = false;
+            } else if let Some(t) = last_complete_time {
+                ufs.ctoc = (ufs.time - t) * MILLISECONDS as f64;
+            }
+            
+            if current_qd == 0 {
+                last_complete_qd0_time = Some(ufs.time);
+            }
+            last_complete_time = Some(ufs.time);
+        } else {
+            ufs.continuous = false;
         }
         ufs.qd = current_qd;
     }

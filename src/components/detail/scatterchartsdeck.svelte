@@ -147,6 +147,37 @@
   // 축 틱 생성 함수
   function generateTicks(min: number, max: number, count: number = 8) {
     const range = max - min;
+    
+    // 범위가 매우 작거나 0인 경우 처리
+    if (range === 0) {
+      // min 값을 중심으로 적절한 범위 생성
+      const centerValue = min;
+      const defaultRange = Math.abs(centerValue) * 0.1 || 1; // 10% 범위 또는 기본 1
+      return [
+        centerValue - defaultRange,
+        centerValue - defaultRange * 0.75,
+        centerValue - defaultRange * 0.5,
+        centerValue - defaultRange * 0.25,
+        centerValue,
+        centerValue + defaultRange * 0.25,
+        centerValue + defaultRange * 0.5,
+        centerValue + defaultRange * 0.75,
+        centerValue + defaultRange
+      ];
+    }
+    
+    // 범위가 매우 작은 경우 (예: 0.001)
+    if (range < 0.01) {
+      // 더 정밀한 눈금 생성
+      const step = range / (count - 1);
+      const ticks = [];
+      for (let i = 0; i < count; i++) {
+        ticks.push(min + step * i);
+      }
+      return ticks;
+    }
+    
+    // 일반적인 경우
     const step = range / (count - 1);
     const ticks = [];
     
@@ -1388,9 +1419,12 @@
     </div>
   {/if}
   
-  <div class="chart-wrapper">
-    <ContextMenu.Root>
-      <ContextMenu.Trigger>
+  <div class="chart-and-legend-wrapper">
+    <div class="chart-wrapper"
+      class:with-legend={legendshow && hasLegendData}
+    >
+      <ContextMenu.Root>
+        <ContextMenu.Trigger>
         <!-- svelte-ignore a11y_no_static_element_interactions -->
         <div 
           class="chart-container-wrapper"
@@ -1447,7 +1481,9 @@
               />
               
               {#each generateTicks(dataBounds.xMin, dataBounds.xMax, 10) as tick, i}
-                {@const x = PADDING_LEFT + ((tick - dataBounds.xMin) / (dataBounds.xMax - dataBounds.xMin)) * chartWidth}
+                {@const xRange = dataBounds.xMax - dataBounds.xMin}
+                {@const x = xRange === 0 ? PADDING_LEFT + chartWidth / 2 : PADDING_LEFT + ((tick - dataBounds.xMin) / xRange) * chartWidth}
+                {@const decimals = xRange < 0.01 ? 6 : (xRange < 1 ? 3 : (xRange < 10 ? 2 : 0))}
                 <g>
                   <!-- 틱 마크 -->
                   <line 
@@ -1476,7 +1512,7 @@
                     font-size="12" 
                     fill="#666"
                   >
-                    {tick.toFixed(0)}
+                    {tick.toFixed(decimals)}
                   </text>
                 </g>
               {/each}
@@ -1583,64 +1619,65 @@
       </ContextMenu.Item>
     </ContextMenu.Content>
   </ContextMenu.Root>
-  </div>
+    </div>
   
-  <!-- Legend or Toggle Button (최상위 레벨) -->
-  {#if hasLegendData}
-    {@const legendItems = getLegendItems()}
-    {@const legendKeys = Object.keys(legendItems)}
-      {#if legendshow === true}
-        <!-- Legend -->
-        <div class="legend-container">
-          <div class="legend-title">
-            <span>{legendKey} ({legendKeys.length})</span>
-            <button 
-              class="legend-close-button"
-              onclick={() => legendshow = false}
-              title="Hide Legend"
-            >
-              ×
-            </button>
-          </div>
-          <div class="legend-items">
-            {#each legendKeys as legend}
-              {@const color = legendItems[legend]}
-              <div 
-                class="legend-item" 
-                class:legend-item-hidden={hiddenLegends.has(legend)}
-                onclick={() => toggleLegend(legend)}
-                onkeydown={(e) => e.key === 'Enter' && toggleLegend(legend)}
-                role="button"
-                tabindex="0"
+    <!-- Legend or Toggle Button (chart-wrapper 외부로 이동) -->
+    {#if hasLegendData}
+      {@const legendItems = getLegendItems()}
+      {@const legendKeys = Object.keys(legendItems)}
+        {#if legendshow === true}
+          <!-- Legend -->
+          <div class="legend-sidebar">
+            <div class="legend-title">
+              <span>{legendKey} ({legendKeys.length})</span>
+              <button 
+                class="legend-close-button"
+                onclick={() => legendshow = false}
+                title="Hide Legend"
               >
-                <span 
-                  class="legend-color" 
-                  style="background-color: rgb({color[0]}, {color[1]}, {color[2]})"
-                ></span>
-                <span class="legend-label">{legend}</span>
-              </div>
-            {/each}
+                ×
+              </button>
+            </div>
+            <div class="legend-items">
+              {#each legendKeys as legend}
+                {@const color = legendItems[legend]}
+                <div 
+                  class="legend-item" 
+                  class:legend-item-hidden={hiddenLegends.has(legend)}
+                  onclick={() => toggleLegend(legend)}
+                  onkeydown={(e) => e.key === 'Enter' && toggleLegend(legend)}
+                  role="button"
+                  tabindex="0"
+                >
+                  <span 
+                    class="legend-color" 
+                    style="background-color: rgb({color[0]}, {color[1]}, {color[2]})"
+                  ></span>
+                  <span class="legend-label">{legend}</span>
+                </div>
+              {/each}
+            </div>
           </div>
-        </div>
-      {:else}
-        <!-- Legend Toggle Button (범례가 꺼져있을 때) -->
-        <button 
-          class="legend-toggle-button"
-          onclick={() => legendshow = true}
-          title="Show Legend"
-          aria-label="Show Legend"
-        >
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <rect x="3" y="3" width="7" height="7" rx="1"></rect>
-            <line x1="14" y1="6.5" x2="21" y2="6.5"></line>
-            <rect x="3" y="14" width="7" height="7" rx="1"></rect>
-            <line x1="14" y1="17.5" x2="21" y2="17.5"></line>
-          </svg>
-        </button>
-      {/if}
-  {:else}
-    {console.log('[범례 체크 0] hasLegendData가 false')}
-  {/if}
+        {:else}
+          <!-- Legend Toggle Button (범례가 꺼져있을 때) -->
+          <button 
+            class="legend-toggle-button-sidebar"
+            onclick={() => legendshow = true}
+            title="Show Legend"
+            aria-label="Show Legend"
+          >
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <rect x="3" y="3" width="7" height="7" rx="1"></rect>
+              <line x1="14" y1="6.5" x2="21" y2="6.5"></line>
+              <rect x="3" y="14" width="7" height="7" rx="1"></rect>
+              <line x1="14" y1="17.5" x2="21" y2="17.5"></line>
+            </svg>
+          </button>
+        {/if}
+    {:else}
+      {console.log('[범례 체크 0] hasLegendData가 false')}
+    {/if}
+  </div>
 </div>
 
 <!-- Title Dialog -->
@@ -1767,13 +1804,24 @@
     flex-shrink: 0;
   }
 
+  .chart-and-legend-wrapper {
+    flex: 1;
+    display: flex;
+    gap: 8px;
+    min-height: 0;
+  }
+
   .chart-wrapper {
     flex: 1;
-    display: block; /* flex 대신 block 사용 */
-    width: 100%;
-    height: 600px; /* 명확한 높이 지정 */
+    display: block;
+    min-width: 0;
     min-height: 600px;
     position: relative;
+    transition: flex 0.3s ease;
+  }
+
+  .chart-wrapper.with-legend {
+    flex: 1 1 auto;
   }
 
   .chart-container-wrapper {
@@ -1807,19 +1855,55 @@
 
   .legend-container {
     position: absolute;
-    right: 20px;
-    top: 50px;
+    right: 10px;
+    top: 60px;
     width: 140px;
     max-height: 400px;
     padding: 0;
-    background: rgba(255, 255, 255, 0.95);
+    background: rgba(255, 255, 255, 0.85);
+    border: 1px solid rgba(0, 0, 0, 0.15);
+    border-radius: 8px;
+    overflow: hidden;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15);
+    pointer-events: auto;
+    z-index: 1000;
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+  }
+
+  /* 새로운 범례 사이드바 스타일 */
+  .legend-sidebar {
+    flex: 0 0 150px;
+    display: flex;
+    flex-direction: column;
+    background: rgba(255, 255, 255, 0.98);
     border: 1px solid rgba(0, 0, 0, 0.1);
     border-radius: 8px;
     overflow: hidden;
-    box-shadow: 0 2px 12px rgba(0, 0, 0, 0.1);
-    pointer-events: auto;
-    z-index: 1000;
-    backdrop-filter: blur(10px);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+    max-height: 100%;
+  }
+
+  .legend-toggle-button-sidebar {
+    flex: 0 0 40px;
+    background: rgba(255, 255, 255, 0.98);
+    border: 1px solid rgba(0, 0, 0, 0.1);
+    border-radius: 6px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+    transition: all 0.15s;
+    color: #6b7280;
+    align-self: flex-start;
+  }
+
+  .legend-toggle-button-sidebar:hover {
+    background: rgba(255, 255, 255, 1);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+    color: #374151;
+    transform: scale(1.05);
   }
 
   .legend-title {
@@ -1858,12 +1942,12 @@
 
   .legend-toggle-button {
     position: absolute;
-    right: 20px;
-    top: 50px;
+    right: 10px;
+    top: 60px;
     width: 32px;
     height: 32px;
-    background: rgba(255, 255, 255, 0.95);
-    border: 1px solid rgba(0, 0, 0, 0.1);
+    background: rgba(255, 255, 255, 0.85);
+    border: 1px solid rgba(0, 0, 0, 0.15);
     border-radius: 6px;
     cursor: pointer;
     display: flex;
@@ -1874,7 +1958,8 @@
     pointer-events: auto;
     z-index: 1000;
     color: #6b7280;
-    backdrop-filter: blur(10px);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
   }
 
   .legend-toggle-button:hover {
@@ -1891,6 +1976,8 @@
     padding: 4px;
     overflow-y: auto;
     max-height: 340px;
+    flex: 1;
+    min-height: 0;
   }
   
   .legend-items::-webkit-scrollbar {

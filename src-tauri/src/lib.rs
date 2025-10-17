@@ -70,6 +70,7 @@ pub fn run() {
             greet,
             trace::starttrace,
             trace::readtrace,
+            trace::readtrace_highperf,  // 고성능 파서 명령 추가
             trace::readtrace_to_files,  // 파일 기반 데이터 전송
             trace::trace_lengths,
             trace::ufs_latencystats,

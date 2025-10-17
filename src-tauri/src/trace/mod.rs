@@ -9,6 +9,7 @@ mod ufs;
 mod ufscustom;
 mod utils;
 mod constants;
+mod parser_highperf; // 고성능 파서 추가
 
 use once_cell::sync::Lazy;
 use regex::Regex;
@@ -93,6 +94,22 @@ lazy_static! {
 #[tauri::command]
 pub async fn readtrace(logname: String, maxrecords: Option<usize>) -> Result<TraceDataBytes, String> {
     utils::readtrace(logname, maxrecords.unwrap_or(DEFAULT_PREVIEW_RECORDS)).await
+}
+
+#[tauri::command]
+pub async fn readtrace_highperf(logname: String) -> Result<String, String> {
+    // 고성능 파서 사용
+    match parser_highperf::parse_log_file_highperf(&logname) {
+        Ok((ufs_traces, block_traces, ufscustom_traces)) => {
+            Ok(format!(
+                "고성능 파싱 완료: UFS={}, Block={}, UFSCUSTOM={}",
+                ufs_traces.len(),
+                block_traces.len(),
+                ufscustom_traces.len()
+            ))
+        }
+        Err(e) => Err(format!("파싱 실패: {}", e)),
+    }
 }
 
 #[tauri::command]
