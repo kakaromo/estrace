@@ -1147,8 +1147,8 @@ pub async fn starttrace(fname: String, logfolder: String, window: tauri::Window)
             println!("🚀 ========== 고성능 파서 모드 사용 ==========");
             let parse_start = std::time::Instant::now();
             
-            // 고성능 파서로 파싱
-            let (mut ufs_list, mut block_list, mut ufscustom_list) = match parse_log_file_highperf(&fname) {
+            // 고성능 파서로 파싱 (window 전달)
+            let (mut ufs_list, mut block_list, mut ufscustom_list) = match parse_log_file_highperf(&fname, Some(&window)) {
                 Ok(result) => result,
                 Err(e) => return Err(format!("고성능 파서 실행 실패: {}", e)),
             };
