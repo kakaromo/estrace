@@ -64,15 +64,19 @@ pub fn ufs_bottom_half_latency_process(mut ufs_list: Vec<UFS>) -> Vec<UFS> {
 
     // 시작 시간 기록
     let start_time = std::time::Instant::now();
-    println!("UFS Latency 처리 시작 (이벤트 수: {})", ufs_list.len());
+    println!("\n🔄 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+    println!("📊 UFS Latency 후처리 시작");
+    println!("   총 이벤트 수: {}", ufs_list.len());
+    println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
     
     // time 기준으로 오름차순 정렬 (unstable sort로 성능 향상)
-    println!("  UFS 데이터 시간순 정렬 중...");
+    println!("\n[1/2] ⏱️  시간순 정렬 중...");
     let sort_start = std::time::Instant::now();
     ufs_list.sort_unstable_by(|a, b| {
         a.time.partial_cmp(&b.time).unwrap_or(std::cmp::Ordering::Equal)
     });
-    println!("  정렬 완료: {:.2}초", sort_start.elapsed().as_secs_f64());
+    let sort_elapsed = sort_start.elapsed().as_secs_f64();
+    println!("      ✅ 정렬 완료: {:.2}초", sort_elapsed);
 
     // 메모리 효율성을 위한 용량 최적화 (더 정확한 추정)
     let estimated_capacity = (ufs_list.len() / 4).max(1024);
@@ -91,7 +95,7 @@ pub fn ufs_bottom_half_latency_process(mut ufs_list: Vec<UFS>) -> Vec<UFS> {
     let total_events = ufs_list.len();
     let report_threshold = total_events / 20; // 5% 간격 (더 적은 출력)
     
-    println!("  UFS Latency 및 연속성 계산 중...");
+    println!("\n[2/2] ⚙️  Latency 및 연속성 계산 중...");
     let processing_start = std::time::Instant::now();
 
     for (idx, ufs) in ufs_list.iter_mut().enumerate() {
@@ -100,8 +104,10 @@ pub fn ufs_bottom_half_latency_process(mut ufs_list: Vec<UFS>) -> Vec<UFS> {
             let progress = (idx * 100) / total_events;
             let elapsed = processing_start.elapsed().as_secs_f64();
             let rate = idx as f64 / elapsed;
-            println!("  UFS 처리 진행률: {}% ({}/{}, {:.0} events/sec)", 
-                     progress, idx, total_events, rate);
+            let remaining = total_events - idx;
+            let eta = if rate > 0.0 { remaining as f64 / rate } else { 0.0 };
+            println!("      📌 진행률: {}% ({}/{}) | 속도: {:.0} events/s | 예상 남은 시간: {:.1}초", 
+                     progress, idx, total_events, rate, eta);
         }
 
         // 성능 최적화: 문자열 비교를 바이트 비교로 대체
@@ -156,11 +162,25 @@ pub fn ufs_bottom_half_latency_process(mut ufs_list: Vec<UFS>) -> Vec<UFS> {
         ufs.qd = current_qd;
     }
 
+    let processing_elapsed = processing_start.elapsed().as_secs_f64();
+    let processing_rate = ufs_list.len() as f64 / processing_elapsed;
+    println!("      ✅ 계산 완료: {} 이벤트 | {:.2}초 | {:.0} events/s", 
+             ufs_list.len(), processing_elapsed, processing_rate);
+    
     // 메모리 최적화를 위해 벡터 크기 조정
     ufs_list.shrink_to_fit();
 
-    let elapsed = start_time.elapsed();
-    println!("UFS Latency 처리 완료: {:.2}초", elapsed.as_secs_f64());
+    let total_elapsed = start_time.elapsed().as_secs_f64();
+    let total_rate = ufs_list.len() as f64 / total_elapsed;
+    println!("\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+    println!("✨ UFS Latency 후처리 완료!");
+    println!("   총 소요 시간: {:.2}초", total_elapsed);
+    println!("   평균 처리 속도: {:.0} events/s", total_rate);
+    println!("   최종 이벤트 수: {}", ufs_list.len());
+    println!("   단계별 시간:");
+    println!("     - 정렬: {:.2}초 ({:.1}%)", sort_elapsed, (sort_elapsed / total_elapsed) * 100.0);
+    println!("     - Latency 계산: {:.2}초 ({:.1}%)", processing_elapsed, (processing_elapsed / total_elapsed) * 100.0);
+    println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n");
     
     ufs_list
 }

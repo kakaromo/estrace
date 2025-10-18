@@ -1351,39 +1351,39 @@
       return;
     }
     
+    // X축은 zoom_column에 따라 from_time/to_time 또는 from_lba/to_lba 사용
+    const ftXMin = ft.zoom_column === 'dtoc' ? ft.from_time : ft.from_lba;
+    const ftXMax = ft.zoom_column === 'dtoc' ? ft.to_time : ft.to_lba;
+    
     // filtertrace 값이 유효하지 않으면 무시 (undefined 체크)
-    if (ft.xmin === undefined || ft.xmax === undefined) {
+    if (ftXMin === undefined || ftXMax === undefined) {
       console.log('[deck.gl] filtertrace 값이 유효하지 않음, 무시');
       return;
     }
     
-    // Y축 값 확인
-    const ftYMin = yAxisKey === 'qd' ? ft.qdmin : yAxisKey === 'addr' ? ft.addrmin : ft.latencymin;
-    const ftYMax = yAxisKey === 'qd' ? ft.qdmax : yAxisKey === 'addr' ? ft.addrmax : ft.latencymax;
-    
-    if (ftYMin === undefined || ftYMax === undefined) {
-      console.log('[deck.gl] filtertrace Y축 값이 유효하지 않음, 무시');
-      return;
-    }
+    // Y축 값은 현재 yAxisKey에 따라 결정되지만, filtertrace에는 해당 속성이 없음
+    // 따라서 현재 originalDataBounds의 yMin/yMax를 사용
+    const ftYMin = originalDataBounds.yMin;
+    const ftYMax = originalDataBounds.yMax;
     
     console.log('[deck.gl] filtertrace 변경 감지:', ft, 'yAxisKey:', yAxisKey);
     
     // 현재 dataBounds와 filtertrace가 다르면 업데이트
     const needsUpdate = 
-      dataBounds.xMin !== ft.xmin ||
-      dataBounds.xMax !== ft.xmax ||
+      dataBounds.xMin !== ftXMin ||
+      dataBounds.xMax !== ftXMax ||
       dataBounds.yMin !== ftYMin ||
       dataBounds.yMax !== ftYMax;
     
     if (needsUpdate) {
       console.log('[deck.gl] filtertrace와 다름, 차트 업데이트 필요');
       console.log('[deck.gl] 현재 dataBounds:', dataBounds);
-      console.log('[deck.gl] 새로운 범위:', { xMin: ft.xmin, xMax: ft.xmax, yMin: ftYMin, yMax: ftYMax });
+      console.log('[deck.gl] 새로운 범위:', { xMin: ftXMin, xMax: ftXMax, yMin: ftYMin, yMax: ftYMax });
       
       // dataBounds 업데이트
       dataBounds = {
-        xMin: ft.xmin,
-        xMax: ft.xmax,
+        xMin: ftXMin,
+        xMax: ftXMax,
         yMin: ftYMin,
         yMax: ftYMax
       };

@@ -1,18 +1,19 @@
 // 고성능 메모리 맵 기반 파서 구현
 // kakaromo/trace의 log_high_perf.rs와 log_common.rs를 참고하여 구현
 
-use crate::trace::{Block, UFS, UFSCUSTOM};
+use crate::trace::{Block, UFS, UFSCUSTOM, ProgressEvent};
 use crate::trace::{ACTIVE_UFS_PATTERN, ACTIVE_BLOCK_PATTERN, ACTIVE_UFSCUSTOM_PATTERN};
 use memmap2::MmapOptions;
 use rayon::prelude::*;
 use regex::Regex;
 use std::fs::File;
 use std::io;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Instant;
+use tauri::Emitter;
 
 /// SIMD 스타일 최적화된 라인 경계 검색
-/// 64바이트 청크 단위로 처리하여 캐시 성능 극대화
+/// 64바이트 Chunk 단위로 처리하여 캐시 성능 극대화
 #[inline]
 fn find_line_boundaries(data: &[u8]) -> Vec<usize> {
     let mut boundaries = Vec::new();
@@ -215,7 +216,7 @@ fn parse_ufscustom_event(line: &str, regex: &Regex) -> Option<UFSCUSTOM> {
     })
 }
 
-/// 고성능 청크 처리
+/// 고성능 Chunk 처리
 fn process_chunk(
     data: &[u8],
     start: usize,
@@ -264,7 +265,10 @@ fn process_chunk(
 }
 
 /// 메인 고성능 파싱 함수
-pub fn parse_log_file_highperf(filepath: &str) -> io::Result<(Vec<UFS>, Vec<Block>, Vec<UFSCUSTOM>)> {
+pub fn parse_log_file_highperf(
+    filepath: &str, 
+    window: Option<&tauri::Window>
+) -> io::Result<(Vec<UFS>, Vec<Block>, Vec<UFSCUSTOM>)> {
     let start_time = Instant::now();
     println!("🚀 고성능 파싱 시작: {}", filepath);
     
@@ -274,23 +278,36 @@ pub fn parse_log_file_highperf(filepath: &str) -> io::Result<(Vec<UFS>, Vec<Bloc
     let file_size_mb = file_size as f64 / (1024.0 * 1024.0);
     println!("📁 파일 크기: {:.2} MB", file_size_mb);
     
+    // 진행 상태 업데이트: 파일 로드 중
+    if let Some(win) = window {
+        let _ = win.emit("trace-progress", ProgressEvent {
+            stage: "loading".to_string(),
+            progress: 5.0,
+            current: 0,
+            total: 100,
+            message: format!("고성능 파서로 파일 로드 중... ({:.2} MB)", file_size_mb),
+            eta_seconds: 0.0,
+            processing_speed: 0.0,
+        });
+    }
+    
     // 메모리 맵 생성
     let mmap = unsafe { MmapOptions::new().map(&file)? };
     let data = Arc::new(mmap);
     println!("🗺️  메모리 매핑 완료");
     
-    // 최적 청크 크기 계산
+    // 최적 Chunk 크기 계산
     let cpu_count = num_cpus::get();
     let optimal_chunk_size = std::cmp::max(
         file_size / (cpu_count as u64 * 4),
         64 * 1024 * 1024 // 최소 64MB
     );
     
-    println!("⚙️  {} CPU 코어 사용, 청크 크기: {:.2} MB", 
+    println!("⚙️  {} CPU 코어 사용, Chunk 크기: {:.2} MB", 
              cpu_count, 
              optimal_chunk_size as f64 / (1024.0 * 1024.0));
     
-    // 라인을 끊지 않는 청크 경계 찾기
+    // 라인을 끊지 않는 Chunk 경계 찾기
     let mut chunk_boundaries = Vec::new();
     let mut pos = 0u64;
     
@@ -312,7 +329,20 @@ pub fn parse_log_file_highperf(filepath: &str) -> io::Result<(Vec<UFS>, Vec<Bloc
         pos = boundary;
     }
     
-    println!("📦 {} 개 청크로 분할 완료", chunk_boundaries.len());
+    println!("📦 {} 개 Chunk로 분할 완료", chunk_boundaries.len());
+    
+    // 진행 상태 업데이트: 패턴 로드
+    if let Some(win) = window {
+        let _ = win.emit("trace-progress", ProgressEvent {
+            stage: "parsing".to_string(),
+            progress: 10.0,
+            current: 0,
+            total: 100,
+            message: format!("{} 개 Chunk로 분할 완료, 파싱 패턴 로드 중...", chunk_boundaries.len()),
+            eta_seconds: 0.0,
+            processing_speed: 0.0,
+        });
+    }
     
     // ACTIVE 패턴 읽기
     println!("📋 ACTIVE 패턴 로드 중...");
@@ -329,23 +359,64 @@ pub fn parse_log_file_highperf(filepath: &str) -> io::Result<(Vec<UFS>, Vec<Bloc
     println!("  - Block: {}", block_pattern.0);
     println!("  - UFSCustom: {}", ufscustom_pattern.0);
     
+    // 진행 상태 카운터 (Arc<Mutex>로 공유)
+    let completed_chunks = Arc::new(Mutex::new(0usize));
+    let total_chunks = chunk_boundaries.len();
+    
     // 병렬 처리
     let parse_start = Instant::now();
     let results: Vec<(Vec<UFS>, Vec<Block>, Vec<UFSCUSTOM>)> = chunk_boundaries
         .par_iter()
         .enumerate()
         .map(|(i, &(start, end))| {
-            if i % 10 == 0 {
-                let progress = (end as f64 / file_size as f64) * 100.0;
-                println!("⏳ 청크 {}: {:.1}% 완료", i, progress);
+            let result = process_chunk(&data, start as usize, end as usize, ufs_regex, block_regex, ufscustom_regex);
+            
+            // 진행 상황 업데이트 (5% 간격)
+            let mut completed = completed_chunks.lock().unwrap();
+            *completed += 1;
+            let progress_pct = (*completed as f64 / total_chunks as f64) * 100.0;
+            
+            if i % (total_chunks / 20).max(1) == 0 || *completed == total_chunks {
+                if let Some(win) = window {
+                    let elapsed = parse_start.elapsed().as_secs_f64();
+                    let speed = *completed as f64 / elapsed;
+                    let remaining = total_chunks - *completed;
+                    let eta = if speed > 0.0 { remaining as f64 / speed } else { 0.0 };
+                    
+                    let _ = win.emit("trace-progress", ProgressEvent {
+                        stage: "parsing".to_string(),
+                        progress: (10.0 + (progress_pct * 0.6)) as f32, // 10% ~ 70% 범위
+                        current: *completed as u64,
+                        total: total_chunks as u64,
+                        message: format!("Parallel parsing 중... ({}/{} Chunk, {:.1} chunks/s)", 
+                                       *completed, total_chunks, speed),
+                        eta_seconds: eta as f32,
+                        processing_speed: speed as f32,
+                    });
+                }
+                println!("⏳ Chunk {}/{}: {:.1}% 완료", *completed, total_chunks, progress_pct);
             }
-            process_chunk(&data, start as usize, end as usize, ufs_regex, block_regex, ufscustom_regex)
+            
+            result
         })
         .collect();
     
-    println!("✅ 병렬 파싱 완료: {:.2}초", parse_start.elapsed().as_secs_f64());
+    println!("✅ Parallel parsing 완료: {:.2}초", parse_start.elapsed().as_secs_f64());
     
-    // 결과 병합
+    // 진행 상태 업데이트: 결과 merge
+    if let Some(win) = window {
+        let _ = win.emit("trace-progress", ProgressEvent {
+            stage: "parsing".to_string(),
+            progress: 72.0,
+            current: 0,
+            total: 100,
+            message: "파싱 완료, 결과 merge 중...".to_string(),
+            eta_seconds: 0.0,
+            processing_speed: 0.0,
+        });
+    }
+    
+    // 결과 merge
     let merge_start = Instant::now();
     let mut ufs_traces = Vec::new();
     let mut block_traces = Vec::new();
@@ -365,10 +436,24 @@ pub fn parse_log_file_highperf(filepath: &str) -> io::Result<(Vec<UFS>, Vec<Bloc
         ufscustom_traces.extend(ufscustom);
     }
     
-    println!("🔗 결과 병합 완료: {:.2}초", merge_start.elapsed().as_secs_f64());
+    println!("🔗 결과 merge 완료: {:.2}초", merge_start.elapsed().as_secs_f64());
+    
+    // 진행 상태 업데이트: 정렬 시작
+    if let Some(win) = window {
+        let _ = win.emit("trace-progress", ProgressEvent {
+            stage: "parsing".to_string(),
+            progress: 75.0,
+            current: 0,
+            total: 100,
+            message: format!("data sort 중... (UFS:{}, Block:{}, UFSCUSTOM:{})", 
+                           ufs_traces.len(), block_traces.len(), ufscustom_traces.len()),
+            eta_seconds: 0.0,
+            processing_speed: 0.0,
+        });
+    }
     
     // 정렬 (unstable sort for performance)
-    println!("🔄 데이터 정렬 중...");
+    println!("🔄 data sort 중...");
     let sort_start = Instant::now();
     
     ufs_traces.sort_unstable_by(|a, b| {
@@ -387,6 +472,19 @@ pub fn parse_log_file_highperf(filepath: &str) -> io::Result<(Vec<UFS>, Vec<Bloc
     
     let total_time = start_time.elapsed().as_secs_f64();
     let throughput = file_size_mb / total_time;
+    
+    // 진행 상태 업데이트: 완료
+    if let Some(win) = window {
+        let _ = win.emit("trace-progress", ProgressEvent {
+            stage: "parsing".to_string(),
+            progress: 80.0,
+            current: 100,
+            total: 100,
+            message: format!("고성능 파싱 완료! ({:.2}초, {:.2} MB/s)", total_time, throughput),
+            eta_seconds: 0.0,
+            processing_speed: throughput as f32,
+        });
+    }
     
     println!("🎉 파싱 완료!");
     println!("  📊 UFS: {}, Block: {}, UFSCUSTOM: {}", 

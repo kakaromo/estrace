@@ -68,19 +68,23 @@ pub fn block_bottom_half_latency_process(block_list: Vec<Block>) -> Vec<Block> {
     
     // 시작 시간 기록
     let start_time = std::time::Instant::now();
-    println!("Block Latency 처리 시작 (이벤트 수: {})", block_list.len());
+    println!("\n🔄 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+    println!("📊 Block Latency 후처리 시작");
+    println!("   총 이벤트 수: {}", block_list.len());
+    println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
     
     // 1. 시간순 정렬 (unstable sort로 성능 향상)
-    println!("  Block 데이터 시간순 정렬 중...");
+    println!("\n[1/3] ⏱️  시간순 정렬 중...");
     let sort_start = std::time::Instant::now();
     let mut sorted_blocks = block_list;
     sorted_blocks.sort_unstable_by(|a, b| {
         a.time.partial_cmp(&b.time).unwrap_or(std::cmp::Ordering::Equal)
     });
-    println!("  정렬 완료: {:.2}초", sort_start.elapsed().as_secs_f64());
+    let sort_elapsed = sort_start.elapsed().as_secs_f64();
+    println!("      ✅ 정렬 완료: {:.2}초", sort_elapsed);
 
     // 2. 중복 block_rq_issue 제거 (사전 작업)
-    println!("  중복 이벤트 필터링 중...");
+    println!("\n[2/3] 🔍 중복 이벤트 필터링 중...");
     let dedup_start = std::time::Instant::now();
     // 키를 (sector, io_type, size)로 확장하여 동일 크기의 요청만 중복으로 처리
     let mut processed_issues = HashSet::with_capacity(sorted_blocks.len() / 4);
@@ -96,8 +100,10 @@ pub fn block_bottom_half_latency_process(block_list: Vec<Block>) -> Vec<Block> {
             let progress = (idx * 100) / total_blocks;
             let elapsed = dedup_start.elapsed().as_secs_f64();
             let rate = idx as f64 / elapsed;
-            println!("  중복 제거 진행률: {}% ({}/{}, {:.0} events/sec)", 
-                     progress, idx, total_blocks, rate);
+            let remaining = total_blocks - idx;
+            let eta = if rate > 0.0 { remaining as f64 / rate } else { 0.0 };
+            println!("      📌 진행률: {}% ({}/{}) | 속도: {:.0} events/s | 예상 남은 시간: {:.1}초", 
+                     progress, idx, total_blocks, rate, eta);
         }
         
         // 성능 최적화: io_type 파싱 함수화
@@ -126,7 +132,9 @@ pub fn block_bottom_half_latency_process(block_list: Vec<Block>) -> Vec<Block> {
     }
 
     let dedup_elapsed = dedup_start.elapsed().as_secs_f64();
-    println!("  중복 제거 완료: {} 이벤트 ({:.2}초)", deduplicated_blocks.len(), dedup_elapsed);
+    let dedup_rate = deduplicated_blocks.len() as f64 / dedup_elapsed;
+    println!("      ✅ 중복 제거 완료: {} 이벤트 | {:.2}초 | {:.0} events/s", 
+             deduplicated_blocks.len(), dedup_elapsed, dedup_rate);
     
     // 메모리 최적화를 위한 용량 조절
     processed_issues.clear();
@@ -134,7 +142,7 @@ pub fn block_bottom_half_latency_process(block_list: Vec<Block>) -> Vec<Block> {
     
     // 3. 중복이 제거된 데이터에 대해 후처리 진행
     // (연속성, Latency 등 처리)
-    println!("  Block Latency 및 연속성 계산 중...");
+    println!("\n[3/3] ⚙️  Latency 및 연속성 계산 중...");
     let processing_start = std::time::Instant::now();
     let mut filtered_blocks = Vec::with_capacity(deduplicated_blocks.len());
     let mut req_times: HashMap<(u64, &'static str), f64> = HashMap::with_capacity(deduplicated_blocks.len() / 4);
@@ -156,8 +164,10 @@ pub fn block_bottom_half_latency_process(block_list: Vec<Block>) -> Vec<Block> {
             let progress = (idx * 100) / total_dedup;
             let elapsed = processing_start.elapsed().as_secs_f64();
             let rate = idx as f64 / elapsed;
-            println!("  Latency 계산 진행률: {}% ({}/{}, {:.0} events/sec)", 
-                     progress, idx, total_dedup, rate);
+            let remaining = total_dedup - idx;
+            let eta = if rate > 0.0 { remaining as f64 / rate } else { 0.0 };
+            println!("      📌 진행률: {}% ({}/{}) | 속도: {:.0} events/s | 예상 남은 시간: {:.1}초", 
+                     progress, idx, total_dedup, rate, eta);
         }
         
         // 기본적으로 continuous를 false로 설정
@@ -224,16 +234,25 @@ pub fn block_bottom_half_latency_process(block_list: Vec<Block>) -> Vec<Block> {
     }
 
     let processing_elapsed = processing_start.elapsed().as_secs_f64();
+    let processing_rate = filtered_blocks.len() as f64 / processing_elapsed;
+    println!("      ✅ 계산 완료: {} 이벤트 | {:.2}초 | {:.0} events/s", 
+             filtered_blocks.len(), processing_elapsed, processing_rate);
     
     // 메모리 최적화를 위해 벡터 크기 조정
     filtered_blocks.shrink_to_fit();
     
-    let elapsed = start_time.elapsed();
-    println!("Block Latency 처리 완료: {:.2}초 (정렬: {:.2}초, 중복제거: {:.2}초, 계산: {:.2}초)", 
-             elapsed.as_secs_f64(), 
-             sort_start.elapsed().as_secs_f64(), 
-             dedup_elapsed,
-             processing_elapsed);
+    let total_elapsed = start_time.elapsed().as_secs_f64();
+    let total_rate = filtered_blocks.len() as f64 / total_elapsed;
+    println!("\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+    println!("✨ Block Latency 후처리 완료!");
+    println!("   총 소요 시간: {:.2}초", total_elapsed);
+    println!("   평균 처리 속도: {:.0} events/s", total_rate);
+    println!("   최종 이벤트 수: {}", filtered_blocks.len());
+    println!("   단계별 시간:");
+    println!("     - 정렬: {:.2}초 ({:.1}%)", sort_elapsed, (sort_elapsed / total_elapsed) * 100.0);
+    println!("     - 중복 제거: {:.2}초 ({:.1}%)", dedup_elapsed, (dedup_elapsed / total_elapsed) * 100.0);
+    println!("     - Latency 계산: {:.2}초 ({:.1}%)", processing_elapsed, (processing_elapsed / total_elapsed) * 100.0);
+    println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n");
     
     filtered_blocks
 }

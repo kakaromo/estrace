@@ -30,15 +30,19 @@ pub fn ufscustom_bottom_half_latency_process(mut ufscustom_list: Vec<UFSCUSTOM>)
 
     // 시작 시간 기록
     let start_time = std::time::Instant::now();
-    println!("UFSCUSTOM Latency 처리 시작 (이벤트 수: {})", ufscustom_list.len());
+    println!("\n🔄 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+    println!("📊 UFSCUSTOM Latency 후처리 시작");
+    println!("   총 이벤트 수: {}", ufscustom_list.len());
+    println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
     
     // start_time 기준으로 오름차순 정렬 (unstable sort로 성능 향상)
-    println!("  UFSCUSTOM 데이터 시간순 정렬 중...");
+    println!("\n[1/3] ⏱️  시간순 정렬 중...");
     let sort_start = std::time::Instant::now();
     ufscustom_list.sort_unstable_by(|a, b| {
         a.start_time.partial_cmp(&b.start_time).unwrap_or(std::cmp::Ordering::Equal)
     });
-    println!("  정렬 완료: {:.2}초", sort_start.elapsed().as_secs_f64());
+    let sort_elapsed = sort_start.elapsed().as_secs_f64();
+    println!("      ✅ 정렬 완료: {:.2}초", sort_elapsed);
 
     // 이벤트 기반 QD 계산을 위한 구조체
     #[derive(Debug, Clone, Copy)]
@@ -55,7 +59,7 @@ pub fn ufscustom_bottom_half_latency_process(mut ufscustom_list: Vec<UFSCUSTOM>)
     }
 
     // 모든 요청에 대한 이벤트 생성 (용량 사전 할당)
-    println!("  QD 계산을 위한 이벤트 생성 중...");
+    println!("\n[2/3] 🔢 QD 계산 중...");
     let qd_calc_start = std::time::Instant::now();
     let mut events = Vec::with_capacity(ufscustom_list.len() * 2);
     for (idx, ufscustom) in ufscustom_list.iter().enumerate() {
@@ -95,10 +99,10 @@ pub fn ufscustom_bottom_half_latency_process(mut ufscustom_list: Vec<UFSCUSTOM>)
 
     // 이벤트 벡터는 자동으로 스코프 종료시 해제됨
     
-    println!("  QD 계산 완료: {:.2}초", qd_calc_start.elapsed().as_secs_f64());
+    let qd_calc_elapsed = qd_calc_start.elapsed().as_secs_f64();
+    println!("      ✅ QD 계산 완료: {:.2}초", qd_calc_elapsed);
 
     // QD 값들을 실제 구조체에 설정
-    println!("  QD 값 적용 중...");
     for (idx, ufscustom) in ufscustom_list.iter_mut().enumerate() {
         ufscustom.start_qd = qd_values[idx].0;
         ufscustom.end_qd = qd_values[idx].1;
@@ -112,7 +116,7 @@ pub fn ufscustom_bottom_half_latency_process(mut ufscustom_list: Vec<UFSCUSTOM>)
     let total_items = ufscustom_list.len();
     let report_threshold = total_items / 20; // 5% 간격
     
-    println!("  UFSCUSTOM Latency 및 연속성 계산 중...");
+    println!("\n[3/3] ⚙️  Latency 및 연속성 계산 중...");
     let latency_start = std::time::Instant::now();
 
     for (i, ufscustom) in ufscustom_list.iter_mut().enumerate() {
@@ -121,8 +125,10 @@ pub fn ufscustom_bottom_half_latency_process(mut ufscustom_list: Vec<UFSCUSTOM>)
             let progress = (i * 100) / total_items;
             let elapsed = latency_start.elapsed().as_secs_f64();
             let rate = i as f64 / elapsed;
-            println!("  UFSCUSTOM 처리 진행률: {}% ({}/{}, {:.0} events/sec)", 
-                     progress, i, total_items, rate);
+            let remaining = total_items - i;
+            let eta = if rate > 0.0 { remaining as f64 / rate } else { 0.0 };
+            println!("      📌 진행률: {}% ({}/{}) | 속도: {:.0} events/s | 예상 남은 시간: {:.1}초", 
+                     progress, i, total_items, rate, eta);
         }
 
         // continuous 요청 판단
@@ -170,15 +176,26 @@ pub fn ufscustom_bottom_half_latency_process(mut ufscustom_list: Vec<UFSCUSTOM>)
         prev_request = Some((ufscustom.lba, ufscustom.size, ufscustom.opcode.clone()));
     }
 
+    let latency_elapsed = latency_start.elapsed().as_secs_f64();
+    let latency_rate = ufscustom_list.len() as f64 / latency_elapsed;
+    println!("      ✅ 계산 완료: {} 이벤트 | {:.2}초 | {:.0} events/s", 
+             ufscustom_list.len(), latency_elapsed, latency_rate);
+    
     // 메모리 최적화
     ufscustom_list.shrink_to_fit();
 
-    let elapsed = start_time.elapsed();
-    println!("UFSCUSTOM 후처리 완료: {:.2}초 (정렬: {:.2}초, QD계산: {:.2}초, Latency계산: {:.2}초)", 
-             elapsed.as_secs_f64(),
-             sort_start.elapsed().as_secs_f64(),
-             qd_calc_start.elapsed().as_secs_f64(),
-             latency_start.elapsed().as_secs_f64());
+    let total_elapsed = start_time.elapsed().as_secs_f64();
+    let total_rate = ufscustom_list.len() as f64 / total_elapsed;
+    println!("\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+    println!("✨ UFSCUSTOM Latency 후처리 완료!");
+    println!("   총 소요 시간: {:.2}초", total_elapsed);
+    println!("   평균 처리 속도: {:.0} events/s", total_rate);
+    println!("   최종 이벤트 수: {}", ufscustom_list.len());
+    println!("   단계별 시간:");
+    println!("     - 정렬: {:.2}초 ({:.1}%)", sort_elapsed, (sort_elapsed / total_elapsed) * 100.0);
+    println!("     - QD 계산: {:.2}초 ({:.1}%)", qd_calc_elapsed, (qd_calc_elapsed / total_elapsed) * 100.0);
+    println!("     - Latency 계산: {:.2}초 ({:.1}%)", latency_elapsed, (latency_elapsed / total_elapsed) * 100.0);
+    println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n");
 
     ufscustom_list
 }

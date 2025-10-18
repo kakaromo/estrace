@@ -97,9 +97,9 @@ pub async fn readtrace(logname: String, maxrecords: Option<usize>) -> Result<Tra
 }
 
 #[tauri::command]
-pub async fn readtrace_highperf(logname: String) -> Result<String, String> {
+pub async fn readtrace_highperf(logname: String, window: tauri::Window) -> Result<String, String> {
     // 고성능 파서 사용
-    match parser_highperf::parse_log_file_highperf(&logname) {
+    match parser_highperf::parse_log_file_highperf(&logname, Some(&window)) {
         Ok((ufs_traces, block_traces, ufscustom_traces)) => {
             Ok(format!(
                 "고성능 파싱 완료: UFS={}, Block={}, UFSCUSTOM={}",
