@@ -80,7 +80,7 @@
     let retryCount:number = $state(0);
     let maxRetries:number = 3;
     let showRetryDialog:boolean = $state(false);
-    // 차트 리렌더링을 위한 키 추가
+    // 차트 true 위한 키 추가
     let chartKey:number = $state(0);
     
     // 시각화 항목 상태
@@ -835,11 +835,11 @@
         <div class="grid grid-cols-2 gap-4">
             <div class="col-span-2">
                 {#if ispattern}
-                <Card.Root class={ispattern ? 'block overflow-visible' : 'hidden'} >
+                <Card.Root class={ispattern ? 'block' : 'hidden'} style="height: 50vh; min-height: 400px; display: flex; flex-direction: column;">
                     <Card.Header>
                         <Card.Title>{$selectedTrace.toUpperCase()} Pattern</Card.Title>
                     </Card.Header>
-                    <Card.Content class="overflow-visible">
+                    <Card.Content style="flex: 1; display: flex; flex-direction: column; padding: 1rem;">
                         <ScatterChartsDeck
                             key={chartKey}
                             table={currentFilteredTable}
@@ -855,11 +855,11 @@
                 {/if}                
                 {#if isqd}
                 <Separator class="my-4 {isqd ? 'block' : 'hidden'}" />
-                <Card.Root class={isqd ? 'block overflow-visible' : 'hidden'} >
+                <Card.Root class={isqd ? 'block' : 'hidden'} style="height: 50vh; min-height: 400px; display: flex; flex-direction: column;">
                     <Card.Header>
                         <Card.Title>{$selectedTrace.toUpperCase()} QueueDepth</Card.Title>
                     </Card.Header>
-                    <Card.Content class="overflow-visible">
+                    <Card.Content style="flex: 1; display: flex; flex-direction: column; padding: 1rem;">
                         <ScatterChartsDeck
                             key={chartKey}
                             table={currentFilteredTable}
@@ -875,11 +875,11 @@
                 {/if}
                 {#if iscpu}
                 <Separator class="my-4 {iscpu ? 'block' : 'hidden'}" />
-                <Card.Root class={iscpu ? 'block overflow-visible' : 'hidden'} >
+                <Card.Root class={iscpu ? 'block' : 'hidden'} style="height: 50vh; min-height: 400px; display: flex; flex-direction: column;">
                     <Card.Header>
                         <Card.Title>{$selectedTrace.toUpperCase()} CPU</Card.Title>
                     </Card.Header>
-                    <Card.Content class="overflow-visible">
+                    <Card.Content style="flex: 1; display: flex; flex-direction: column; padding: 1rem;">
                         {#if $selectedTrace === 'ufs'} 
                         <CPUTabs key={chartKey} traceType={$selectedTrace} table={filteredData.ufs?.table} data={filteredData.ufs?.data} legendKey='cpu' />
                         {:else if $selectedTrace === 'block'}
@@ -913,11 +913,11 @@
                 {/if}
                 {#if islatency}
                 <Separator class="my-4 {islatency ? 'block' : 'hidden'}" />
-                <Card.Root class={islatency ? 'block overflow-visible' : 'hidden'}>
+                <Card.Root class={islatency ? 'block' : 'hidden'} style="height: 50vh; min-height: 400px; display: flex; flex-direction: column;">
                     <Card.Header>
                         <Card.Title>{$selectedTrace.toUpperCase()} Latency</Card.Title>
                     </Card.Header>
-                    <Card.Content class="overflow-visible">
+                    <Card.Content style="flex: 1; display: flex; flex-direction: column; padding: 1rem;">
                         {#if loadingStates.latency || !currentStats.dtocStat}
                         <div class="flex justify-center items-center h-64">
                             <Circle2 color="#FF3E00" size="60" unit="px" />
@@ -982,7 +982,7 @@
 </Dialog.Root>
 
 <!-- Toast Notifications -->
-<Toaster position="top-right" />
+<Toaster position="bottom-center" />
 
 <style>
     .spinner-overlay {

@@ -136,13 +136,11 @@
 
   // 축 패딩 상수 - echarts와 유사하게 조정
   const PADDING_LEFT = 100; // Y축 큰 숫자를 위해 증가
+  let PADDING_RIGHT = 30;
   const PADDING_BOTTOM = 50;
   const PADDING_TOP = 30;
   const LEGEND_WIDTH = 200; // 범례 너비
-  
-  // 범례 표시 여부에 따라 동적으로 변경되는 오른쪽 패딩
-  let PADDING_RIGHT = $derived(legendshow ? LEGEND_WIDTH + 10 : 30);
-
+    
   // 차트 영역 크기 계산 (derived state)
   let chartWidth = $derived(containerWidth - PADDING_LEFT - PADDING_RIGHT);
   let chartHeight = $derived(containerHeight - PADDING_TOP - PADDING_BOTTOM);
@@ -324,12 +322,22 @@
   let legendCacheKey: string = '';
 
   // ⚡ 최적화: 범례 아이템 가져오기 (CPU는 고정 범례, 나머지는 unique 추출)
-  // ⚡ 범례 아이템 반환 (transformDataForDeck에서 이미 생성됨)
+  // ⚡ 범례 아이템 반환 (filteredDataCache에 실제로 있는 항목만)
   function getLegendItems(): Record<string, number[]> {
-    // Array<{label, color}> → Record<string, number[]> 변환
+    // filteredDataCache에서 실제로 사용되는 범례만 추출
+    const activeLegends = new Set<string>();
+    for (const item of filteredDataCache) {
+      if (item.legend) {
+        activeLegends.add(item.legend);
+      }
+    }
+    
+    // legendItemsCache에서 실제로 사용되는 항목만 필터링
     const result: Record<string, number[]> = {};
     for (const item of legendItemsCache) {
-      result[item.label] = item.color;
+      if (activeLegends.has(item.label)) {
+        result[item.label] = item.color;
+      }
     }
     return result;
   }
@@ -1881,11 +1889,11 @@
   .scatter-chart-container {
     width: 100%;
     height: 100%;
-    min-height: 600px;
+    min-height: 300px;
     position: relative;
     display: flex;
     flex-direction: column;
-    overflow: visible; /* 툴팁이 잘리지 않도록 */
+    overflow: hidden;
   }
 
   .chart-title {
@@ -1901,17 +1909,17 @@
     display: flex;
     gap: 8px;
     min-height: 0;
-    overflow: visible; /* 툴팁이 잘리지 않도록 */
+    overflow: hidden;
   }
 
   .chart-wrapper {
     flex: 1;
     display: block;
     min-width: 0;
-    min-height: 600px;
+    min-height: 0;
     position: relative;
     transition: flex 0.3s ease;
-    overflow: visible; /* 툴팁이 잘리지 않도록 */
+    overflow: hidden;
   }
 
   .chart-wrapper.with-legend {
@@ -1926,7 +1934,7 @@
     bottom: 0;
     width: 100%;
     height: 100%;
-    overflow: visible; /* 범례가 잘리지 않도록 */
+    overflow: hidden;
   }
 
   .deck-container {
@@ -1968,7 +1976,8 @@
 
   /* 새로운 범례 사이드바 스타일 */
   .legend-sidebar {
-    flex: 0 0 150px;
+    flex: 0 0 auto;
+    width: 150px;
     display: flex;
     flex-direction: column;
     background: rgba(255, 255, 255, 0.98);
@@ -1976,7 +1985,8 @@
     border-radius: 8px;
     overflow: hidden;
     box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
-    max-height: 100%;
+    max-height: 600px;
+    align-self: flex-start;
   }
 
   .legend-toggle-button-sidebar {
@@ -2070,9 +2080,8 @@
     gap: 0px;
     padding: 4px;
     overflow-y: auto;
-    max-height: 340px;
-    flex: 1;
-    min-height: 0;
+    max-height: 550px;
+    flex: 0 0 auto;
   }
   
   .legend-items::-webkit-scrollbar {
@@ -2228,23 +2237,6 @@
   
   /* deck.gl 캔버스 컨테이너 */
   :global(.deck-container canvas) {
-    overflow: visible !important;
-  }
-  
-  /* 부모 컨테이너들도 overflow: visible로 설정 */
-  :global(main) {
-    overflow: visible !important;
-  }
-  
-  /* Card 컴포넌트들 */
-  :global([class*="bg-card"]),
-  :global([class*="rounded-xl"]),
-  :global([class*="shadow"]) {
-    overflow: visible !important;
-  }
-  
-  /* 모든 부모 div들 */
-  .scatter-chart-container :global(div) {
-    overflow: visible !important;
+    display: block;
   }
 </style>
