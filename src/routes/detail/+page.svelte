@@ -17,6 +17,8 @@
     import { Circle2 } from 'svelte-loading-spinners';
     import { StepBack, FileDown, RefreshCw } from 'svelte-lucide';
     import { Button } from "$lib/components/ui/button";
+    import { Toaster } from "$lib/components/ui/sonner";
+    import { toast } from "svelte-sonner";
 
     import { get, set } from 'idb-keyval';  // IndexedDB 사용 위한 import
 
@@ -82,7 +84,7 @@
     let chartKey:number = $state(0);
     
     // 시각화 항목 상태
-    let ispattern = $state(true);
+    let ispattern = $state(false);
     let isrwd = $state(false);
     let isqd = $state(false);
     let iscpu = $state(false);
@@ -411,6 +413,12 @@
         try {
             isLoading = true;
             loadError = '';
+            
+            // 로딩 시작 알림
+            toast.info('데이터 로딩 중...', {
+                description: `${$selectedTrace.toUpperCase()} 트레이스 데이터를 불러오고 있습니다.`,
+                duration: 2000,
+            });
                         
             // 캐시 키 구성
             const cacheKey = `traceData_${id}_${data.logfolder}_${data.logname}`;
@@ -602,6 +610,16 @@
             // await loadStatsData();
             
             retryCount = 0; // 성공했으므로, 재시도 카운트 초기화
+            
+            // 🎉 로딩 완료 알림 (데이터 포인트 개수 포함)
+            const totalPoints = tracedata[$selectedTrace]?.total_count || 0;
+            const sampledPoints = tracedata[$selectedTrace]?.sampled_count || 0;
+            
+            toast.success('🎉 데이터 로딩 완료!', {
+                description: `${$selectedTrace.toUpperCase()} 트레이스: ${sampledPoints.toLocaleString()}개 포인트가 준비되었습니다.`,
+                duration: 3000,
+            });
+            
             return true;
         } catch (error) {
             let errorMessage = '데이터 로딩 실패';
@@ -619,9 +637,17 @@
             
             if (retryCount >= maxRetries) {
                 showRetryDialog = true;
+                toast.error('데이터 로딩 실패', {
+                    description: '데이터를 불러올 수 없습니다. 다시 시도해주세요.',
+                    duration: 4000,
+                });
             } else {
                 // 자동 재시도
                 console.log(`자동 재시도 중... (${retryCount}/${maxRetries})`);
+                toast.warning(`재시도 중... (${retryCount}/${maxRetries})`, {
+                    description: '잠시 후 다시 시도합니다.',
+                    duration: 1500,
+                });
                 await new Promise(resolve => setTimeout(resolve, 1000));
                 // 재귀 호출 시 isLoading이 중첩 설정될 수 있으므로 일시적으로 false로 설정
                 isLoading = false;
@@ -809,11 +835,11 @@
         <div class="grid grid-cols-2 gap-4">
             <div class="col-span-2">
                 {#if ispattern}
-                <Card.Root class={ispattern ? 'block' : 'hidden'} >
+                <Card.Root class={ispattern ? 'block overflow-visible' : 'hidden'} >
                     <Card.Header>
                         <Card.Title>{$selectedTrace.toUpperCase()} Pattern</Card.Title>
                     </Card.Header>
-                    <Card.Content>
+                    <Card.Content class="overflow-visible">
                         <ScatterChartsDeck
                             key={chartKey}
                             table={currentFilteredTable}
@@ -829,11 +855,11 @@
                 {/if}                
                 {#if isqd}
                 <Separator class="my-4 {isqd ? 'block' : 'hidden'}" />
-                <Card.Root class={isqd ? 'block' : 'hidden'} >
+                <Card.Root class={isqd ? 'block overflow-visible' : 'hidden'} >
                     <Card.Header>
                         <Card.Title>{$selectedTrace.toUpperCase()} QueueDepth</Card.Title>
                     </Card.Header>
-                    <Card.Content>
+                    <Card.Content class="overflow-visible">
                         <ScatterChartsDeck
                             key={chartKey}
                             table={currentFilteredTable}
@@ -849,11 +875,11 @@
                 {/if}
                 {#if iscpu}
                 <Separator class="my-4 {iscpu ? 'block' : 'hidden'}" />
-                <Card.Root class={iscpu ? 'block' : 'hidden'} >
+                <Card.Root class={iscpu ? 'block overflow-visible' : 'hidden'} >
                     <Card.Header>
                         <Card.Title>{$selectedTrace.toUpperCase()} CPU</Card.Title>
                     </Card.Header>
-                    <Card.Content>
+                    <Card.Content class="overflow-visible">
                         {#if $selectedTrace === 'ufs'} 
                         <CPUTabs key={chartKey} traceType={$selectedTrace} table={filteredData.ufs?.table} data={filteredData.ufs?.data} legendKey='cpu' />
                         {:else if $selectedTrace === 'block'}
@@ -887,11 +913,11 @@
                 {/if}
                 {#if islatency}
                 <Separator class="my-4 {islatency ? 'block' : 'hidden'}" />
-                <Card.Root class={islatency ? 'block' : 'hidden'}>
+                <Card.Root class={islatency ? 'block overflow-visible' : 'hidden'}>
                     <Card.Header>
                         <Card.Title>{$selectedTrace.toUpperCase()} Latency</Card.Title>
                     </Card.Header>
-                    <Card.Content>
+                    <Card.Content class="overflow-visible">
                         {#if loadingStates.latency || !currentStats.dtocStat}
                         <div class="flex justify-center items-center h-64">
                             <Circle2 color="#FF3E00" size="60" unit="px" />
@@ -954,6 +980,9 @@
         </Dialog.Footer>
     </Dialog.Content>
 </Dialog.Root>
+
+<!-- Toast Notifications -->
+<Toaster position="top-right" />
 
 <style>
     .spinner-overlay {

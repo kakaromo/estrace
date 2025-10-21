@@ -138,7 +138,10 @@
   const PADDING_LEFT = 100; // Y축 큰 숫자를 위해 증가
   const PADDING_BOTTOM = 50;
   const PADDING_TOP = 30;
-  const PADDING_RIGHT = 30; // 범례는 absolute로 오버레이
+  const LEGEND_WIDTH = 200; // 범례 너비
+  
+  // 범례 표시 여부에 따라 동적으로 변경되는 오른쪽 패딩
+  let PADDING_RIGHT = $derived(legendshow ? LEGEND_WIDTH + 10 : 30);
 
   // 차트 영역 크기 계산 (derived state)
   let chartWidth = $derived(containerWidth - PADDING_LEFT - PADDING_RIGHT);
@@ -512,6 +515,8 @@
       yMax: yMax === -Infinity ? 100 : yMax
     };
     
+    console.log('[deck.gl] cachedBounds 업데이트:', cachedBounds, '데이터 포인트 수:', result.length);
+    
     // ⚡ 범례 캐시 업데이트 (단일 패스에서 추출된 데이터 사용)
     const newCacheKey = `${result.length}-${lKey}`;
     if (newCacheKey !== legendCacheKey) {
@@ -658,9 +663,16 @@
     const arrayData = hasTable ? table.toArray() : data;
     loadingProgress = 20;
     
+    // ⚠️ 초기화 시에는 캐시를 무시하고 무조건 새로 계산하도록 prevData를 null로 설정
+    const originalPrevData = prevData;
+    prevData = null;
+    
     const transformedData = transformDataForDeck(arrayData);
     console.log('[deck.gl] transformedData 길이:', transformedData.length);
     loadingProgress = 60;
+    
+    // prevData 복원
+    prevData = originalPrevData;
     
     if (transformedData.length === 0) {
       console.error('[deck.gl] ❌ transformedData가 비어있습니다! 초기화를 중단합니다.');
@@ -669,8 +681,24 @@
     }
 
     // filteredDataCache와 bounds는 transformDataForDeck 내부에서 이미 계산됨
-    const bounds = cachedBounds;
+    // ⚠️ 중요: transformDataForDeck 호출 직후 cachedBounds가 업데이트되어 있음
+    let bounds = { ...cachedBounds }; // 복사본 사용
     console.log('[deck.gl] bounds (cached):', bounds);
+    
+    // ⚠️ bounds가 여전히 초기값이거나 유효하지 않으면 calculateDataBounds로 다시 계산
+    const isInitialOrInvalidBounds = 
+      (bounds.xMin === 0 && bounds.xMax === 100 && bounds.yMin === 0 && bounds.yMax === 100) ||
+      bounds.xMin === Infinity || bounds.xMax === -Infinity ||
+      bounds.yMin === Infinity || bounds.yMax === -Infinity;
+    
+    if (isInitialOrInvalidBounds) {
+      console.warn('[deck.gl] ⚠️ cachedBounds가 초기값이거나 유효하지 않습니다. calculateDataBounds 재실행');
+      const recalculatedBounds = calculateDataBounds(transformedDataCache);
+      bounds = recalculatedBounds;
+      // cachedBounds도 업데이트
+      cachedBounds = { ...bounds };
+      console.log('[deck.gl] 재계산된 bounds:', bounds);
+    }
     
     // 초기 뷰 설정
     const rangeX = bounds.xMax - bounds.xMin;
@@ -700,6 +728,10 @@
     containerHeight = height;
     dataBounds = bounds;
     originalDataBounds = { ...bounds }; // 원본 범위 저장
+    
+    console.log('[deck.gl] 최종 dataBounds 설정:', dataBounds);
+    console.log('[deck.gl] 컨테이너 크기:', { width, height });
+    console.log('[deck.gl] PADDING:', { LEFT: PADDING_LEFT, RIGHT: PADDING_RIGHT, TOP: PADDING_TOP, BOTTOM: PADDING_BOTTOM });
     
     // 실제 차트 영역 크기 (패딩 제외)
     const actualChartWidth = width - PADDING_LEFT - PADDING_RIGHT;
@@ -735,6 +767,11 @@
       views: [new OrthographicView()],
       initialViewState: viewState,
       controller: false, // 모든 인터랙션 비활성화 (드래그, 줌 등)
+      _canvasProps: {
+        style: {
+          overflow: 'visible'
+        }
+      },
 
       layers: createLayers(filteredDataCache),
       onViewStateChange: ({viewState: newViewState}: any) => {
@@ -795,7 +832,7 @@
           const yFormat = isLatencyAxis ? object.originalY.toFixed(3) : object.originalY.toFixed(0);
           
           return {
-            html: `<div style="background: rgba(0, 0, 0, 0.8); color: white; padding: 8px 12px; border-radius: 4px; font-size: 12px; line-height: 1.5;">
+            html: `<div style="background: rgba(0, 0, 0, 0.8); color: white; padding: 8px 12px; border-radius: 4px; font-size: 12px; line-height: 1.5; box-shadow: 0 2px 8px rgba(0,0,0,0.3);">
               <strong>${legendKey}: ${object.legend}</strong><br/>
               ${xAxisName}: ${object.originalX.toFixed(2)}<br/>
               ${yAxisName}: ${yFormat}
@@ -803,7 +840,9 @@
             style: {
               backgroundColor: 'transparent',
               fontSize: '12px',
-              zIndex: 1000
+              zIndex: 10000,
+              pointerEvents: 'none'
+              // position은 지정하지 않고 deck.gl의 기본 동작 사용
             }
           };
         }
@@ -819,6 +858,15 @@
     setTimeout(() => {
       isInitializing = false;
     }, 300);
+    
+    // ⚡ 초기화 직후 차트 업데이트하여 모든 설정이 올바르게 적용되도록 보장
+    // 이렇게 하면 범례 토글 시와 동일한 로직이 적용되어 일관성 유지
+    requestAnimationFrame(() => {
+      if (deckInstance) {
+        console.log('[deck.gl] 초기화 후 차트 검증 업데이트');
+        updateChart();
+      }
+    });
   }
 
   // 차트 리사이즈 처리
@@ -842,19 +890,17 @@
     const actualChartWidth = newWidth - PADDING_LEFT - PADDING_RIGHT;
     const actualChartHeight = newHeight - PADDING_TOP - PADDING_BOTTOM;
 
-    // 캐시된 데이터를 새 크기로 다시 스케일링 - filteredDataCache 사용
-    const rescaledData = filteredDataCache.map(d => {
-      const normalizedX = (d.position[0] - dataBounds.xMin) / rangeX;
-      const normalizedY = (d.position[1] - dataBounds.yMin) / rangeY;
-
-      const x = PADDING_LEFT + normalizedX * actualChartWidth;
-      const y = PADDING_TOP + (1 - normalizedY) * actualChartHeight;
-
-      return {
-        ...d,
-        position: [x, y]
-      };
-    });
+    // ⚡ scaleParams 업데이트 (getPosition이 실시간으로 사용)
+    scaleParams = {
+      xOffset: PADDING_LEFT,
+      yOffset: PADDING_TOP + actualChartHeight,
+      xScale: actualChartWidth / rangeX,
+      yScale: actualChartHeight / rangeY,
+      xMin: dataBounds.xMin,
+      yMin: dataBounds.yMin
+    };
+    
+    console.log('[deck.gl] 리사이즈 - scaleParams 업데이트:', scaleParams);
 
     // viewState 중앙 위치 업데이트
     viewState = {
@@ -862,12 +908,13 @@
       target: [newWidth / 2, newHeight / 2, 0]
     };
 
+    // ⚡ getPosition이 실시간 계산하므로 filteredDataCache를 직접 전달
     // deck.gl 업데이트
     deckInstance.setProps({
       width: newWidth,
       height: newHeight,
       initialViewState: viewState,
-      layers: createLayers(rescaledData)
+      layers: createLayers(filteredDataCache)
     });
 
     console.log('[deck.gl] 차트 리사이즈 완료');
@@ -891,10 +938,15 @@
       const arrayData = hasTable ? table.toArray() : data;
       const transformedData = transformDataForDeck(arrayData);
       
-      // ⚡ dataBounds가 이미 설정되어 있지 않으면 cachedBounds 사용 (초기화 또는 리셋 시)
-      // zoomToSelection()에서 dataBounds를 설정했다면 그것을 유지
-      if (dataBounds.xMin === 0 && dataBounds.xMax === 100) {
-        dataBounds = cachedBounds;
+      // ⚡ dataBounds가 초기값(0, 100)이면 cachedBounds 사용
+      // 또는 cachedBounds가 더 넓은 범위를 가지고 있다면 cachedBounds 사용 (데이터 전체 범위 표시)
+      const isInitialBounds = dataBounds.xMin === 0 && dataBounds.xMax === 100 && dataBounds.yMin === 0 && dataBounds.yMax === 100;
+      const hasCachedBounds = cachedBounds.xMin !== Infinity && cachedBounds.xMax !== -Infinity;
+      
+      if (isInitialBounds && hasCachedBounds) {
+        console.log('[deck.gl] dataBounds를 cachedBounds로 초기화:', cachedBounds);
+        dataBounds = { ...cachedBounds };
+        originalDataBounds = { ...cachedBounds };
       }
       
       // 현재 dataBounds 사용 (줌된 범위 또는 전체 범위)
@@ -971,18 +1023,18 @@
         xMin: inputXMin,
         xMax: inputXMax
       };
-      
+
       const centerX = (inputXMax + inputXMin) / 2;
       const centerY = viewState.target[1];
       const rangeX = inputXMax - inputXMin;
-      
+
       viewState = {
         ...viewState,
         target: [centerX, centerY, 0],
         zoom: Math.log2(deckContainer.clientWidth / rangeX) - 1,
         transitionDuration: 300
       };
-      
+
       deckInstance.setProps({
         initialViewState: viewState
       });
@@ -994,8 +1046,11 @@
         from_lba: dataBounds.yMin,
         to_lba: dataBounds.yMax
       };
-      
+
       console.log('[deck.gl] X축 범위 적용, filtertrace 업데이트:', $filtertrace);
+
+      // x축 변경 후 차트 강제 리렌더링 (범례 토글과 동일 효과)
+      initializeDeck();
     }
     showXAxisRangeDialog = false;
   }
@@ -1355,9 +1410,29 @@
     const ftXMin = ft.zoom_column === 'dtoc' ? ft.from_time : ft.from_lba;
     const ftXMax = ft.zoom_column === 'dtoc' ? ft.to_time : ft.to_lba;
     
+    console.log('[deck.gl] filtertrace 값 체크:', { ftXMin, ftXMax, zoom_column: ft.zoom_column });
+    console.log('[deck.gl] originalDataBounds:', originalDataBounds);
+    
     // filtertrace 값이 유효하지 않으면 무시 (undefined 체크)
     if (ftXMin === undefined || ftXMax === undefined) {
       console.log('[deck.gl] filtertrace 값이 유효하지 않음, 무시');
+      return;
+    }
+    
+    // ⚠️ filtertrace가 초기 상태(모두 0)이면 무시
+    if (ftXMin === 0 && ftXMax === 0) {
+      console.log('[deck.gl] filtertrace가 초기 상태(0, 0), 무시');
+      return;
+    }
+    
+    // ⚠️ filtertrace가 originalDataBounds 범위 밖이면 무시 (다른 차트의 줌 상태)
+    // 현재 차트의 데이터 범위와 완전히 다른 범위는 적용하지 않음
+    const isOutOfBounds = 
+      ftXMax < originalDataBounds.xMin || 
+      ftXMin > originalDataBounds.xMax;
+    
+    if (isOutOfBounds) {
+      console.log('[deck.gl] filtertrace가 현재 차트 범위 밖임, 무시');
       return;
     }
     
@@ -1397,6 +1472,22 @@
         zoom: 0
       };
     }
+  });
+
+  // 범례 표시 여부 변경 감지 - PADDING_RIGHT가 변경되므로 차트 업데이트 필요
+  $effect(() => {
+    // legendshow 변경 감지
+    const show = legendshow;
+    
+    // 초기화되지 않았으면 무시
+    if (!deckInstance || !transformedDataCache || transformedDataCache.length === 0) {
+      return;
+    }
+    
+    console.log('[deck.gl] legendshow 변경 감지:', show, 'PADDING_RIGHT:', PADDING_RIGHT);
+    
+    // 차트 영역 크기가 변경되었으므로 scaleParams 재계산 및 차트 업데이트
+    updateChart();
   });
 </script>
 
@@ -1794,6 +1885,7 @@
     position: relative;
     display: flex;
     flex-direction: column;
+    overflow: visible; /* 툴팁이 잘리지 않도록 */
   }
 
   .chart-title {
@@ -1809,6 +1901,7 @@
     display: flex;
     gap: 8px;
     min-height: 0;
+    overflow: visible; /* 툴팁이 잘리지 않도록 */
   }
 
   .chart-wrapper {
@@ -1818,6 +1911,7 @@
     min-height: 600px;
     position: relative;
     transition: flex 0.3s ease;
+    overflow: visible; /* 툴팁이 잘리지 않도록 */
   }
 
   .chart-wrapper.with-legend {
@@ -1843,6 +1937,7 @@
     height: 100%;
     background: #ffffff;
     border: 1px solid #e0e0e0;
+    overflow: visible; /* 툴팁이 잘리지 않도록 */
   }
 
   .axis-overlay {
@@ -2124,7 +2219,32 @@
     color: #6b7280;
   }
 
+  /* 툴팁이 차트 범위를 벗어나도 표시되도록 전역 설정 */
   :global(.deck-tooltip) {
-    z-index: 1000;
+    z-index: 10000 !important;
+    pointer-events: none !important;
+    position: absolute !important;
+  }
+  
+  /* deck.gl 캔버스 컨테이너 */
+  :global(.deck-container canvas) {
+    overflow: visible !important;
+  }
+  
+  /* 부모 컨테이너들도 overflow: visible로 설정 */
+  :global(main) {
+    overflow: visible !important;
+  }
+  
+  /* Card 컴포넌트들 */
+  :global([class*="bg-card"]),
+  :global([class*="rounded-xl"]),
+  :global([class*="shadow"]) {
+    overflow: visible !important;
+  }
+  
+  /* 모든 부모 div들 */
+  .scatter-chart-container :global(div) {
+    overflow: visible !important;
   }
 </style>
