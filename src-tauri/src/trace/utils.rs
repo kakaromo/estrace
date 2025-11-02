@@ -25,6 +25,7 @@ use crate::trace::filter::{filter_block_data, filter_ufs_data, filter_ufscustom_
 use crate::trace::block::block_to_record_batch;
 use crate::trace::ufs::ufs_to_record_batch;
 use crate::trace::constants::{UFS_DEBUG_LBA, MAX_VALID_UFS_LBA};
+use crate::trace::parser_highperf::parse_log_file_highperf;
 
 use super::{ACTIVE_BLOCK_PATTERN, ACTIVE_UFS_PATTERN, ACTIVE_UFSCUSTOM_PATTERN};
 
@@ -1135,7 +1136,147 @@ pub async fn starttrace(fname: String, logfolder: String, window: tauri::Window)
             eta_seconds: 0.0,
             processing_speed: 0.0,
         });
-
+        
+        // 🚀 고성능 파서 사용 여부 확인 (환경 변수로 제어)
+        let use_highperf = std::env::var("USE_HIGHPERF_PARSER")
+            .ok()
+            .and_then(|v| v.parse::<u8>().ok())
+            .unwrap_or(0) == 1;
+        
+        if use_highperf {
+            println!("🚀 ========== 고성능 파서 모드 사용 ==========");
+            let parse_start = std::time::Instant::now();
+            
+            // 고성능 파서로 파싱 (window 전달)
+            let (mut ufs_list, mut block_list, mut ufscustom_list) = match parse_log_file_highperf(&fname, Some(&window)) {
+                Ok(result) => result,
+                Err(e) => return Err(format!("고성능 파서 실행 실패: {}", e)),
+            };
+            
+            let parse_time = parse_start.elapsed().as_secs_f64();
+            println!("⏱️  고성능 파서 파싱 시간: {:.2}초", parse_time);
+            
+            // 진행 상태 업데이트: 후처리 시작
+            let _ = window.emit("trace-progress", ProgressEvent {
+                stage: "postprocessing".to_string(),
+                progress: 80.0,
+                current: 0,
+                total: 100,
+                message: "후처리 중...".to_string(),
+                eta_seconds: 0.0,
+                processing_speed: 0.0,
+            });
+            
+            // 후처리 (QD, latency 계산)
+            let postprocess_start = std::time::Instant::now();
+            
+            if !ufs_list.is_empty() {
+                println!("🔄 UFS 후처리 시작...");
+                ufs_list = ufs_bottom_half_latency_process(ufs_list);
+            }
+            
+            if !block_list.is_empty() {
+                println!("🔄 Block 후처리 시작...");
+                block_list = block_bottom_half_latency_process(block_list);
+            }
+            
+            if !ufscustom_list.is_empty() {
+                println!("🔄 UFSCustom 후처리 시작...");
+                ufscustom_list = ufscustom_bottom_half_latency_process(ufscustom_list);
+            }
+            
+            let postprocess_time = postprocess_start.elapsed().as_secs_f64();
+            println!("⏱️  후처리 시간: {:.2}초", postprocess_time);
+            
+            let total_time = parse_start.elapsed().as_secs_f64();
+            println!("✅ 전체 처리 시간: {:.2}초 (파싱: {:.2}초 + 후처리: {:.2}초)", 
+                     total_time, parse_time, postprocess_time);
+            
+            // Parquet 저장
+            let save_start = std::time::Instant::now();
+            let timestamp = Local::now().format("%Y%m%d_%H%M%S").to_string();
+            
+            // 진행 상태 업데이트: 파일 저장 중
+            let _ = window.emit("trace-progress", ProgressEvent {
+                stage: "saving".to_string(),
+                progress: 85.0,
+                current: 85,
+                total: 100,
+                message: "Parquet 파일 저장 중...".to_string(),
+                eta_seconds: 5.0,
+                processing_speed: 0.0,
+            });
+            
+            let ufs_parquet_filename = if !ufs_list.is_empty() {
+                println!("💾 UFS Parquet 저장 중 ({} 이벤트)...", ufs_list.len());
+                save_ufs_to_parquet(
+                    &ufs_list,
+                    logfolder.clone(),
+                    fname.clone(),
+                    &timestamp,
+                    Some(&window),
+                )?
+            } else {
+                String::new()
+            };
+            
+            let block_parquet_filename = if !block_list.is_empty() {
+                println!("💾 Block Parquet 저장 중 ({} 이벤트)...", block_list.len());
+                save_block_to_parquet(
+                    &block_list,
+                    logfolder.clone(),
+                    fname.clone(),
+                    &timestamp,
+                    Some(&window),
+                )?
+            } else {
+                String::new()
+            };
+            
+            let ufscustom_parquet_filename = if !ufscustom_list.is_empty() {
+                println!("💾 UFSCUSTOM Parquet 저장 중 ({} 이벤트)...", ufscustom_list.len());
+                save_ufscustom_to_parquet(
+                    &ufscustom_list,
+                    logfolder.clone(),
+                    fname.clone(),
+                    &timestamp,
+                    Some(&window),
+                )?
+            } else {
+                String::new()
+            };
+            
+            println!("💾 Parquet 저장 시간: {:.2}초", save_start.elapsed().as_secs_f64());
+            
+            // 진행 상태 업데이트: 완료
+            let _ = window.emit("trace-progress", ProgressEvent {
+                stage: "complete".to_string(),
+                progress: 100.0,
+                current: 100,
+                total: 100,
+                message: "처리 완료!".to_string(),
+                eta_seconds: 0.0,
+                processing_speed: 0.0,
+            });
+            
+            println!("🎉 고성능 파서 모드 완료!");
+            println!("📊 최종 통계:");
+            println!("  - 전체 시간: {:.2}초", total_time);
+            println!("  - UFS: {} 이벤트", ufs_list.len());
+            println!("  - Block: {} 이벤트", block_list.len());
+            println!("  - UFSCUSTOM: {} 이벤트", ufscustom_list.len());
+            
+            // 결과 반환
+            return Ok(TraceParseResult {
+                missing_lines: Vec::new(),
+                ufs_parquet_filename,
+                block_parquet_filename,
+                ufscustom_parquet_filename,
+            });
+        }
+        
+        println!("📋 ========== 기존 파서 모드 사용 ==========");
+        
         // 메모리 맵 방식 또는 일반 파일 읽기 선택
         let content = if file_size > 5_368_709_120 {  // 5GB 이상은 스트리밍 방식으로 처리
             println!("대용량 파일 감지: 스트리밍 방식으로 처리합니다");

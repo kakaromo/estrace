@@ -136,10 +136,11 @@
 
   // 축 패딩 상수 - echarts와 유사하게 조정
   const PADDING_LEFT = 100; // Y축 큰 숫자를 위해 증가
+  let PADDING_RIGHT = 30;
   const PADDING_BOTTOM = 50;
   const PADDING_TOP = 30;
-  const PADDING_RIGHT = 30; // 범례는 absolute로 오버레이
-
+  const LEGEND_WIDTH = 200; // 범례 너비
+    
   // 차트 영역 크기 계산 (derived state)
   let chartWidth = $derived(containerWidth - PADDING_LEFT - PADDING_RIGHT);
   let chartHeight = $derived(containerHeight - PADDING_TOP - PADDING_BOTTOM);
@@ -147,6 +148,37 @@
   // 축 틱 생성 함수
   function generateTicks(min: number, max: number, count: number = 8) {
     const range = max - min;
+    
+    // 범위가 매우 작거나 0인 경우 처리
+    if (range === 0) {
+      // min 값을 중심으로 적절한 범위 생성
+      const centerValue = min;
+      const defaultRange = Math.abs(centerValue) * 0.1 || 1; // 10% 범위 또는 기본 1
+      return [
+        centerValue - defaultRange,
+        centerValue - defaultRange * 0.75,
+        centerValue - defaultRange * 0.5,
+        centerValue - defaultRange * 0.25,
+        centerValue,
+        centerValue + defaultRange * 0.25,
+        centerValue + defaultRange * 0.5,
+        centerValue + defaultRange * 0.75,
+        centerValue + defaultRange
+      ];
+    }
+    
+    // 범위가 매우 작은 경우 (예: 0.001)
+    if (range < 0.01) {
+      // 더 정밀한 눈금 생성
+      const step = range / (count - 1);
+      const ticks = [];
+      for (let i = 0; i < count; i++) {
+        ticks.push(min + step * i);
+      }
+      return ticks;
+    }
+    
+    // 일반적인 경우
     const step = range / (count - 1);
     const ticks = [];
     
@@ -290,12 +322,22 @@
   let legendCacheKey: string = '';
 
   // ⚡ 최적화: 범례 아이템 가져오기 (CPU는 고정 범례, 나머지는 unique 추출)
-  // ⚡ 범례 아이템 반환 (transformDataForDeck에서 이미 생성됨)
+  // ⚡ 범례 아이템 반환 (filteredDataCache에 실제로 있는 항목만)
   function getLegendItems(): Record<string, number[]> {
-    // Array<{label, color}> → Record<string, number[]> 변환
+    // filteredDataCache에서 실제로 사용되는 범례만 추출
+    const activeLegends = new Set<string>();
+    for (const item of filteredDataCache) {
+      if (item.legend) {
+        activeLegends.add(item.legend);
+      }
+    }
+    
+    // legendItemsCache에서 실제로 사용되는 항목만 필터링
     const result: Record<string, number[]> = {};
     for (const item of legendItemsCache) {
-      result[item.label] = item.color;
+      if (activeLegends.has(item.label)) {
+        result[item.label] = item.color;
+      }
     }
     return result;
   }
@@ -481,6 +523,8 @@
       yMax: yMax === -Infinity ? 100 : yMax
     };
     
+    console.log('[deck.gl] cachedBounds 업데이트:', cachedBounds, '데이터 포인트 수:', result.length);
+    
     // ⚡ 범례 캐시 업데이트 (단일 패스에서 추출된 데이터 사용)
     const newCacheKey = `${result.length}-${lKey}`;
     if (newCacheKey !== legendCacheKey) {
@@ -627,9 +671,16 @@
     const arrayData = hasTable ? table.toArray() : data;
     loadingProgress = 20;
     
+    // ⚠️ 초기화 시에는 캐시를 무시하고 무조건 새로 계산하도록 prevData를 null로 설정
+    const originalPrevData = prevData;
+    prevData = null;
+    
     const transformedData = transformDataForDeck(arrayData);
     console.log('[deck.gl] transformedData 길이:', transformedData.length);
     loadingProgress = 60;
+    
+    // prevData 복원
+    prevData = originalPrevData;
     
     if (transformedData.length === 0) {
       console.error('[deck.gl] ❌ transformedData가 비어있습니다! 초기화를 중단합니다.');
@@ -638,8 +689,24 @@
     }
 
     // filteredDataCache와 bounds는 transformDataForDeck 내부에서 이미 계산됨
-    const bounds = cachedBounds;
+    // ⚠️ 중요: transformDataForDeck 호출 직후 cachedBounds가 업데이트되어 있음
+    let bounds = { ...cachedBounds }; // 복사본 사용
     console.log('[deck.gl] bounds (cached):', bounds);
+    
+    // ⚠️ bounds가 여전히 초기값이거나 유효하지 않으면 calculateDataBounds로 다시 계산
+    const isInitialOrInvalidBounds = 
+      (bounds.xMin === 0 && bounds.xMax === 100 && bounds.yMin === 0 && bounds.yMax === 100) ||
+      bounds.xMin === Infinity || bounds.xMax === -Infinity ||
+      bounds.yMin === Infinity || bounds.yMax === -Infinity;
+    
+    if (isInitialOrInvalidBounds) {
+      console.warn('[deck.gl] ⚠️ cachedBounds가 초기값이거나 유효하지 않습니다. calculateDataBounds 재실행');
+      const recalculatedBounds = calculateDataBounds(transformedDataCache);
+      bounds = recalculatedBounds;
+      // cachedBounds도 업데이트
+      cachedBounds = { ...bounds };
+      console.log('[deck.gl] 재계산된 bounds:', bounds);
+    }
     
     // 초기 뷰 설정
     const rangeX = bounds.xMax - bounds.xMin;
@@ -669,6 +736,10 @@
     containerHeight = height;
     dataBounds = bounds;
     originalDataBounds = { ...bounds }; // 원본 범위 저장
+    
+    console.log('[deck.gl] 최종 dataBounds 설정:', dataBounds);
+    console.log('[deck.gl] 컨테이너 크기:', { width, height });
+    console.log('[deck.gl] PADDING:', { LEFT: PADDING_LEFT, RIGHT: PADDING_RIGHT, TOP: PADDING_TOP, BOTTOM: PADDING_BOTTOM });
     
     // 실제 차트 영역 크기 (패딩 제외)
     const actualChartWidth = width - PADDING_LEFT - PADDING_RIGHT;
@@ -704,6 +775,11 @@
       views: [new OrthographicView()],
       initialViewState: viewState,
       controller: false, // 모든 인터랙션 비활성화 (드래그, 줌 등)
+      _canvasProps: {
+        style: {
+          overflow: 'visible'
+        }
+      },
 
       layers: createLayers(filteredDataCache),
       onViewStateChange: ({viewState: newViewState}: any) => {
@@ -764,7 +840,7 @@
           const yFormat = isLatencyAxis ? object.originalY.toFixed(3) : object.originalY.toFixed(0);
           
           return {
-            html: `<div style="background: rgba(0, 0, 0, 0.8); color: white; padding: 8px 12px; border-radius: 4px; font-size: 12px; line-height: 1.5;">
+            html: `<div style="background: rgba(0, 0, 0, 0.8); color: white; padding: 8px 12px; border-radius: 4px; font-size: 12px; line-height: 1.5; box-shadow: 0 2px 8px rgba(0,0,0,0.3);">
               <strong>${legendKey}: ${object.legend}</strong><br/>
               ${xAxisName}: ${object.originalX.toFixed(2)}<br/>
               ${yAxisName}: ${yFormat}
@@ -772,7 +848,9 @@
             style: {
               backgroundColor: 'transparent',
               fontSize: '12px',
-              zIndex: 1000
+              zIndex: 10000,
+              pointerEvents: 'none'
+              // position은 지정하지 않고 deck.gl의 기본 동작 사용
             }
           };
         }
@@ -788,6 +866,15 @@
     setTimeout(() => {
       isInitializing = false;
     }, 300);
+    
+    // ⚡ 초기화 직후 차트 업데이트하여 모든 설정이 올바르게 적용되도록 보장
+    // 이렇게 하면 범례 토글 시와 동일한 로직이 적용되어 일관성 유지
+    requestAnimationFrame(() => {
+      if (deckInstance) {
+        console.log('[deck.gl] 초기화 후 차트 검증 업데이트');
+        updateChart();
+      }
+    });
   }
 
   // 차트 리사이즈 처리
@@ -811,19 +898,17 @@
     const actualChartWidth = newWidth - PADDING_LEFT - PADDING_RIGHT;
     const actualChartHeight = newHeight - PADDING_TOP - PADDING_BOTTOM;
 
-    // 캐시된 데이터를 새 크기로 다시 스케일링 - filteredDataCache 사용
-    const rescaledData = filteredDataCache.map(d => {
-      const normalizedX = (d.position[0] - dataBounds.xMin) / rangeX;
-      const normalizedY = (d.position[1] - dataBounds.yMin) / rangeY;
-
-      const x = PADDING_LEFT + normalizedX * actualChartWidth;
-      const y = PADDING_TOP + (1 - normalizedY) * actualChartHeight;
-
-      return {
-        ...d,
-        position: [x, y]
-      };
-    });
+    // ⚡ scaleParams 업데이트 (getPosition이 실시간으로 사용)
+    scaleParams = {
+      xOffset: PADDING_LEFT,
+      yOffset: PADDING_TOP + actualChartHeight,
+      xScale: actualChartWidth / rangeX,
+      yScale: actualChartHeight / rangeY,
+      xMin: dataBounds.xMin,
+      yMin: dataBounds.yMin
+    };
+    
+    console.log('[deck.gl] 리사이즈 - scaleParams 업데이트:', scaleParams);
 
     // viewState 중앙 위치 업데이트
     viewState = {
@@ -831,12 +916,13 @@
       target: [newWidth / 2, newHeight / 2, 0]
     };
 
+    // ⚡ getPosition이 실시간 계산하므로 filteredDataCache를 직접 전달
     // deck.gl 업데이트
     deckInstance.setProps({
       width: newWidth,
       height: newHeight,
       initialViewState: viewState,
-      layers: createLayers(rescaledData)
+      layers: createLayers(filteredDataCache)
     });
 
     console.log('[deck.gl] 차트 리사이즈 완료');
@@ -860,10 +946,15 @@
       const arrayData = hasTable ? table.toArray() : data;
       const transformedData = transformDataForDeck(arrayData);
       
-      // ⚡ dataBounds가 이미 설정되어 있지 않으면 cachedBounds 사용 (초기화 또는 리셋 시)
-      // zoomToSelection()에서 dataBounds를 설정했다면 그것을 유지
-      if (dataBounds.xMin === 0 && dataBounds.xMax === 100) {
-        dataBounds = cachedBounds;
+      // ⚡ dataBounds가 초기값(0, 100)이면 cachedBounds 사용
+      // 또는 cachedBounds가 더 넓은 범위를 가지고 있다면 cachedBounds 사용 (데이터 전체 범위 표시)
+      const isInitialBounds = dataBounds.xMin === 0 && dataBounds.xMax === 100 && dataBounds.yMin === 0 && dataBounds.yMax === 100;
+      const hasCachedBounds = cachedBounds.xMin !== Infinity && cachedBounds.xMax !== -Infinity;
+      
+      if (isInitialBounds && hasCachedBounds) {
+        console.log('[deck.gl] dataBounds를 cachedBounds로 초기화:', cachedBounds);
+        dataBounds = { ...cachedBounds };
+        originalDataBounds = { ...cachedBounds };
       }
       
       // 현재 dataBounds 사용 (줌된 범위 또는 전체 범위)
@@ -940,18 +1031,18 @@
         xMin: inputXMin,
         xMax: inputXMax
       };
-      
+
       const centerX = (inputXMax + inputXMin) / 2;
       const centerY = viewState.target[1];
       const rangeX = inputXMax - inputXMin;
-      
+
       viewState = {
         ...viewState,
         target: [centerX, centerY, 0],
         zoom: Math.log2(deckContainer.clientWidth / rangeX) - 1,
         transitionDuration: 300
       };
-      
+
       deckInstance.setProps({
         initialViewState: viewState
       });
@@ -963,8 +1054,11 @@
         from_lba: dataBounds.yMin,
         to_lba: dataBounds.yMax
       };
-      
+
       console.log('[deck.gl] X축 범위 적용, filtertrace 업데이트:', $filtertrace);
+
+      // x축 변경 후 차트 강제 리렌더링 (범례 토글과 동일 효과)
+      initializeDeck();
     }
     showXAxisRangeDialog = false;
   }
@@ -1320,39 +1414,59 @@
       return;
     }
     
+    // X축은 zoom_column에 따라 from_time/to_time 또는 from_lba/to_lba 사용
+    const ftXMin = ft.zoom_column === 'dtoc' ? ft.from_time : ft.from_lba;
+    const ftXMax = ft.zoom_column === 'dtoc' ? ft.to_time : ft.to_lba;
+    
+    console.log('[deck.gl] filtertrace 값 체크:', { ftXMin, ftXMax, zoom_column: ft.zoom_column });
+    console.log('[deck.gl] originalDataBounds:', originalDataBounds);
+    
     // filtertrace 값이 유효하지 않으면 무시 (undefined 체크)
-    if (ft.xmin === undefined || ft.xmax === undefined) {
+    if (ftXMin === undefined || ftXMax === undefined) {
       console.log('[deck.gl] filtertrace 값이 유효하지 않음, 무시');
       return;
     }
     
-    // Y축 값 확인
-    const ftYMin = yAxisKey === 'qd' ? ft.qdmin : yAxisKey === 'addr' ? ft.addrmin : ft.latencymin;
-    const ftYMax = yAxisKey === 'qd' ? ft.qdmax : yAxisKey === 'addr' ? ft.addrmax : ft.latencymax;
-    
-    if (ftYMin === undefined || ftYMax === undefined) {
-      console.log('[deck.gl] filtertrace Y축 값이 유효하지 않음, 무시');
+    // ⚠️ filtertrace가 초기 상태(모두 0)이면 무시
+    if (ftXMin === 0 && ftXMax === 0) {
+      console.log('[deck.gl] filtertrace가 초기 상태(0, 0), 무시');
       return;
     }
+    
+    // ⚠️ filtertrace가 originalDataBounds 범위 밖이면 무시 (다른 차트의 줌 상태)
+    // 현재 차트의 데이터 범위와 완전히 다른 범위는 적용하지 않음
+    const isOutOfBounds = 
+      ftXMax < originalDataBounds.xMin || 
+      ftXMin > originalDataBounds.xMax;
+    
+    if (isOutOfBounds) {
+      console.log('[deck.gl] filtertrace가 현재 차트 범위 밖임, 무시');
+      return;
+    }
+    
+    // Y축 값은 현재 yAxisKey에 따라 결정되지만, filtertrace에는 해당 속성이 없음
+    // 따라서 현재 originalDataBounds의 yMin/yMax를 사용
+    const ftYMin = originalDataBounds.yMin;
+    const ftYMax = originalDataBounds.yMax;
     
     console.log('[deck.gl] filtertrace 변경 감지:', ft, 'yAxisKey:', yAxisKey);
     
     // 현재 dataBounds와 filtertrace가 다르면 업데이트
     const needsUpdate = 
-      dataBounds.xMin !== ft.xmin ||
-      dataBounds.xMax !== ft.xmax ||
+      dataBounds.xMin !== ftXMin ||
+      dataBounds.xMax !== ftXMax ||
       dataBounds.yMin !== ftYMin ||
       dataBounds.yMax !== ftYMax;
     
     if (needsUpdate) {
       console.log('[deck.gl] filtertrace와 다름, 차트 업데이트 필요');
       console.log('[deck.gl] 현재 dataBounds:', dataBounds);
-      console.log('[deck.gl] 새로운 범위:', { xMin: ft.xmin, xMax: ft.xmax, yMin: ftYMin, yMax: ftYMax });
+      console.log('[deck.gl] 새로운 범위:', { xMin: ftXMin, xMax: ftXMax, yMin: ftYMin, yMax: ftYMax });
       
       // dataBounds 업데이트
       dataBounds = {
-        xMin: ft.xmin,
-        xMax: ft.xmax,
+        xMin: ftXMin,
+        xMax: ftXMax,
         yMin: ftYMin,
         yMax: ftYMax
       };
@@ -1366,6 +1480,22 @@
         zoom: 0
       };
     }
+  });
+
+  // 범례 표시 여부 변경 감지 - PADDING_RIGHT가 변경되므로 차트 업데이트 필요
+  $effect(() => {
+    // legendshow 변경 감지
+    const show = legendshow;
+    
+    // 초기화되지 않았으면 무시
+    if (!deckInstance || !transformedDataCache || transformedDataCache.length === 0) {
+      return;
+    }
+    
+    console.log('[deck.gl] legendshow 변경 감지:', show, 'PADDING_RIGHT:', PADDING_RIGHT);
+    
+    // 차트 영역 크기가 변경되었으므로 scaleParams 재계산 및 차트 업데이트
+    updateChart();
   });
 </script>
 
@@ -1388,9 +1518,12 @@
     </div>
   {/if}
   
-  <div class="chart-wrapper">
-    <ContextMenu.Root>
-      <ContextMenu.Trigger>
+  <div class="chart-and-legend-wrapper">
+    <div class="chart-wrapper"
+      class:with-legend={legendshow && hasLegendData}
+    >
+      <ContextMenu.Root>
+        <ContextMenu.Trigger>
         <!-- svelte-ignore a11y_no_static_element_interactions -->
         <div 
           class="chart-container-wrapper"
@@ -1447,7 +1580,9 @@
               />
               
               {#each generateTicks(dataBounds.xMin, dataBounds.xMax, 10) as tick, i}
-                {@const x = PADDING_LEFT + ((tick - dataBounds.xMin) / (dataBounds.xMax - dataBounds.xMin)) * chartWidth}
+                {@const xRange = dataBounds.xMax - dataBounds.xMin}
+                {@const x = xRange === 0 ? PADDING_LEFT + chartWidth / 2 : PADDING_LEFT + ((tick - dataBounds.xMin) / xRange) * chartWidth}
+                {@const decimals = xRange < 0.01 ? 6 : (xRange < 1 ? 3 : (xRange < 10 ? 2 : 0))}
                 <g>
                   <!-- 틱 마크 -->
                   <line 
@@ -1476,7 +1611,7 @@
                     font-size="12" 
                     fill="#666"
                   >
-                    {tick.toFixed(0)}
+                    {tick.toFixed(decimals)}
                   </text>
                 </g>
               {/each}
@@ -1583,64 +1718,65 @@
       </ContextMenu.Item>
     </ContextMenu.Content>
   </ContextMenu.Root>
-  </div>
+    </div>
   
-  <!-- Legend or Toggle Button (최상위 레벨) -->
-  {#if hasLegendData}
-    {@const legendItems = getLegendItems()}
-    {@const legendKeys = Object.keys(legendItems)}
-      {#if legendshow === true}
-        <!-- Legend -->
-        <div class="legend-container">
-          <div class="legend-title">
-            <span>{legendKey} ({legendKeys.length})</span>
-            <button 
-              class="legend-close-button"
-              onclick={() => legendshow = false}
-              title="Hide Legend"
-            >
-              ×
-            </button>
-          </div>
-          <div class="legend-items">
-            {#each legendKeys as legend}
-              {@const color = legendItems[legend]}
-              <div 
-                class="legend-item" 
-                class:legend-item-hidden={hiddenLegends.has(legend)}
-                onclick={() => toggleLegend(legend)}
-                onkeydown={(e) => e.key === 'Enter' && toggleLegend(legend)}
-                role="button"
-                tabindex="0"
+    <!-- Legend or Toggle Button (chart-wrapper 외부로 이동) -->
+    {#if hasLegendData}
+      {@const legendItems = getLegendItems()}
+      {@const legendKeys = Object.keys(legendItems)}
+        {#if legendshow === true}
+          <!-- Legend -->
+          <div class="legend-sidebar">
+            <div class="legend-title">
+              <span>{legendKey} ({legendKeys.length})</span>
+              <button 
+                class="legend-close-button"
+                onclick={() => legendshow = false}
+                title="Hide Legend"
               >
-                <span 
-                  class="legend-color" 
-                  style="background-color: rgb({color[0]}, {color[1]}, {color[2]})"
-                ></span>
-                <span class="legend-label">{legend}</span>
-              </div>
-            {/each}
+                ×
+              </button>
+            </div>
+            <div class="legend-items">
+              {#each legendKeys as legend}
+                {@const color = legendItems[legend]}
+                <div 
+                  class="legend-item" 
+                  class:legend-item-hidden={hiddenLegends.has(legend)}
+                  onclick={() => toggleLegend(legend)}
+                  onkeydown={(e) => e.key === 'Enter' && toggleLegend(legend)}
+                  role="button"
+                  tabindex="0"
+                >
+                  <span 
+                    class="legend-color" 
+                    style="background-color: rgb({color[0]}, {color[1]}, {color[2]})"
+                  ></span>
+                  <span class="legend-label">{legend}</span>
+                </div>
+              {/each}
+            </div>
           </div>
-        </div>
-      {:else}
-        <!-- Legend Toggle Button (범례가 꺼져있을 때) -->
-        <button 
-          class="legend-toggle-button"
-          onclick={() => legendshow = true}
-          title="Show Legend"
-          aria-label="Show Legend"
-        >
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <rect x="3" y="3" width="7" height="7" rx="1"></rect>
-            <line x1="14" y1="6.5" x2="21" y2="6.5"></line>
-            <rect x="3" y="14" width="7" height="7" rx="1"></rect>
-            <line x1="14" y1="17.5" x2="21" y2="17.5"></line>
-          </svg>
-        </button>
-      {/if}
-  {:else}
-    {console.log('[범례 체크 0] hasLegendData가 false')}
-  {/if}
+        {:else}
+          <!-- Legend Toggle Button (범례가 꺼져있을 때) -->
+          <button 
+            class="legend-toggle-button-sidebar"
+            onclick={() => legendshow = true}
+            title="Show Legend"
+            aria-label="Show Legend"
+          >
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <rect x="3" y="3" width="7" height="7" rx="1"></rect>
+              <line x1="14" y1="6.5" x2="21" y2="6.5"></line>
+              <rect x="3" y="14" width="7" height="7" rx="1"></rect>
+              <line x1="14" y1="17.5" x2="21" y2="17.5"></line>
+            </svg>
+          </button>
+        {/if}
+    {:else}
+      {console.log('[범례 체크 0] hasLegendData가 false')}
+    {/if}
+  </div>
 </div>
 
 <!-- Title Dialog -->
@@ -1753,10 +1889,11 @@
   .scatter-chart-container {
     width: 100%;
     height: 100%;
-    min-height: 600px;
+    min-height: 300px;
     position: relative;
     display: flex;
     flex-direction: column;
+    overflow: hidden;
   }
 
   .chart-title {
@@ -1767,13 +1904,26 @@
     flex-shrink: 0;
   }
 
+  .chart-and-legend-wrapper {
+    flex: 1;
+    display: flex;
+    gap: 8px;
+    min-height: 0;
+    overflow: hidden;
+  }
+
   .chart-wrapper {
     flex: 1;
-    display: block; /* flex 대신 block 사용 */
-    width: 100%;
-    height: 600px; /* 명확한 높이 지정 */
-    min-height: 600px;
+    display: block;
+    min-width: 0;
+    min-height: 0;
     position: relative;
+    transition: flex 0.3s ease;
+    overflow: hidden;
+  }
+
+  .chart-wrapper.with-legend {
+    flex: 1 1 auto;
   }
 
   .chart-container-wrapper {
@@ -1784,7 +1934,7 @@
     bottom: 0;
     width: 100%;
     height: 100%;
-    overflow: visible; /* 범례가 잘리지 않도록 */
+    overflow: hidden;
   }
 
   .deck-container {
@@ -1795,6 +1945,7 @@
     height: 100%;
     background: #ffffff;
     border: 1px solid #e0e0e0;
+    overflow: visible; /* 툴팁이 잘리지 않도록 */
   }
 
   .axis-overlay {
@@ -1807,19 +1958,57 @@
 
   .legend-container {
     position: absolute;
-    right: 20px;
-    top: 50px;
+    right: 10px;
+    top: 60px;
     width: 140px;
     max-height: 400px;
     padding: 0;
-    background: rgba(255, 255, 255, 0.95);
+    background: rgba(255, 255, 255, 0.85);
+    border: 1px solid rgba(0, 0, 0, 0.15);
+    border-radius: 8px;
+    overflow: hidden;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15);
+    pointer-events: auto;
+    z-index: 1000;
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+  }
+
+  /* 새로운 범례 사이드바 스타일 */
+  .legend-sidebar {
+    flex: 0 0 auto;
+    width: 150px;
+    display: flex;
+    flex-direction: column;
+    background: rgba(255, 255, 255, 0.98);
     border: 1px solid rgba(0, 0, 0, 0.1);
     border-radius: 8px;
     overflow: hidden;
-    box-shadow: 0 2px 12px rgba(0, 0, 0, 0.1);
-    pointer-events: auto;
-    z-index: 1000;
-    backdrop-filter: blur(10px);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+    max-height: 600px;
+    align-self: flex-start;
+  }
+
+  .legend-toggle-button-sidebar {
+    flex: 0 0 40px;
+    background: rgba(255, 255, 255, 0.98);
+    border: 1px solid rgba(0, 0, 0, 0.1);
+    border-radius: 6px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+    transition: all 0.15s;
+    color: #6b7280;
+    align-self: flex-start;
+  }
+
+  .legend-toggle-button-sidebar:hover {
+    background: rgba(255, 255, 255, 1);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+    color: #374151;
+    transform: scale(1.05);
   }
 
   .legend-title {
@@ -1858,12 +2047,12 @@
 
   .legend-toggle-button {
     position: absolute;
-    right: 20px;
-    top: 50px;
+    right: 10px;
+    top: 60px;
     width: 32px;
     height: 32px;
-    background: rgba(255, 255, 255, 0.95);
-    border: 1px solid rgba(0, 0, 0, 0.1);
+    background: rgba(255, 255, 255, 0.85);
+    border: 1px solid rgba(0, 0, 0, 0.15);
     border-radius: 6px;
     cursor: pointer;
     display: flex;
@@ -1874,7 +2063,8 @@
     pointer-events: auto;
     z-index: 1000;
     color: #6b7280;
-    backdrop-filter: blur(10px);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
   }
 
   .legend-toggle-button:hover {
@@ -1890,7 +2080,8 @@
     gap: 0px;
     padding: 4px;
     overflow-y: auto;
-    max-height: 340px;
+    max-height: 550px;
+    flex: 0 0 auto;
   }
   
   .legend-items::-webkit-scrollbar {
@@ -2037,7 +2228,15 @@
     color: #6b7280;
   }
 
+  /* 툴팁이 차트 범위를 벗어나도 표시되도록 전역 설정 */
   :global(.deck-tooltip) {
-    z-index: 1000;
+    z-index: 10000 !important;
+    pointer-events: none !important;
+    position: absolute !important;
+  }
+  
+  /* deck.gl 캔버스 컨테이너 */
+  :global(.deck-container canvas) {
+    display: block;
   }
 </style>
