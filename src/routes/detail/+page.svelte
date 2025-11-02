@@ -875,7 +875,7 @@
                 {/if}
                 {#if iscpu}
                 <Separator class="my-4 {iscpu ? 'block' : 'hidden'}" />
-                <Card.Root class={iscpu ? 'block' : 'hidden'} style="height: 50vh; min-height: 400px; display: flex; flex-direction: column;">
+                <Card.Root class={iscpu ? 'block' : 'hidden'} style="min-height: 400px; display: flex; flex-direction: column;">
                     <Card.Header>
                         <Card.Title>{$selectedTrace.toUpperCase()} CPU</Card.Title>
                     </Card.Header>
@@ -913,7 +913,7 @@
                 {/if}
                 {#if islatency}
                 <Separator class="my-4 {islatency ? 'block' : 'hidden'}" />
-                <Card.Root class={islatency ? 'block' : 'hidden'} style="height: 50vh; min-height: 400px; display: flex; flex-direction: column;">
+                <Card.Root class={islatency ? 'block' : 'hidden'} style="min-height: 400px; display: flex; flex-direction: column;">
                     <Card.Header>
                         <Card.Title>{$selectedTrace.toUpperCase()} Latency</Card.Title>
                     </Card.Header>

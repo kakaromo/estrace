@@ -38,16 +38,18 @@
 <Card.Root>
     <Card.Content>
         <div class="font-semibold prose lg:prose-h3 pb-4">{columnType} Pattern</div>
-        <ScatterChartsDeck 
-            data={data}
-            table={table}
-            xAxisKey={timeField}
-            yAxisKey={columnType.toLowerCase()} 
-            {legendKey} 
-            yAxisLabel='ms' 
-            ycolumn={columnType.toLowerCase()}
-            actionFilter='send_req'
-        /> 
+        <div class="h-full" style="height: 50vh; min-height: 400px; display: flex; flex-direction: column;">
+            <ScatterChartsDeck 
+                data={data}
+                table={table}
+                xAxisKey={timeField}
+                yAxisKey={columnType.toLowerCase()} 
+                {legendKey} 
+                yAxisLabel='ms' 
+                ycolumn={columnType.toLowerCase()}
+                actionFilter='send_req'
+            /> 
+        </div>
         <div class="font-semibold prose lg:prose-h3 pb-4">{columnType} Statistics</div>
         <LatencyStats 
             tracetype={traceType} 

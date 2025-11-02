@@ -97,17 +97,19 @@
                     <Tabs.Content value={subTab} class="border-none p-0 pt-2 outline-none">
                         {#if getChartConfig(mainTab, subTab)}
                             {@const config = getChartConfig(mainTab, subTab)}
-                            <ScatterChartsDeck 
-                                data={data}
-                                table={table}
-                                xAxisKey={config.xAxisKey}
-                                yAxisKey={config.yAxisKey}
-                                legendKey={config.legendKey}
-                                yAxisLabel={config.yAxisLabel}
-                                ycolumn={config.ycolumn}
-                                yAxisRange={config.yAxisRange}
-                                actionFilter={config.actionFilter}
-                            />
+                            <div class="h-full" style="height: 50vh; min-height: 400px; display: flex; flex-direction: column;">
+                                <ScatterChartsDeck 
+                                    data={data}
+                                    table={table}
+                                    xAxisKey={config.xAxisKey}
+                                    yAxisKey={config.yAxisKey}
+                                    legendKey={config.legendKey}
+                                    yAxisLabel={config.yAxisLabel}
+                                    ycolumn={config.ycolumn}
+                                    yAxisRange={config.yAxisRange}
+                                    actionFilter={config.actionFilter}
+                                />
+                            </div>
                         {:else}
                             <div class="p-4 text-center text-gray-500">데이터가 없습니다.</div>
                         {/if}

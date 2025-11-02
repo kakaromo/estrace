@@ -17,7 +17,7 @@
     "@deck.gl/core": "^9.1.15",
     "@deck.gl/layers": "^9.1.15",
     "@sveltejs/svelte-virtual-list": "^3.0.1",
-    "@tauri-apps/api": "~2.8.0",
+    "@tauri-apps/api": "^2.8.0",
     "@tauri-apps/plugin-clipboard-manager": "^2.2.2",
     "@tauri-apps/plugin-dialog": "^2.4.0",
     "@tauri-apps/plugin-fs": "^2.2.0",
