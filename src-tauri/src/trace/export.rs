@@ -60,12 +60,7 @@ pub async fn export_to_csv(
     };
 
     let mut output_paths = Vec::new();
-    let mut current_row_count = 0;
-    let mut file_index = 0;
-    let mut current_writer: Option<Writer<File>> = None;
-    let mut chunk_start_time: Option<f64> = None;
-    let mut chunk_end_time: Option<f64> = None;
-
+    
     // 시간 값 추출 헬퍼 함수
     let get_time_value = |batch: &arrow::record_batch::RecordBatch, row_index: usize| -> Option<f64> {
         let schema = batch.schema();
@@ -81,48 +76,19 @@ pub async fn export_to_csv(
         None
     };
 
-    // 임시 파일 경로를 저장할 벡터
-    let mut temp_files: Vec<(PathBuf, f64, f64)> = Vec::new();
+    // 청크별로 배치를 메모리에 모아둘 벡터
+    let mut current_chunk_batches: Vec<arrow::record_batch::RecordBatch> = Vec::new();
+    let mut current_row_count = 0;
+    let mut chunk_start_time: Option<f64> = None;
+    let mut chunk_end_time: Option<f64> = None;
 
-    // 각 배치를 처리하면서 파일 분할
+    // 각 배치를 처리하면서 청크 단위로 분할
     for batch in batches {
         let batch_rows = batch.num_rows();
         let mut batch_offset = 0;
 
         while batch_offset < batch_rows {
-            // 새 파일이 필요한 경우
-            if current_writer.is_none() || current_row_count >= EXCEL_MAX_ROWS {
-                // 기존 파일 닫고 최종 파일명으로 변경
-                if let Some(writer) = current_writer.take() {
-                    writer.close().map_err(|e| e.to_string())?;
-                    
-                    // 이전 청크의 정보를 저장
-                    if let (Some(start), Some(end)) = (chunk_start_time, chunk_end_time) {
-                        if let Some(last_temp_path) = temp_files.last_mut() {
-                            last_temp_path.1 = start;
-                            last_temp_path.2 = end;
-                        }
-                    }
-                }
-
-                // 임시 파일 경로 생성
-                let temp_filename = format!("{}_temp_{}.csv", base_filename, file_index);
-                let mut temp_path = base_dir.clone();
-                temp_path.push(&temp_filename);
-                
-                // 새 파일 생성
-                let file = File::create(&temp_path).map_err(|e| e.to_string())?;
-                let writer = WriterBuilder::new().with_header(true).build(file);
-                
-                current_writer = Some(writer);
-                temp_files.push((temp_path, 0.0, 0.0)); // 시간은 나중에 설정
-                current_row_count = 0;
-                chunk_start_time = None;
-                chunk_end_time = None;
-                file_index += 1;
-            }
-
-            // 현재 파일에 쓸 수 있는 최대 행 수 계산
+            // 현재 청크에 추가 가능한 행 수 계산
             let remaining_capacity = EXCEL_MAX_ROWS - current_row_count;
             let rows_to_write = std::cmp::min(remaining_capacity, batch_rows - batch_offset);
 
@@ -133,46 +99,76 @@ pub async fn export_to_csv(
                 batch.slice(batch_offset, rows_to_write)
             };
 
-            // 청크의 시작 시간 설정
-            if chunk_start_time.is_none() {
+            // 청크의 시작 시간 설정 (첫 번째 배치의 첫 번째 행)
+            if chunk_start_time.is_none() && slice_batch.num_rows() > 0 {
                 chunk_start_time = get_time_value(&slice_batch, 0);
             }
             
-            // 청크의 끝 시간 갱신
+            // 청크의 끝 시간 갱신 (마지막 배치의 마지막 행)
             if slice_batch.num_rows() > 0 {
                 chunk_end_time = get_time_value(&slice_batch, slice_batch.num_rows() - 1);
             }
 
-            // CSV에 쓰기
-            if let Some(ref mut writer) = current_writer {
-                writer.write(&slice_batch).map_err(|e| e.to_string())?;
-            }
-
+            // 메모리에 배치 추가
+            current_chunk_batches.push(slice_batch);
             current_row_count += rows_to_write;
             batch_offset += rows_to_write;
-        }
-    }
 
-    // 마지막 파일 닫기
-    if let Some(writer) = current_writer.take() {
-        writer.close().map_err(|e| e.to_string())?;
-        
-        // 마지막 청크의 정보를 저장
-        if let (Some(start), Some(end)) = (chunk_start_time, chunk_end_time) {
-            if let Some(last_temp_path) = temp_files.last_mut() {
-                last_temp_path.1 = start;
-                last_temp_path.2 = end;
+            // 청크가 가득 찼거나 마지막 배치인 경우 파일로 저장
+            if current_row_count >= EXCEL_MAX_ROWS {
+                // 파일명 생성 (시작 시간이 끝 시간보다 작도록 보장)
+                let (start, end) = match (chunk_start_time, chunk_end_time) {
+                    (Some(s), Some(e)) if s <= e => (s, e),
+                    (Some(s), Some(e)) => (e, s),
+                    _ => (0.0, 0.0),
+                };
+                
+                let final_filename = format!("{}_{:.3}_{:.3}.csv", base_filename, start, end);
+                let mut final_path = base_dir.clone();
+                final_path.push(&final_filename);
+                
+                // 파일 생성 및 한 번에 쓰기
+                let file = File::create(&final_path).map_err(|e| e.to_string())?;
+                let mut writer = WriterBuilder::new().with_header(true).build(file);
+                
+                for chunk_batch in &current_chunk_batches {
+                    writer.write(chunk_batch).map_err(|e| e.to_string())?;
+                }
+                
+                writer.close().map_err(|e| e.to_string())?;
+                output_paths.push(final_path.to_string_lossy().to_string());
+                
+                // 다음 청크를 위해 초기화
+                current_chunk_batches.clear();
+                current_row_count = 0;
+                chunk_start_time = None;
+                chunk_end_time = None;
             }
         }
     }
 
-    // 임시 파일들을 최종 이름으로 변경
-    for (temp_path, start_time, end_time) in temp_files {
-        let final_filename = format!("{}_{:.3}_{:.3}.csv", base_filename, start_time, end_time);
+    // 마지막 청크 처리
+    if !current_chunk_batches.is_empty() {
+        // 파일명 생성 (시작 시간이 끝 시간보다 작도록 보장)
+        let (start, end) = match (chunk_start_time, chunk_end_time) {
+            (Some(s), Some(e)) if s <= e => (s, e),
+            (Some(s), Some(e)) => (e, s),
+            _ => (0.0, 0.0),
+        };
+        
+        let final_filename = format!("{}_{:.3}_{:.3}.csv", base_filename, start, end);
         let mut final_path = base_dir.clone();
         final_path.push(&final_filename);
         
-        std::fs::rename(&temp_path, &final_path).map_err(|e| e.to_string())?;
+        // 파일 생성 및 한 번에 쓰기
+        let file = File::create(&final_path).map_err(|e| e.to_string())?;
+        let mut writer = WriterBuilder::new().with_header(true).build(file);
+        
+        for chunk_batch in &current_chunk_batches {
+            writer.write(chunk_batch).map_err(|e| e.to_string())?;
+        }
+        
+        writer.close().map_err(|e| e.to_string())?;
         output_paths.push(final_path.to_string_lossy().to_string());
     }
 
