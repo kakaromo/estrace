@@ -3,25 +3,72 @@ use std::path::PathBuf;
 
 use arrow::array::{RecordBatchWriter, Float64Array, Array};
 use arrow::datatypes::DataType;
-use datafusion::arrow::csv::{Writer, WriterBuilder};
+use datafusion::arrow::csv::WriterBuilder;
 use datafusion::prelude::*; // RecordBatchWriter 트레이트 추가
+use serde::Deserialize;
 
 // Excel의 최대 행 수 (헤더 제외)
 const EXCEL_MAX_ROWS: usize = 1_048_575;
 
-// CSV 내보내기 공통 함수
+// 필터 파라미터 구조체
+#[derive(Debug, Deserialize)]
+pub struct FilterParams {
+    pub time_from: Option<f64>,
+    pub time_to: Option<f64>,
+    pub zoom_column: Option<String>,  // "lba" or "sector"
+    pub col_from: Option<f64>,
+    pub col_to: Option<f64>,
+}
+
+// CSV 내보내기 공통 함수 (필터 지원)
 pub async fn export_to_csv(
     parquet_path: String,
     output_dir: Option<String>,
+    filter: Option<FilterParams>,
 ) -> Result<Vec<String>, String> {
     // DataFusion 세션 초기화
     let ctx = SessionContext::new();
 
     // Parquet 파일 읽기
-    let df = ctx
+    let mut df = ctx
         .read_parquet(parquet_path.as_str(), ParquetReadOptions::default())
         .await
         .map_err(|e| e.to_string())?;
+
+    // 필터 적용
+    if let Some(filter_params) = filter {
+        println!("📊 [Export] 필터 적용 중...");
+        
+        // 시간 필터 적용
+        if let (Some(t_from), Some(t_to)) = (filter_params.time_from, filter_params.time_to) {
+            if t_from > 0.0 || t_to > 0.0 {
+                let schema = df.schema();
+                let time_column = if schema.fields().iter().any(|f| f.name() == "start_time") {
+                    "start_time"
+                } else {
+                    "time"
+                };
+                
+                df = df
+                    .filter(col(time_column).gt_eq(lit(t_from)).and(col(time_column).lt_eq(lit(t_to))))
+                    .map_err(|e| e.to_string())?;
+                
+                println!("⏱️  [Export] 시간 필터: {} ~ {}", t_from, t_to);
+            }
+        }
+        
+        // LBA/Sector 필터 적용
+        if let (Some(zoom_col), Some(c_from), Some(c_to)) = 
+            (filter_params.zoom_column.as_ref(), filter_params.col_from, filter_params.col_to) {
+            if c_from > 0.0 || c_to > 0.0 {
+                df = df
+                    .filter(col(zoom_col.as_str()).gt_eq(lit(c_from as i64)).and(col(zoom_col.as_str()).lt_eq(lit(c_to as i64))))
+                    .map_err(|e| e.to_string())?;
+                
+                println!("📍 [Export] {} 필터: {} ~ {}", zoom_col, c_from, c_to);
+            }
+        }
+    }
 
     // 스키마에서 시간 컬럼 이름 결정 (start_time 또는 time)
     let schema = df.schema();

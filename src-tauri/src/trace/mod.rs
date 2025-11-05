@@ -401,8 +401,25 @@ pub async fn ufscustom_continuity_stats(
 pub async fn export_to_csv(
     parquet_path: String,
     output_dir: Option<String>,
+    time_from: Option<f64>,
+    time_to: Option<f64>,
+    zoom_column: Option<String>,
+    col_from: Option<f64>,
+    col_to: Option<f64>,
 ) -> Result<Vec<String>, String> {
-    export::export_to_csv(parquet_path, output_dir).await
+    let filter = if time_from.is_some() || time_to.is_some() || col_from.is_some() || col_to.is_some() {
+        Some(export::FilterParams {
+            time_from,
+            time_to,
+            zoom_column,
+            col_from,
+            col_to,
+        })
+    } else {
+        None
+    };
+    
+    export::export_to_csv(parquet_path, output_dir, filter).await
 }
 
 #[allow(clippy::too_many_arguments)]

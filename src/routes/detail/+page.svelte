@@ -310,7 +310,7 @@
         }
     }
 
-    // CSV 내보내기 함수
+    // CSV 내보내기 함수 (필터링된 데이터만 export)
     async function exportToCSV() {
         const currentType = $selectedTrace;
         if (!currentType || !parquetFiles[currentType]) {
@@ -321,16 +321,31 @@
         try {
             isExporting = true;
             
+            // 필터 정보 확인
+            const hasFilter = $filtertrace.from_time > 0 || $filtertrace.to_time > 0 || 
+                              $filtertrace.from_lba > 0 || $filtertrace.to_lba > 0;
+            
+            const filterInfo = hasFilter 
+                ? `\n\n적용된 필터:\n- 시간: ${$filtertrace.from_time.toFixed(3)} ~ ${$filtertrace.to_time.toFixed(3)}\n- ${$filtertrace.zoom_column}: ${$filtertrace.from_lba.toFixed(0)} ~ ${$filtertrace.to_lba.toFixed(0)}`
+                : '\n\n필터가 적용되지 않아 전체 데이터를 내보냅니다.';
+            
+            console.log('📤 [Export] 필터 적용:', $filtertrace);
+            
             const result = await invoke<string[]>("export_to_csv", { 
-                parquetPath: parquetFiles[currentType], 
-                fileType: currentType
+                parquetPath: parquetFiles[currentType],
+                outputDir: null,
+                timeFrom: $filtertrace.from_time || 0,
+                timeTo: $filtertrace.to_time || 0,
+                zoomColumn: $filtertrace.zoom_column || null,
+                colFrom: $filtertrace.from_lba || 0,
+                colTo: $filtertrace.to_lba || 0,
             });
             
             // 여러 파일이 생성된 경우 메시지 표시
             if (result.length > 1) {
-                exportResult = `CSV 파일이 엑셀 행 제한으로 인해 ${result.length}개 파일로 분할되었습니다:\n${result.map((path, index) => `${index + 1}. ${path}`).join('\n')}`;
+                exportResult = `CSV 파일이 엑셀 행 제한으로 인해 ${result.length}개 파일로 분할되었습니다:\n${result.map((path, index) => `${index + 1}. ${path}`).join('\n')}${filterInfo}`;
             } else {
-                exportResult = result[0];
+                exportResult = `${result[0]}${filterInfo}`;
             }
             
             showExportDialog = true;
