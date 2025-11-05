@@ -23,23 +23,24 @@ pub async fn export_to_csv(
         .await
         .map_err(|e| e.to_string())?;
 
+    // 스키마에서 시간 컬럼 이름 결정 (start_time 또는 time)
+    let schema = df.schema();
+    let time_column = if schema.fields().iter().any(|f| f.name() == "start_time") {
+        "start_time"
+    } else {
+        "time"
+    };
+
+    // 시간 컬럼으로 정렬 (ufscustom은 start_time, 나머지는 time으로 정렬)
+    let sorted_df = df
+        .sort(vec![col(time_column).sort(true, true)])
+        .map_err(|e| e.to_string())?;
+
     // 데이터프레임에서 레코드 배치 가져오기
-    let batches = df.collect().await.map_err(|e| e.to_string())?;
+    let batches = sorted_df.collect().await.map_err(|e| e.to_string())?;
 
     // 총 행 수 계산 (로깅용)
     let _total_rows: usize = batches.iter().map(|batch| batch.num_rows()).sum();
-
-    // 스키마에서 시간 컬럼 이름 결정 (start_time 또는 time)
-    let time_column = if batches.is_empty() {
-        "time"
-    } else {
-        let schema = batches[0].schema();
-        if schema.column_with_name("start_time").is_some() {
-            "start_time"
-        } else {
-            "time"
-        }
-    };
 
     // 출력 파일 기본 경로 설정
     let (base_dir, base_filename) = if let Some(dir) = output_dir {
@@ -149,25 +150,39 @@ pub async fn export_to_csv(
 
     // 마지막 청크 처리
     if !current_chunk_batches.is_empty() {
+        // 마지막 청크의 실제 시작/끝 시간을 배치들로부터 다시 계산
+        let last_chunk_start = current_chunk_batches.first()
+            .and_then(|batch| if batch.num_rows() > 0 { get_time_value(batch, 0) } else { None });
+
+        let last_chunk_end = current_chunk_batches.last()
+            .and_then(|batch| {
+                let num_rows = batch.num_rows();
+                if num_rows > 0 {
+                    get_time_value(batch, num_rows - 1)
+                } else {
+                    None
+                }
+            });
+
         // 파일명 생성 (시작 시간이 끝 시간보다 작도록 보장)
-        let (start, end) = match (chunk_start_time, chunk_end_time) {
+        let (start, end) = match (last_chunk_start, last_chunk_end) {
             (Some(s), Some(e)) if s <= e => (s, e),
             (Some(s), Some(e)) => (e, s),
             _ => (0.0, 0.0),
         };
-        
+
         let final_filename = format!("{}_{:.3}_{:.3}.csv", base_filename, start, end);
         let mut final_path = base_dir.clone();
         final_path.push(&final_filename);
-        
+
         // 파일 생성 및 한 번에 쓰기
         let file = File::create(&final_path).map_err(|e| e.to_string())?;
         let mut writer = WriterBuilder::new().with_header(true).build(file);
-        
+
         for chunk_batch in &current_chunk_batches {
             writer.write(chunk_batch).map_err(|e| e.to_string())?;
         }
-        
+
         writer.close().map_err(|e| e.to_string())?;
         output_paths.push(final_path.to_string_lossy().to_string());
     }

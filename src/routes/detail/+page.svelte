@@ -965,7 +965,7 @@
 </div>
 
 <Dialog.Root bind:open={showExportDialog}>
-    <Dialog.Content>
+    <Dialog.Content class="max-w-3xl">
         <Dialog.Header>
             <Dialog.Title>내보내기 결과</Dialog.Title>
             <Dialog.Description>
@@ -973,7 +973,7 @@
             </Dialog.Description>
         </Dialog.Header>
         <div class="p-4 bg-slate-100 rounded">
-            <p class="text-sm break-all">{exportResult}</p>
+            <p class="text-sm break-all whitespace-pre-line">{exportResult}</p>
         </div>
         <Dialog.Footer>
             <Button onclick={() => showExportDialog = false}>확인</Button>

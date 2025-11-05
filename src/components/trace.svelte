@@ -115,7 +115,14 @@
         const secs = seconds % 60;
         return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
     }
-    
+    // 상세 정보 토글 함수
+    function toggleDetails(event) {
+        event.preventDefault();
+        event.stopPropagation();
+        showDetails = !showDetails;
+        console.log('상세 정보 토글:', showDetails);
+    }
+
     // 남은 시간을 포맷팅하는 함수
     function formatRemainingTime(seconds) {
         if (!seconds || seconds <= 0) return '00:00';
@@ -255,7 +262,7 @@
             const selected = await open({
                 multiple: false,
                 filters: [
-                { name: 'All Files', extensions: [] }
+                { name: 'All Files', extensions: ['*'] }
                 ]        
             });
             console.log('선택된 파일:', selected);
@@ -416,9 +423,13 @@
                 </div>
                 
                 <div class="flex justify-between items-center mb-1">
-                    <button 
-                        class="text-xs text-blue-600 hover:text-blue-800 underline"
-                        onclick={() => showDetails = !showDetails}
+                    <button
+                        type="button"
+                        class="text-xs text-blue-600 hover:text-blue-800 underline cursor-pointer py-1 px-2 -ml-2 bg-transparent border-0 pointer-events-auto"
+                        style="z-index: 999;"
+                        on:click={toggleDetails}
+                        on:mousedown|stopPropagation
+                        on:mouseup|stopPropagation
                     >
                         {showDetails ? '상세 정보 숨기기' : '상세 정보 보기'}
                     </button>
