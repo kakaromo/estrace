@@ -50,13 +50,14 @@
   // 범례 필터링 상태 (각 범례 항목의 표시/숨김 상태)
   let hiddenLegends = $state(new Set<string>());
   
-  // Y축 타입 판단 (latency/dtoc/ctod/ctoc: 소수점 3자리, cpu: -1~8 고정)
+  // Y축 타입 판단 (latency/dtoc/ctod/ctoc: 소수점 3자리, cpu: -1~8 고정, qd: 0부터 시작)
   let isLatencyAxis = $derived(
     ycolumn === 'dtoc' ||
     ycolumn === 'ctod' ||
     ycolumn === 'ctoc'
   );
   let isCpuAxis = $derived(yAxisLabel?.toLowerCase().includes('cpu') || ycolumn?.toLowerCase().includes('cpu'));
+  let isQueueDepthAxis = $derived(ycolumn === 'qd' || yAxisKey === 'qd' || yAxisKey === 'start_qd');
   
   // 로딩 상태 관리
   let isInitializing = $state(false);
@@ -437,8 +438,8 @@
     const isUFSCUSTOM = xAxisKey === 'start_time' || xAxisKey === 'end_time';
     
     const xKey = xAxisKey;
-    // ⚠️ UFSCUSTOM에서 yAxisKey가 'qd'이면 'end_qd'로 변경
-    const yKey = (isUFSCUSTOM && yAxisKey === 'qd') ? 'end_qd' : yAxisKey;
+    // ⚠️ UFSCUSTOM에서 yAxisKey가 'qd'이면 'start_qd'로 변경
+    const yKey = (isUFSCUSTOM && yAxisKey === 'qd') ? 'start_qd' : yAxisKey;
     const lKey = legendKey;
 
     console.log(`[desk.gl] isUFSCUSTOM: ${isUFSCUSTOM}, yAxisKey: ${yAxisKey} -> yKey: ${yKey}`);
@@ -458,6 +459,9 @@
       // Note: x !== x는 NaN 체크를 위한 표준 JavaScript 패턴입니다.
       // NaN은 자기 자신과 같지 않은 유일한 값이므로 isNaN()보다 빠르고 안전합니다.
       if (x !== x || y !== y) continue;
+      
+      // latency 차트의 경우 y 값이 0.0보다 큰 것만 표시
+      if (isLatencyAxis && y <= 0.0) continue;
       
       // ⚡ action 필터링 (문자열 연산 최소화)
       const action = item.action || item.command;
@@ -509,10 +513,12 @@
     transformedDataCache = result;
     lastDataLength = dataLength;
     
-    // ⚡ bounds 캐시 업데이트 (CPU 차트는 Y축 고정)
+    // ⚡ bounds 캐시 업데이트 (CPU 차트는 Y축 고정, latency/qd 차트는 0.0부터 시작)
     if (isCpuAxis) {
       yMin = -1;
       yMax = 8;
+    } else if (isLatencyAxis || isQueueDepthAxis) {
+      yMin = 0.0;
     }
     
     // 전역 bounds 저장 (calculateDataBounds 호출 불필요)
