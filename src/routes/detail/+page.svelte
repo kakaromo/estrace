@@ -132,6 +132,15 @@
     let isExporting = $state(false);
     let showExportDialog = $state(false);
     let exportResult = $state('');
+    let exportProgress = $state({
+        stage: '',
+        progress: 0,
+        current: 0,
+        total: 0,
+        message: '',
+        eta_seconds: 0,
+        processing_speed: 0
+    });
     let parquetFiles = $state({
         ufs: '',
         block: '',
@@ -320,6 +329,18 @@
         
         try {
             isExporting = true;
+            showExportDialog = true; // dialog를 먼저 열어서 progress를 보여줌
+            
+            // progress 초기화
+            exportProgress = {
+                stage: 'starting',
+                progress: 0,
+                current: 0,
+                total: 0,
+                message: '내보내기 준비 중...',
+                eta_seconds: 0,
+                processing_speed: 0
+            };
             
             // 필터 정보 확인
             const hasFilter = $filtertrace.from_time > 0 || $filtertrace.to_time > 0 || 
@@ -347,8 +368,6 @@
             } else {
                 exportResult = `${result[0]}${filterInfo}`;
             }
-            
-            showExportDialog = true;
             
         } catch (error) {
             console.error('CSV 내보내기 오류:', error);
@@ -707,7 +726,16 @@
         }
     }
 
+    let unlistenExportProgress: (() => void) | null = null;
+    
     onMount(async () => {
+        // Export progress 이벤트 리스너 설정
+        const { listen } = await import('@tauri-apps/api/event');
+        unlistenExportProgress = await listen('export-progress', (event: any) => {
+            exportProgress = event.payload;
+            console.log('📊 [Export Progress]', event.payload);
+        });
+        
         try {
             isLoading = true;
             
@@ -762,6 +790,13 @@
         } finally {
             isLoading = false;
         }
+        
+        // cleanup: 이벤트 리스너 해제
+        return () => {
+            if (unlistenExportProgress) {
+                unlistenExportProgress();
+            }
+        };
     });
 </script>
 
@@ -982,17 +1017,42 @@
 <Dialog.Root bind:open={showExportDialog}>
     <Dialog.Content class="max-w-3xl">
         <Dialog.Header>
-            <Dialog.Title>내보내기 결과</Dialog.Title>
+            <Dialog.Title>{isExporting ? 'CSV 내보내기 중...' : '내보내기 결과'}</Dialog.Title>
             <Dialog.Description>
-                CSV 파일이 생성되었습니다.
+                {isExporting ? '잠시만 기다려주세요...' : 'CSV 파일이 생성되었습니다.'}
             </Dialog.Description>
         </Dialog.Header>
+        
+        {#if isExporting}
+        <div class="space-y-4 p-4">
+            <!-- Progress Bar -->
+            <div class="space-y-2">
+                <div class="flex justify-between text-sm">
+                    <span>{exportProgress.message}</span>
+                    <span class="font-semibold">{exportProgress.progress.toFixed(1)}%</span>
+                </div>
+                <div class="w-full bg-gray-200 rounded-full h-2.5">
+                    <div class="bg-blue-600 h-2.5 rounded-full transition-all duration-300" 
+                         style="width: {exportProgress.progress}%"></div>
+                </div>
+            </div>
+            
+            <!-- 상세 정보 -->
+            <div class="grid grid-cols-2 gap-2 text-sm text-gray-600">
+                <div>처리 상태: <span class="font-medium">{exportProgress.stage}</span></div>
+                <div>처리 속도: <span class="font-medium">{exportProgress.processing_speed.toFixed(0)} rows/s</span></div>
+                <div>진행: <span class="font-medium">{exportProgress.current.toLocaleString()} / {exportProgress.total.toLocaleString()}</span></div>
+                <div>예상 남은 시간: <span class="font-medium">{exportProgress.eta_seconds.toFixed(1)}초</span></div>
+            </div>
+        </div>
+        {:else}
         <div class="p-4 bg-slate-100 rounded">
             <p class="text-sm break-all whitespace-pre-line">{exportResult}</p>
         </div>
         <Dialog.Footer>
             <Button onclick={() => showExportDialog = false}>확인</Button>
         </Dialog.Footer>
+        {/if}
     </Dialog.Content>
 </Dialog.Root>
 

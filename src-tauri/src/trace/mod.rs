@@ -406,6 +406,7 @@ pub async fn export_to_csv(
     zoom_column: Option<String>,
     col_from: Option<f64>,
     col_to: Option<f64>,
+    window: tauri::Window,
 ) -> Result<Vec<String>, String> {
     let filter = if time_from.is_some() || time_to.is_some() || col_from.is_some() || col_to.is_some() {
         Some(export::FilterParams {
@@ -419,7 +420,7 @@ pub async fn export_to_csv(
         None
     };
     
-    export::export_to_csv(parquet_path, output_dir, filter).await
+    export::export_to_csv(parquet_path, output_dir, filter, Some(window)).await
 }
 
 #[allow(clippy::too_many_arguments)]

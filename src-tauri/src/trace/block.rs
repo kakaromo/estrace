@@ -73,15 +73,31 @@ pub fn block_bottom_half_latency_process(block_list: Vec<Block>) -> Vec<Block> {
     println!("   총 이벤트 수: {}", block_list.len());
     println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
     
-    // 1. 시간순 정렬 (unstable sort로 성능 향상)
-    println!("\n[1/3] ⏱️  시간순 정렬 중...");
+    // 1. 정렬 여부 확인 (이미 정렬되어 있으면 정렬 스킵)
+    println!("\n[1/3] ⏱️  데이터 순서 확인 중...");
     let sort_start = std::time::Instant::now();
     let mut sorted_blocks = block_list;
-    sorted_blocks.sort_unstable_by(|a, b| {
-        a.time.partial_cmp(&b.time).unwrap_or(std::cmp::Ordering::Equal)
-    });
-    let sort_elapsed = sort_start.elapsed().as_secs_f64();
-    println!("      ✅ 정렬 완료: {:.2}초", sort_elapsed);
+    let mut needs_sort = false;
+    for i in 1..sorted_blocks.len().min(1000) {
+        if sorted_blocks[i - 1].time > sorted_blocks[i].time {
+            needs_sort = true;
+            break;
+        }
+    }
+    
+    let sort_elapsed = if needs_sort {
+        println!("      ⚠️  정렬되지 않은 데이터 감지, 정렬 중...");
+        sorted_blocks.sort_unstable_by(|a, b| {
+            a.time.partial_cmp(&b.time).unwrap_or(std::cmp::Ordering::Equal)
+        });
+        let elapsed = sort_start.elapsed().as_secs_f64();
+        println!("      ✅ 정렬 완료: {:.2}초", elapsed);
+        elapsed
+    } else {
+        let elapsed = sort_start.elapsed().as_secs_f64();
+        println!("      ✅ 이미 정렬됨 (정렬 스킵): {:.3}초", elapsed);
+        elapsed
+    };
 
     // 2. 중복 block_rq_issue 제거 (사전 작업)
     println!("\n[2/3] 🔍 중복 이벤트 필터링 중...");
@@ -525,9 +541,8 @@ pub async fn latencystats(params: LatencyStatsParams) -> Result<Vec<u8>, String>
         _ => return Err(format!("유효하지 않은 컬럼: {}", params.column)),
     };
 
-    // 시간순 정렬
-    let mut filtered_stats = latency_stats;
-    filtered_stats.sort_by(|a, b| a.time.partial_cmp(&b.time).unwrap());
+    // 이미 parquet에서 시간순으로 정렬되어 있으므로 정렬 불필요
+    let filtered_stats = latency_stats;
 
     // io_type별 latency count 초기화
     let unique_io_types: Vec<String> = filtered_stats

@@ -363,9 +363,9 @@ pub fn parse_log_file_highperf(
     let completed_chunks = Arc::new(Mutex::new(0usize));
     let total_chunks = chunk_boundaries.len();
     
-    // 병렬 처리
+    // 병렬 처리 - 인덱스와 함께 결과 저장하여 순서 보존
     let parse_start = Instant::now();
-    let results: Vec<(Vec<UFS>, Vec<Block>, Vec<UFSCUSTOM>)> = chunk_boundaries
+    let results: Vec<(usize, Vec<UFS>, Vec<Block>, Vec<UFSCUSTOM>)> = chunk_boundaries
         .par_iter()
         .enumerate()
         .map(|(i, &(start, end))| {
@@ -397,7 +397,8 @@ pub fn parse_log_file_highperf(
                 println!("⏳ Chunk {}/{}: {:.1}% 완료", *completed, total_chunks, progress_pct);
             }
             
-            result
+            // 인덱스와 함께 반환하여 순서 보존
+            (i, result.0, result.1, result.2)
         })
         .collect();
     
@@ -416,21 +417,25 @@ pub fn parse_log_file_highperf(
         });
     }
     
-    // 결과 merge
+    // 결과 merge - chunk 인덱스 순으로 정렬하여 순서 보존
     let merge_start = Instant::now();
+    let mut sorted_results = results;
+    sorted_results.sort_unstable_by_key(|r| r.0);
+    
     let mut ufs_traces = Vec::new();
     let mut block_traces = Vec::new();
     let mut ufscustom_traces = Vec::new();
     
     // 용량 사전 할당
-    let total_estimate = results.iter()
-        .map(|r| r.0.len() + r.1.len() + r.2.len())
+    let total_estimate = sorted_results.iter()
+        .map(|r| r.1.len() + r.2.len() + r.3.len())
         .sum::<usize>();
     ufs_traces.reserve(total_estimate / 3);
     block_traces.reserve(total_estimate / 3);
     ufscustom_traces.reserve(total_estimate / 3);
     
-    for (ufs, block, ufscustom) in results {
+    // 인덱스 순서대로 merge (순서 보존)
+    for (_idx, ufs, block, ufscustom) in sorted_results {
         ufs_traces.extend(ufs);
         block_traces.extend(block);
         ufscustom_traces.extend(ufscustom);
@@ -438,37 +443,8 @@ pub fn parse_log_file_highperf(
     
     println!("🔗 결과 merge 완료: {:.2}초", merge_start.elapsed().as_secs_f64());
     
-    // 진행 상태 업데이트: 정렬 시작
-    if let Some(win) = window {
-        let _ = win.emit("trace-progress", ProgressEvent {
-            stage: "parsing".to_string(),
-            progress: 75.0,
-            current: 0,
-            total: 100,
-            message: format!("data sort 중... (UFS:{}, Block:{}, UFSCUSTOM:{})", 
-                           ufs_traces.len(), block_traces.len(), ufscustom_traces.len()),
-            eta_seconds: 0.0,
-            processing_speed: 0.0,
-        });
-    }
-    
-    // 정렬 (unstable sort for performance)
-    println!("🔄 data sort 중...");
-    let sort_start = Instant::now();
-    
-    ufs_traces.sort_unstable_by(|a, b| {
-        a.time.partial_cmp(&b.time).unwrap_or(std::cmp::Ordering::Equal)
-    });
-    
-    block_traces.sort_unstable_by(|a, b| {
-        a.time.partial_cmp(&b.time).unwrap_or(std::cmp::Ordering::Equal)
-    });
-    
-    ufscustom_traces.sort_unstable_by(|a, b| {
-        a.start_time.partial_cmp(&b.start_time).unwrap_or(std::cmp::Ordering::Equal)
-    });
-    
-    println!("✅ 정렬 완료: {:.2}초", sort_start.elapsed().as_secs_f64());
+    // chunk 순서대로 merge했으므로 이미 정렬되어 있음 - 정렬 불필요!
+    println!("✅ 데이터는 chunk 순서로 이미 정렬되어 있음 (추가 정렬 스킵)");
     
     let total_time = start_time.elapsed().as_secs_f64();
     let throughput = file_size_mb / total_time;

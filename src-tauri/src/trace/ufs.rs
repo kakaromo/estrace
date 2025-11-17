@@ -69,14 +69,30 @@ pub fn ufs_bottom_half_latency_process(mut ufs_list: Vec<UFS>) -> Vec<UFS> {
     println!("   총 이벤트 수: {}", ufs_list.len());
     println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
     
-    // time 기준으로 오름차순 정렬 (unstable sort로 성능 향상)
-    println!("\n[1/2] ⏱️  시간순 정렬 중...");
+    // 정렬 여부 확인 (이미 정렬되어 있으면 정렬 스킵)
+    println!("\n[1/2] ⏱️  데이터 순서 확인 중...");
     let sort_start = std::time::Instant::now();
-    ufs_list.sort_unstable_by(|a, b| {
-        a.time.partial_cmp(&b.time).unwrap_or(std::cmp::Ordering::Equal)
-    });
-    let sort_elapsed = sort_start.elapsed().as_secs_f64();
-    println!("      ✅ 정렬 완료: {:.2}초", sort_elapsed);
+    let mut needs_sort = false;
+    for i in 1..ufs_list.len().min(1000) {
+        if ufs_list[i - 1].time > ufs_list[i].time {
+            needs_sort = true;
+            break;
+        }
+    }
+    
+    let sort_elapsed = if needs_sort {
+        println!("      ⚠️  정렬되지 않은 데이터 감지, 정렬 중...");
+        ufs_list.sort_unstable_by(|a, b| {
+            a.time.partial_cmp(&b.time).unwrap_or(std::cmp::Ordering::Equal)
+        });
+        let elapsed = sort_start.elapsed().as_secs_f64();
+        println!("      ✅ 정렬 완료: {:.2}초", elapsed);
+        elapsed
+    } else {
+        let elapsed = sort_start.elapsed().as_secs_f64();
+        println!("      ✅ 이미 정렬됨 (정렬 스킵): {:.3}초", elapsed);
+        elapsed
+    };
 
     // 메모리 효율성을 위한 용량 최적화 (더 정확한 추정)
     let estimated_capacity = (ufs_list.len() / 4).max(1024);
@@ -376,7 +392,7 @@ pub async fn latencystats(params: UfsLatencyStatsParams) -> Result<Vec<u8>, Stri
         filter_ufs_data(&params.logname, params.time_from, params.time_to, &params.zoom_column, params.col_from, params.col_to)?;
 
     // LatencyStat 생성 - column에 따라 데이터 매핑
-    let mut latency_stats = match params.column.as_str() {
+    let latency_stats = match params.column.as_str() {
         "dtoc" | "ctoc" => filtered_ufs
             .iter()
             .filter(|ufs| ufs.action == "complete_rsp")
@@ -402,8 +418,7 @@ pub async fn latencystats(params: UfsLatencyStatsParams) -> Result<Vec<u8>, Stri
         _ => return Err(format!("Invalid column: {}", params.column)),
     };
 
-    // 시간 순 정렬
-    latency_stats.sort_by(|a, b| a.time.partial_cmp(&b.time).unwrap());
+    // 이미 parquet에서 시간순으로 정렬되어 있으므로 정렬 불필요
 
     // 각 opcode별 레이턴시 카운트 초기화
     let mut latency_counts = std::collections::BTreeMap::new();
