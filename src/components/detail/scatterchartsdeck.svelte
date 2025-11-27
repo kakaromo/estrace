@@ -360,10 +360,10 @@
     const currentFilter = $filtertrace;
     $filtertrace = {
       zoom_column: ycolumn,
-      from_time: currentFilter.from_time || dataBounds.xMin,
-      to_time: currentFilter.to_time || dataBounds.xMax,
-      from_lba: currentFilter.from_lba || dataBounds.yMin,
-      to_lba: currentFilter.to_lba || dataBounds.yMax,
+      from_time: currentFilter.from_time ?? dataBounds.xMin,
+      to_time: currentFilter.to_time ?? dataBounds.xMax,
+      from_lba: currentFilter.from_lba ?? dataBounds.yMin,
+      to_lba: currentFilter.to_lba ?? dataBounds.yMax,
       hidden_legends: Array.from(hiddenLegends)
     };
     
