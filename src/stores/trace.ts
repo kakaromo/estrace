@@ -24,7 +24,8 @@ export const prevFilterTrace = writable({
   from_time: 0.0,
   to_time: 0.0,
   from_lba: 0.0,
-  to_lba: 0.0
+  to_lba: 0.0,
+  hidden_legends: [] as string[]
 });
 
 // filtertrace store
@@ -33,7 +34,8 @@ export const filtertrace = writable({
   from_time: 0.0,
   to_time: 0.0,
   from_lba: 0.0,
-  to_lba: 0.0
+  to_lba: 0.0,
+  hidden_legends: [] as string[]
 });
 
 // filtertrace가 변경되었는지 확인하는 derived store

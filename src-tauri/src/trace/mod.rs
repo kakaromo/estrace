@@ -434,6 +434,7 @@ pub async fn filter_trace(
     col_from: Option<f64>,
     col_to: Option<f64>,
     maxrecords: Option<usize>,
+    hidden_legends: Option<Vec<String>>,
 ) -> Result<TraceDataBytes, String> {
     use utils::FilterTraceParams;
     
@@ -446,6 +447,7 @@ pub async fn filter_trace(
         col_from,
         col_to,
         max_records: maxrecords.unwrap_or(DEFAULT_PREVIEW_RECORDS),
+        hidden_legends,
     })
     .await
 }

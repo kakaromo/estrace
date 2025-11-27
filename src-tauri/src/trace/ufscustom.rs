@@ -460,7 +460,7 @@ pub async fn latencystats(params: UfscustomLatencyStatsParams) -> Result<Vec<u8>
 
     // 필터링 적용
     let filtered_ufscustom =
-        filter_ufscustom_data(&params.logname, params.time_from, params.time_to, &params.zoom_column, params.col_from, params.col_to)?;
+        filter_ufscustom_data(&params.logname, params.time_from, params.time_to, &params.zoom_column, params.col_from, params.col_to, None)?;
 
     // LatencyStat 생성 - column에 따라 데이터 매핑
     let latency_stats = match params.column.as_str() {
@@ -544,7 +544,7 @@ pub async fn latencystats(params: UfscustomLatencyStatsParams) -> Result<Vec<u8>
 pub async fn sizestats(params: UfscustomSizeStatsParams) -> Result<Vec<u8>, String> {
     // 필터링 적용
     let filtered_ufscustom =
-        filter_ufscustom_data(&params.logname, params.time_from, params.time_to, &params.zoom_column, params.col_from, params.col_to)?;
+        filter_ufscustom_data(&params.logname, params.time_from, params.time_to, &params.zoom_column, params.col_from, params.col_to, None)?;
 
     // opcode별로 size 분포 계산
     let mut opcode_stats: BTreeMap<String, BTreeMap<u32, usize>> = BTreeMap::new();
@@ -582,7 +582,7 @@ pub async fn continuity_stats(
 ) -> Result<Vec<u8>, String> {
     // 필터링 적용
     let filtered_ufscustom = 
-        filter_ufscustom_data(&logname, time_from, time_to, &zoom_column, col_from, col_to)?;
+        filter_ufscustom_data(&logname, time_from, time_to, &zoom_column, col_from, col_to, None)?;
 
     // opcode별 연속성 통계 수집
     let mut op_stats: BTreeMap<String, ContinuityCount> = BTreeMap::new();
@@ -664,7 +664,7 @@ pub async fn continuity_stats(
 pub async fn allstats(params: UfscustomAllStatsParams, thresholds: Vec<String>) -> Result<Vec<u8>, String> {
     // 필터링 적용 (전체 통계에서는 개별 함수에서 필터링하므로 여기서는 불필요)
     let _filtered_ufscustom =
-        filter_ufscustom_data(&params.logname, params.time_from, params.time_to, &params.zoom_column, params.col_from, params.col_to)?;
+        filter_ufscustom_data(&params.logname, params.time_from, params.time_to, &params.zoom_column, params.col_from, params.col_to, None)?;
 
     // dtoc 통계 계산
     let dtoc_params = UfscustomLatencyStatsParams {

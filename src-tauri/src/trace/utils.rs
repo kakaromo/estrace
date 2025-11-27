@@ -1938,6 +1938,7 @@ pub struct FilterTraceParams {
     pub col_from: Option<f64>,
     pub col_to: Option<f64>,
     pub max_records: usize,
+    pub hidden_legends: Option<Vec<String>>,
 }
 
 // 추가적인 필터링을 위한 함수
@@ -1949,11 +1950,12 @@ async fn filter_block_trace(
     col_from: Option<f64>,
     col_to: Option<f64>,
     max_records: usize,
+    hidden_legends: Option<&Vec<String>>,
 ) -> Result<TraceDataBytes, String> {
     println!("🎄 [DEBUG] filter_block_trace 호출: logname='{}', max_records={}", logname, max_records);
     
     // filter_block_data를 사용하여 필터링
-    let filtered_blocks = filter_block_data(logname, time_from, time_to, zoom_column, col_from, col_to)?;
+    let filtered_blocks = filter_block_data(logname, time_from, time_to, zoom_column, col_from, col_to, hidden_legends)?;
     
     // total_count 미리 계산
     let total_count = filtered_blocks.len();
@@ -2013,11 +2015,12 @@ async fn filter_ufs_trace(
     col_from: Option<f64>,
     col_to: Option<f64>,
     max_records: usize,
+    hidden_legends: Option<&Vec<String>>,
 ) -> Result<TraceDataBytes, String> {
     println!("🎄 [DEBUG] filter_ufs_trace 호출: logname='{}', max_records={}", logname, max_records);
     
     // filter_ufs_data를 사용하여 필터링
-    let filtered_ufs = filter_ufs_data(logname, time_from, time_to, zoom_column, col_from, col_to)?;
+    let filtered_ufs = filter_ufs_data(logname, time_from, time_to, zoom_column, col_from, col_to, hidden_legends)?;
     
     // total_count 미리 계산
     let total_count = filtered_ufs.len();
@@ -2079,11 +2082,12 @@ async fn filter_ufscustom_trace(
     col_from: Option<f64>,
     col_to: Option<f64>,
     max_records: usize,
+    hidden_legends: Option<&Vec<String>>,
 ) -> Result<TraceDataBytes, String> {
     println!("🎄 [DEBUG] filter_ufscustom_trace 호출: logname='{}', max_records={}", logname, max_records);
     
     // filter_ufscustom_data를 사용하여 필터링
-    let filtered_ufscustom = filter_ufscustom_data(logname, time_from, time_to, zoom_column, col_from, col_to)?;
+    let filtered_ufscustom = filter_ufscustom_data(logname, time_from, time_to, zoom_column, col_from, col_to, hidden_legends)?;
     
     let total_count = filtered_ufscustom.len();
     println!("📋 [DEBUG] UFSCUSTOM 필터링 후 총 레코드: {}", total_count);
@@ -2135,14 +2139,16 @@ async fn filter_ufscustom_trace(
 }
 
 pub async fn filter_trace(params: FilterTraceParams) -> Result<TraceDataBytes, String> {
+    let hidden_legends_ref = params.hidden_legends.as_ref();
+    
     if params.tracetype == "block" {
-        filter_block_trace(&params.logname, &params.zoom_column, params.time_from, params.time_to, params.col_from, params.col_to, params.max_records)
+        filter_block_trace(&params.logname, &params.zoom_column, params.time_from, params.time_to, params.col_from, params.col_to, params.max_records, hidden_legends_ref)
             .await
     } else if params.tracetype == "ufs" {
-        filter_ufs_trace(&params.logname, &params.zoom_column, params.time_from, params.time_to, params.col_from, params.col_to, params.max_records)
+        filter_ufs_trace(&params.logname, &params.zoom_column, params.time_from, params.time_to, params.col_from, params.col_to, params.max_records, hidden_legends_ref)
             .await
     } else if params.tracetype == "ufscustom" {
-        filter_ufscustom_trace(&params.logname, &params.zoom_column, params.time_from, params.time_to, params.col_from, params.col_to, params.max_records)
+        filter_ufscustom_trace(&params.logname, &params.zoom_column, params.time_from, params.time_to, params.col_from, params.col_to, params.max_records, hidden_legends_ref)
             .await
     } else {
         Err(format!("Unknown trace type: {}", params.tracetype))

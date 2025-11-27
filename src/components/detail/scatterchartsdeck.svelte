@@ -356,6 +356,19 @@
     // 필터링된 데이터 업데이트
     applyLegendFilter();
     
+    // ⚡ 범례 필터 시 filtertrace 업데이트 (다른 차트들도 반응)
+    const currentFilter = $filtertrace;
+    $filtertrace = {
+      zoom_column: ycolumn,
+      from_time: currentFilter.from_time || dataBounds.xMin,
+      to_time: currentFilter.to_time || dataBounds.xMax,
+      from_lba: currentFilter.from_lba || dataBounds.yMin,
+      to_lba: currentFilter.to_lba || dataBounds.yMax,
+      hidden_legends: Array.from(hiddenLegends)
+    };
+    
+    console.log('[deck.gl] 범례 필터 적용, filtertrace 업데이트:', $filtertrace);
+    
     // 차트 업데이트
     if (deckInstance) {
       updateChart();
@@ -1502,6 +1515,33 @@
     
     // 차트 영역 크기가 변경되었으므로 scaleParams 재계산 및 차트 업데이트
     updateChart();
+  });
+
+  // ⚡ filtertrace의 hidden_legends 변경 감지 - 다른 차트에서 범례 토글 시 동기화
+  $effect(() => {
+    const ft = $filtertrace;
+    
+    // 초기화되지 않았으면 무시
+    if (!deckInstance) {
+      return;
+    }
+    
+    // hidden_legends가 있으면 현재 차트의 hiddenLegends와 동기화
+    if (ft.hidden_legends && Array.isArray(ft.hidden_legends)) {
+      const newHiddenLegends = new Set(ft.hidden_legends);
+      
+      // 현재 hiddenLegends와 다르면 업데이트
+      if (newHiddenLegends.size !== hiddenLegends.size || 
+          !Array.from(newHiddenLegends).every(item => hiddenLegends.has(item))) {
+        
+        console.log('[deck.gl] filtertrace에서 hidden_legends 변경 감지:', ft.hidden_legends);
+        hiddenLegends = newHiddenLegends;
+        
+        // 범례 필터 적용 및 차트 업데이트
+        applyLegendFilter();
+        updateChart();
+      }
+    }
   });
 </script>
 

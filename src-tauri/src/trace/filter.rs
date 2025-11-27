@@ -10,6 +10,7 @@ pub fn filter_ufs_data(
     zoom_column: &str,
     col_from: Option<f64>,
     col_to: Option<f64>,
+    hidden_legends: Option<&Vec<String>>,
 ) -> Result<Vec<UFS>, String> {
     println!("🎯 [DEBUG] filter_ufs_data 호출: logname='{}'", logname);
     
@@ -143,8 +144,29 @@ pub fn filter_ufs_data(
         time_filtered
     };
 
-    println!("✅ [Performance] UFS 필터링 완료: {} -> {} 레코드", data_size, filtered.len());
-    Ok(filtered)
+    // ⚡ 범례 필터링 (hidden_legends)
+    let legend_filtered = if let Some(hidden) = hidden_legends {
+        if !hidden.is_empty() {
+            println!("📑 [Filter] UFS 범례 필터링: {:?}", hidden);
+            filtered
+                .into_iter()
+                .filter(|ufs| {
+                    // UFS는 opcode 또는 CPU를 legend로 사용
+                    // opcode: "0x28", "0x2a" 등
+                    // CPU: "0", "1", "2" 등
+                    let cpu_str = ufs.cpu.to_string();
+                    !hidden.contains(&ufs.opcode) && !hidden.contains(&cpu_str)
+                })
+                .collect()
+        } else {
+            filtered
+        }
+    } else {
+        filtered
+    };
+
+    println!("✅ [Performance] UFS 필터링 완료: {} -> {} 레코드", data_size, legend_filtered.len());
+    Ok(legend_filtered)
 }
 
 // Block 데이터 필터링 함수
@@ -155,6 +177,7 @@ pub fn filter_block_data(
     zoom_column: &str,
     col_from: Option<f64>,
     col_to: Option<f64>,
+    hidden_legends: Option<&Vec<String>>,
 ) -> Result<Vec<Block>, String> {
     println!("🎯 [DEBUG] filter_block_data 호출: logname='{}'", logname);
     
@@ -288,8 +311,29 @@ pub fn filter_block_data(
         time_filtered
     };
 
-    println!("✅ [Performance] Block 필터링 완료: {} -> {} 레코드", data_size, filtered.len());
-    Ok(filtered)
+    // ⚡ 범례 필터링 (hidden_legends)
+    let legend_filtered = if let Some(hidden) = hidden_legends {
+        if !hidden.is_empty() {
+            println!("📑 [Filter] Block 범례 필터링: {:?}", hidden);
+            filtered
+                .into_iter()
+                .filter(|block| {
+                    // Block은 io_type 또는 CPU를 legend로 사용
+                    // io_type: "W", "R", "WS", "RA" 등
+                    // CPU: "0", "1", "2" 등
+                    let cpu_str = block.cpu.to_string();
+                    !hidden.contains(&block.io_type) && !hidden.contains(&cpu_str)
+                })
+                .collect()
+        } else {
+            filtered
+        }
+    } else {
+        filtered
+    };
+
+    println!("✅ [Performance] Block 필터링 완료: {} -> {} 레코드", data_size, legend_filtered.len());
+    Ok(legend_filtered)
 }
 
 // UFSCUSTOM 데이터 필터링 함수
@@ -300,6 +344,7 @@ pub fn filter_ufscustom_data(
     zoom_column: &str,
     col_from: Option<f64>,
     col_to: Option<f64>,
+    hidden_legends: Option<&Vec<String>>,
 ) -> Result<Vec<UFSCUSTOM>, String> {
     println!("🎯 [DEBUG] filter_ufscustom_data 호출: logname='{}'", logname);
     
@@ -423,6 +468,24 @@ pub fn filter_ufscustom_data(
         time_filtered
     };
 
-    println!("✅ [Performance] UFSCUSTOM 필터링 완료: {} -> {} 레코드", data_size, filtered.len());
-    Ok(filtered)
+    // ⚡ 범례 필터링 (hidden_legends)
+    let legend_filtered = if let Some(hidden) = hidden_legends {
+        if !hidden.is_empty() {
+            println!("📑 [Filter] UFSCUSTOM 범례 필터링: {:?}", hidden);
+            filtered
+                .into_iter()
+                .filter(|ufscustom| {
+                    // UFSCUSTOM의 opcode를 legend로 사용 (이미 16진수 문자열)
+                    !hidden.contains(&ufscustom.opcode)
+                })
+                .collect()
+        } else {
+            filtered
+        }
+    } else {
+        filtered
+    };
+
+    println!("✅ [Performance] UFSCUSTOM 필터링 완료: {} -> {} 레코드", data_size, legend_filtered.len());
+    Ok(legend_filtered)
 }
