@@ -490,7 +490,7 @@ pub async fn latencystats(params: LatencyStatsParams) -> Result<Vec<u8>, String>
 
     // 필터링 적용
     let filtered_blocks =
-        filter_block_data(&params.logname, params.time_from, params.time_to, &params.zoom_column, params.col_from, params.col_to)?;
+        filter_block_data(&params.logname, params.time_from, params.time_to, &params.zoom_column, params.col_from, params.col_to, None)?;
 
     // LatencyStat 생성 - column에 따라 데이터 매핑
     let latency_stats: Vec<LatencyStat> = match params.column.as_str() {
@@ -596,7 +596,7 @@ pub async fn latencystats(params: LatencyStatsParams) -> Result<Vec<u8>, String>
 pub async fn sizestats(params: SizeStatsParams) -> Result<Vec<u8>, String> {
     // 필터링 적용
     let filtered_blocks =
-        filter_block_data(&params.logname, params.time_from, params.time_to, &params.zoom_column, params.col_from, params.col_to)?;
+        filter_block_data(&params.logname, params.time_from, params.time_to, &params.zoom_column, params.col_from, params.col_to, None)?;
 
     // column 조건에 따라 유효한 데이터만 필터링
     let filtered_blocks: Vec<&Block> = filtered_blocks
@@ -664,7 +664,7 @@ pub async fn continuity_stats(
 ) -> Result<Vec<u8>, String> {
     // 필터링 적용
     let filtered_blocks =
-        filter_block_data(&logname, time_from, time_to, &zoom_column, col_from, col_to)?;
+        filter_block_data(&logname, time_from, time_to, &zoom_column, col_from, col_to, None)?;
 
     // block_rq_issue 동작만 필터링
     // R*(read) 또는 W*(write) D*(discard)로 시작하는 IO 타입만 포함
@@ -761,7 +761,7 @@ pub async fn allstats(params: AllStatsParams) -> Result<Vec<u8>, String> {
     }
 
     let filtered_blocks =
-        filter_block_data(&params.logname, params.time_from, params.time_to, &params.zoom_column, params.col_from, params.col_to)?;
+        filter_block_data(&params.logname, params.time_from, params.time_to, &params.zoom_column, params.col_from, params.col_to, None)?;
 
     let unique_io_types: std::collections::HashSet<String> = filtered_blocks
         .iter()

@@ -389,7 +389,7 @@ pub async fn latencystats(params: UfsLatencyStatsParams) -> Result<Vec<u8>, Stri
 
     // 필터링 적용
     let filtered_ufs =
-        filter_ufs_data(&params.logname, params.time_from, params.time_to, &params.zoom_column, params.col_from, params.col_to)?;
+        filter_ufs_data(&params.logname, params.time_from, params.time_to, &params.zoom_column, params.col_from, params.col_to, None)?;
 
     // LatencyStat 생성 - column에 따라 데이터 매핑
     let latency_stats = match params.column.as_str() {
@@ -471,7 +471,7 @@ pub async fn latencystats(params: UfsLatencyStatsParams) -> Result<Vec<u8>, Stri
 pub async fn sizestats(params: UfsSizeStatsParams) -> Result<Vec<u8>, String> {
     // 필터링 적용
     let filtered_ufs =
-        filter_ufs_data(&params.logname, params.time_from, params.time_to, &params.zoom_column, params.col_from, params.col_to)?;
+        filter_ufs_data(&params.logname, params.time_from, params.time_to, &params.zoom_column, params.col_from, params.col_to, None)?;
 
     // column 조건에 따라 유효한 데이터만 필터링
     let filtered_ufs: Vec<&UFS> = filtered_ufs
@@ -531,7 +531,7 @@ pub async fn continuity_stats(
 ) -> Result<Vec<u8>, String> {
     // 필터링 적용
     let filtered_ufs =
-        filter_ufs_data(&logname, time_from, time_to, &zoom_column, col_from, col_to)?;
+        filter_ufs_data(&logname, time_from, time_to, &zoom_column, col_from, col_to, None)?;
 
     // send_req 동작만 필터링 (연속성은 send_req에서만 의미 있음)
     // 주로 관심 있는 opcode만 필터링: 0x28(read), 0x2a(write)
@@ -628,7 +628,7 @@ pub async fn allstats(params: UfsAllStatsParams, thresholds: Vec<String>) -> Res
 
     // 필터링 적용
     let filtered_ufs =
-        filter_ufs_data(&params.logname, params.time_from, params.time_to, &params.zoom_column, params.col_from, params.col_to)?;
+        filter_ufs_data(&params.logname, params.time_from, params.time_to, &params.zoom_column, params.col_from, params.col_to, None)?;
 
     // 모든 opcode 수집
     let opcodes: Vec<String> = filtered_ufs

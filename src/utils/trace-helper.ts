@@ -85,7 +85,7 @@ export async function fetchUfscustomStats(fileName: string, filterParams: any) {
  * ⚡ N+1 문제 해결: 필터가 없으면 원본 데이터 재사용
  */
 export async function filterTraceData(logname: string, traceData: any, selectedTrace: string, filterParams: any) {
-  const { from_time, to_time, from_lba, to_lba, zoom_column } = filterParams;
+  const { from_time, to_time, from_lba, to_lba, zoom_column, hidden_legends } = filterParams;
   
   if (selectedTrace === '') {
     return null;
@@ -114,7 +114,8 @@ export async function filterTraceData(logname: string, traceData: any, selectedT
     timeTo: to_time,
     colFrom: from_lba,
     colTo: to_lba,
-    maxrecords: buffersize
+    maxrecords: buffersize,
+    hiddenLegends: hidden_legends || null
   });
 
   // Arrow IPC 데이터 직접 변환 (압축 제거됨)
