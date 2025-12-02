@@ -262,7 +262,7 @@
             const selected = await open({
                 multiple: false,
                 filters: [
-                { name: 'All Files', extensions: ['*'] }
+                { name: 'All Files', extensions: [] }
                 ]        
             });
             console.log('선택된 파일:', selected);

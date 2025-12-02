@@ -109,8 +109,10 @@ pub async fn export_to_csv(
         "time"
     };
 
-    // Parquet 파일이 이미 시간순으로 정렬되어 있으므로 정렬 불필요
-    println!("✅ [Export] Parquet 파일이 이미 정렬되어 있음 (정렬 스킵)");
+    // CSV export 시 순서 보장: time 컬럼 기준으로 명시적 정렬
+    println!("⏱️  [Export] {} 컬럼 기준으로 정렬 중...", time_column);
+    df = df.sort(vec![col(time_column).sort(true, false)])
+        .map_err(|e| e.to_string())?;
 
     // 데이터프레임에서 레코드 배치 가져오기
     let batches = df.collect().await.map_err(|e| e.to_string())?;
